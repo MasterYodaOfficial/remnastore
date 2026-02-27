@@ -62,9 +62,23 @@ class Account(Base):
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))
 
     status: Mapped[AccountStatus] = mapped_column(
-        Enum(AccountStatus), default=AccountStatus.ACTIVE, nullable=False
+        Enum(
+            AccountStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="accountstatus",
+            native_enum=True,
+        ),
+        default=AccountStatus.ACTIVE,
+        nullable=False,
     )
-    last_login_source: Mapped[Optional[LoginSource]] = mapped_column(Enum(LoginSource))
+    last_login_source: Mapped[Optional[LoginSource]] = mapped_column(
+        Enum(
+            LoginSource,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="loginsource",
+            native_enum=True,
+        )
+    )
 
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -79,6 +93,13 @@ class Account(Base):
     )
 
 
+provider_enum_kwargs = dict(
+    values_callable=lambda obj: [e.value for e in obj],
+    name="authprovider",
+    native_enum=True,
+)
+
+
 class AuthAccount(Base):
     __tablename__ = "auth_accounts"
     __table_args__ = (
@@ -90,7 +111,9 @@ class AuthAccount(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
     )
-    provider: Mapped[AuthProvider] = mapped_column(Enum(AuthProvider), nullable=False)
+    provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, **provider_enum_kwargs), nullable=False
+    )
     provider_uid: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
@@ -121,7 +144,9 @@ class AuthLinkToken(Base):
 
     link_token: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    provider: Mapped[AuthProvider] = mapped_column(Enum(AuthProvider), nullable=False)
+    provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, **provider_enum_kwargs), nullable=False
+    )
     provider_uid: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
