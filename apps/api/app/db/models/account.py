@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    Numeric,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,6 +61,15 @@ class Account(Base):
 
     remnawave_user_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True))
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))
+
+    balance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
+    referral_earnings_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referrals_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_reward_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+    referred_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL")
+    )
 
     status: Mapped[AccountStatus] = mapped_column(
         Enum(
