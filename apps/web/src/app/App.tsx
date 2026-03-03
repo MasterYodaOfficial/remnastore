@@ -75,7 +75,19 @@ export function App() {
       case "profile":
         return (
           <>
-            <section className="card profile-card">
+            <section className="card hero-card">
+              <div className="hero-top">
+                <div>
+                  <div className="brand">Remnastore</div>
+                  <div className="subtitle">VPN подписки</div>
+                </div>
+                <button
+                  className="ghost small"
+                  onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                >
+                  {theme === "dark" ? "Светлая" : "Тёмная"}
+                </button>
+              </div>
               <div className="profile-row">
                 <div className="avatar">
                   {profile?.photo_url ? (
@@ -97,10 +109,22 @@ export function App() {
               </div>
             </section>
 
+            <section className="card balance-card">
+              <div className="balance-row">
+                <div>
+                  <div className="label">Баланс</div>
+                  <div className="amount">0 ₽</div>
+                  <div className="muted">Пополните, чтобы купить подписку</div>
+                </div>
+                <button className="primary ghost-contrast">Пополнить</button>
+              </div>
+            </section>
+
             <section className="card">
-              <h2>Ваши действия</h2>
-              <p>Продолжайте настройку или оформите подписку.</p>
-              <button className="primary">Купить подписку</button>
+              <h2>Подписка</h2>
+              <div className="placeholder">
+                Здесь будут данные активной подписки, срок действия и кнопка продления.
+              </div>
             </section>
           </>
         );
