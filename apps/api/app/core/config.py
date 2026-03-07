@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,19 @@ class Settings(BaseSettings):
 
     remnawave_api_url: str = ""
     remnawave_api_token: str = ""
+
+    # Auth
+    jwt_secret: str = "change-me"
+    jwt_access_token_expires_seconds: int = 3600
+    supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
+    supabase_anon_key: str = Field(default="", validation_alias="SUPABASE_ANON_KEY")
+
+    # Telegram
+    telegram_bot_token: str = Field(
+        default="",
+        validation_alias="BOT_TOKEN",
+    )
+    telegram_init_data_ttl_seconds: int = 600
 
 
 settings = Settings()

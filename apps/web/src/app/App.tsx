@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase/client';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { loadTelegramScript, getTelegramWebApp } from '../../utils/telegram';
 import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
@@ -13,11 +12,25 @@ import { TopUpModal } from './components/TopUpModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { toast, Toaster } from 'sonner';
 
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-0ad4a249`;
 const BACKEND_API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(
   /\/+$/,
   ""
 );
+const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
+
+interface BackendAccount {
+  id: string;
+  telegram_id?: number | null;
+  email?: string | null;
+  display_name?: string | null;
+  username?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  balance_cents: number;
+  referral_code?: string | null;
+  referral_earnings_cents: number;
+  referrals_count: number;
+}
 
 interface User {
   id: string;
@@ -47,6 +60,26 @@ interface Plan {
   popular?: boolean;
 }
 
+function mapBackendAccountToUser(account: BackendAccount): User {
+  const name =
+    account.display_name ||
+    account.first_name ||
+    account.username ||
+    account.email ||
+    'Пользователь';
+
+  return {
+    id: account.id,
+    name,
+    email: account.email || '',
+    balance: (account.balance_cents || 0) / 100,
+    referralCode: account.referral_code || '',
+    referralsCount: account.referrals_count || 0,
+    earnings: (account.referral_earnings_cents || 0) / 100,
+    hasUsedTrial: false,
+  };
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,6 +92,10 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [referralCopied, setReferralCopied] = useState(false);
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false);
+  const lastLoadedBrowserTokenRef = useRef<string | null>(null);
+  const inFlightBrowserTokenRef = useRef<string | null>(null);
+  const currentBrowserTokenRef = useRef<string | null>(null);
+  const manualLogoutRef = useRef(false);
 
   // Check if running in Telegram WebApp
   useEffect(() => {
@@ -94,48 +131,35 @@ export default function App() {
         return;
       }
 
-      // upsert + fetch fresh data
-      let apiUser: any = null;
+      let accountUser = mapBackendAccountToUser({
+        id: String(telegramUser.id),
+        email: `telegram_${telegramUser.id}@vpn.service`,
+        display_name: telegramUser.first_name,
+        username: telegramUser.username,
+        first_name: telegramUser.first_name,
+        last_name: telegramUser.last_name,
+        balance_cents: 0,
+        referral_earnings_cents: 0,
+        referrals_count: 0,
+      });
+
       try {
-        const upsertResp = await fetch(`${BACKEND_API}/api/v1/accounts/telegram`, {
+        const authResponse = await fetch(`${BACKEND_API}/api/v1/auth/telegram/webapp`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            telegram_id: telegramUser.id,
-            username: telegramUser.username,
-            first_name: telegramUser.first_name,
-            last_name: telegramUser.last_name,
-            is_premium: Boolean(telegramUser.is_premium),
-            locale: telegramUser.language_code,
-            last_login_source: 'telegram_webapp',
-          }),
+          body: JSON.stringify({ init_data: tg.initData }),
         });
-        if (upsertResp.ok) {
-          const resp = await fetch(
-            `${BACKEND_API}/api/v1/accounts/me?telegram_id=${telegramUser.id}`
-          );
-          if (resp.ok) {
-            apiUser = await resp.json();
-          }
+
+        if (authResponse.ok) {
+          const authData = await authResponse.json();
+          accountUser = mapBackendAccountToUser(authData.account as BackendAccount);
         }
       } catch {
         /* ignore */
       }
 
-      const balance = apiUser?.balance_cents ?? 0;
-      const referralCode = apiUser?.referral_code || '';
-      const referralsCount = apiUser?.referrals_count || 0;
-      const earnings = apiUser?.referral_earnings_cents ?? 0;
-
       setUser({
-        id: String(telegramUser.id),
-        name: telegramUser.first_name || 'Telegram User',
-        email: `telegram_${telegramUser.id}@vpn.service`,
-        balance,
-        referralCode,
-        referralsCount,
-        earnings,
-        hasUsedTrial: false,
+        ...accountUser,
         avatar: telegramUser.photo_url,
       });
       setIsAuthenticated(true);
@@ -151,9 +175,12 @@ export default function App() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
-        setAccessToken(session.access_token);
-        await loadUserData(session.access_token);
-        setIsAuthenticated(true);
+        await syncBrowserAuth(session.access_token);
+      } else {
+        const cachedToken = window.sessionStorage.getItem(BROWSER_TOKEN_STORAGE_KEY);
+        if (cachedToken) {
+          await syncBrowserAuth(cachedToken);
+        }
       }
     } catch (err) {
       console.error('Auth check error:', err);
@@ -166,14 +193,20 @@ export default function App() {
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (event === 'SIGNED_IN' && session?.access_token) {
-          setAccessToken(session.access_token);
-          await loadUserData(session.access_token);
-          setIsAuthenticated(true);
+        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token) {
+          await syncBrowserAuth(session.access_token);
         } else if (event === 'SIGNED_OUT') {
-          setIsAuthenticated(false);
-          setUser(null);
-          setAccessToken(null);
+          if (manualLogoutRef.current) {
+            manualLogoutRef.current = false;
+            clearBrowserAuthState();
+            return;
+          }
+
+          if (currentBrowserTokenRef.current || lastLoadedBrowserTokenRef.current) {
+            return;
+          }
+
+          clearBrowserAuthState();
         }
       }
     );
@@ -183,42 +216,68 @@ export default function App() {
     };
   }, []);
 
+  const clearBrowserAuthState = () => {
+    setIsAuthenticated(false);
+    setUser(null);
+    setAccessToken(null);
+    currentBrowserTokenRef.current = null;
+    lastLoadedBrowserTokenRef.current = null;
+    inFlightBrowserTokenRef.current = null;
+    window.sessionStorage.removeItem(BROWSER_TOKEN_STORAGE_KEY);
+  };
+
+  const syncBrowserAuth = async (token: string) => {
+    if (!token) {
+      return false;
+    }
+
+    setAccessToken(token);
+    currentBrowserTokenRef.current = token;
+    window.sessionStorage.setItem(BROWSER_TOKEN_STORAGE_KEY, token);
+
+    if (lastLoadedBrowserTokenRef.current === token) {
+      setIsAuthenticated(true);
+      return true;
+    }
+
+    if (inFlightBrowserTokenRef.current === token) {
+      return false;
+    }
+
+    inFlightBrowserTokenRef.current = token;
+    const loaded = await loadUserData(token);
+    if (loaded) {
+      lastLoadedBrowserTokenRef.current = token;
+      setIsAuthenticated(true);
+    } else if (currentBrowserTokenRef.current === token) {
+      currentBrowserTokenRef.current = null;
+      window.sessionStorage.removeItem(BROWSER_TOKEN_STORAGE_KEY);
+    }
+    inFlightBrowserTokenRef.current = null;
+    return loaded;
+  };
+
   const loadUserData = async (token: string) => {
     try {
-      // Load user profile
-      const profileResponse = await fetch(`${API_BASE}/profile`, {
+      const accountResponse = await fetch(`${BACKEND_API}/api/v1/accounts/me`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-      if (profileResponse.ok) {
-        const { user: userData } = await profileResponse.json();
-        setUser(userData);
+
+      if (!accountResponse.ok) {
+        throw new Error('Failed to load account from backend');
       }
 
-      // Load subscription
-      const subResponse = await fetch(`${API_BASE}/subscription`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (subResponse.ok) {
-        const { subscription: subData } = await subResponse.json();
-        setSubscription(subData);
-      }
+      const accountData: BackendAccount = await accountResponse.json();
+      setUser(mapBackendAccountToUser(accountData));
+      setSubscription(null);
+      setPlans([]);
 
-      // Load plans
-      const plansResponse = await fetch(`${API_BASE}/plans`, {
-        headers: {
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-      });
-      if (plansResponse.ok) {
-        const { plans: plansData } = await plansResponse.json();
-        setPlans(plansData);
-      }
+      return true;
     } catch (err) {
       console.error('Error loading user data:', err);
+      return false;
     }
   };
 
@@ -228,81 +287,19 @@ export default function App() {
 
   const handleTopUpAmount = async (amount: number) => {
     if (!accessToken) return;
-    
-    toast.promise(
-      fetch(`${API_BASE}/balance/add`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ amount }),
-      }).then(async (res) => {
-        if (res.ok) {
-          const { balance } = await res.json();
-          setUser((prev) => prev ? { ...prev, balance } : null);
-          return balance;
-        }
-        throw new Error('Failed to top up');
-      }),
-      {
-        loading: 'Пополнение баланса...',
-        success: (balance) => `Баланс пополнен! Новый баланс: ${balance} ₽`,
-        error: 'Ошибка пополнения баланса',
-      }
-    );
+
+    toast.error('Пополнение пока не перенесено на новый API.');
   };
 
   const handleActivateTrial = async () => {
     if (!accessToken) return;
-
-    toast.promise(
-      fetch(`${API_BASE}/subscription/trial`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }).then(async (res) => {
-        if (res.ok) {
-          await loadUserData(accessToken);
-          return true;
-        }
-        const error = await res.json();
-        throw new Error(error.error);
-      }),
-      {
-        loading: 'Активация пробного периода...',
-        success: 'Пробный период активирован на 7 дней!',
-        error: (err) => err.message || 'Ошибка активации',
-      }
-    );
+    toast.error('Пробный период пока не перенесен на новый API.');
   };
 
   const handleBuyPlan = async (planId: string) => {
     if (!accessToken) return;
-
-    toast.promise(
-      fetch(`${API_BASE}/plans/buy`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ planId }),
-      }).then(async (res) => {
-        if (res.ok) {
-          await loadUserData(accessToken);
-          return true;
-        }
-        const error = await res.json();
-        throw new Error(error.error);
-      }),
-      {
-        loading: 'Покупка подписки...',
-        success: 'Подписка успешно куплена!',
-        error: (err) => err.message || 'Ошибка покупки',
-      }
-    );
+    void planId;
+    toast.error('Покупка тарифа пока не перенесена на новый API.');
   };
 
   const handleCopyReferral = () => {
@@ -317,35 +314,13 @@ export default function App() {
 
   const handleWithdraw = async () => {
     if (!accessToken) return;
-
-    toast.promise(
-      fetch(`${API_BASE}/referrals/withdraw`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }).then(async (res) => {
-        if (res.ok) {
-          await loadUserData(accessToken);
-          const { withdrawn } = await res.json();
-          return withdrawn;
-        }
-        const error = await res.json();
-        throw new Error(error.error);
-      }),
-      {
-        loading: 'Вывод средств...',
-        success: (amount) => `${amount} ₽ переведено на баланс!`,
-        error: (err) => err.message || 'Ошибка вывода',
-      }
-    );
+    toast.error('Вывод пока не перенесен на новый API.');
   };
 
   const handleLogout = async () => {
+    manualLogoutRef.current = true;
     await supabase.auth.signOut();
-    setIsAuthenticated(false);
-    setUser(null);
-    setAccessToken(null);
+    clearBrowserAuthState();
   };
 
   const getSubscriptionData = () => {
@@ -448,17 +423,38 @@ export default function App() {
     }
   };
 
+  const isCompactBrowserLayout = !isTelegramWebApp;
+
   return (
-    <div className="min-h-screen bg-[var(--tg-theme-bg-color,#ffffff)]">
+    <div
+      className={`min-h-screen ${
+        isCompactBrowserLayout
+          ? 'bg-[linear-gradient(180deg,#eef4ff_0%,#f8fafc_45%,#eef2f7_100%)] px-4 py-6 md:px-6 md:py-8'
+          : 'bg-[var(--tg-theme-bg-color,#ffffff)]'
+      }`}
+    >
       <Toaster position="top-center" />
       <TopUpModal
         isOpen={isTopUpModalOpen}
         onClose={() => setIsTopUpModalOpen(false)}
         onTopUp={handleTopUpAmount}
       />
-      <Header user={{ name: user.name, avatar: user.avatar }} balance={user.balance} onTopUp={handleTopUp} />
-      <main>{renderContent()}</main>
-      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
+
+      <div
+        className={`${
+          isCompactBrowserLayout
+            ? 'relative mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-[440px] flex-col overflow-hidden rounded-[30px] border border-white/70 bg-[var(--tg-theme-bg-color,#ffffff)] shadow-[0_28px_80px_rgba(15,23,42,0.16)] backdrop-blur'
+            : 'min-h-screen bg-[var(--tg-theme-bg-color,#ffffff)]'
+        }`}
+      >
+        <Header
+          user={{ name: user.name, avatar: user.avatar }}
+          balance={user.balance}
+          onTopUp={handleTopUp}
+        />
+        <main className="flex-1 pb-24">{renderContent()}</main>
+        <BottomNav activeTab={activeTab} onTabChange={setActiveTab} compact={isCompactBrowserLayout} />
+      </div>
     </div>
   );
 }

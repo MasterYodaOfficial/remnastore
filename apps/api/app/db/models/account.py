@@ -33,6 +33,7 @@ class LoginSource(str, enum.Enum):
 
 
 class AuthProvider(str, enum.Enum):
+    SUPABASE = "supabase"
     GOOGLE = "google"
     YANDEX = "yandex"
     VK = "vk"

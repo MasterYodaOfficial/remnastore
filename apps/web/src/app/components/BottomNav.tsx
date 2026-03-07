@@ -4,9 +4,10 @@ import { Home, CreditCard, Settings, Gift } from 'lucide-react';
 interface BottomNavProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  compact?: boolean;
 }
 
-export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
+export function BottomNav({ activeTab, onTabChange, compact = false }: BottomNavProps) {
   const tabs = [
     { id: 'home', label: 'Главная', icon: Home },
     { id: 'plans', label: 'Тарифы', icon: CreditCard },
@@ -15,7 +16,11 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-[var(--tg-theme-bg-color,#ffffff)] border-t border-[var(--tg-theme-hint-color,#e5e5e5)] safe-area-inset-bottom">
+    <div
+      className={`bg-[var(--tg-theme-bg-color,#ffffff)] border-t border-[var(--tg-theme-hint-color,#e5e5e5)] safe-area-inset-bottom ${
+        compact ? 'absolute bottom-0 left-0 right-0' : 'fixed bottom-0 left-0 right-0'
+      }`}
+    >
       <div className="flex items-center justify-around px-2 py-2">
         {tabs.map((tab) => {
           const Icon = tab.icon;

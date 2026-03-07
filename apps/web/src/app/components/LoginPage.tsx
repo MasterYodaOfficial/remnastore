@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Chrome } from 'lucide-react';
+import { Shield } from 'lucide-react';
 import { supabase } from '../../../utils/supabase/client';
 
 export function LoginPage() {
@@ -16,38 +16,6 @@ export function LoginPage() {
       }
     } catch (err) {
       console.error('Failed to initiate Google login:', err);
-    }
-  };
-
-  const handleYandexLogin = async () => {
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'yandex',
-        options: {
-          redirectTo: window.location.origin,
-        },
-      });
-      if (error) {
-        console.error('Yandex login error:', error);
-      }
-    } catch (err) {
-      console.error('Failed to initiate Yandex login:', err);
-    }
-  };
-
-  const handleVKLogin = async () => {
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'vk',
-        options: {
-          redirectTo: window.location.origin,
-        },
-      });
-      if (error) {
-        console.error('VK login error:', error);
-      }
-    } catch (err) {
-      console.error('Failed to initiate VK login:', err);
     }
   };
 
@@ -93,35 +61,14 @@ export function LoginPage() {
             </svg>
             Продолжить с Google
           </button>
-
-          <button
-            onClick={handleYandexLogin}
-            className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-[#ffcc00] hover:bg-[#f5c400] rounded-xl transition-colors text-black font-medium"
-          >
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="11" fill="#FC3F1D" />
-              <path
-                d="M13.5 6.5h-2.8c-2.3 0-3.5 1.2-3.5 3.2 0 1.7.8 2.7 2.3 3.3l-2.8 4.5h2.4l2.5-4.2h-.9c-1.5 0-2.4-.8-2.4-2.4 0-1.4.7-2.1 2.2-2.1h1.3v8.7h2.1V6.5h-.4z"
-                fill="white"
-              />
-            </svg>
-            Продолжить с Яндекс
-          </button>
-
-          <button
-            onClick={handleVKLogin}
-            className="w-full flex items-center justify-center gap-3 px-6 py-4 bg-[#0077FF] hover:bg-[#0066dd] rounded-xl transition-colors text-white font-medium"
-          >
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="white">
-              <path d="M12.785 16.241s.288-.032.436-.193c.136-.148.131-.425.131-.425s-.019-1.299.574-1.491c.586-.189 1.336 1.256 2.132 1.811.602.421 1.06.328 1.06.328l2.127-.03s1.112-.069.585-.96c-.043-.073-.308-.66-1.588-1.866-1.34-1.264-1.16-1.059.453-3.246.983-1.332 1.376-2.145 1.253-2.493-.117-.332-.841-.244-.841-.244l-2.396.015s-.178-.024-.309.056c-.128.078-.211.261-.211.261s-.378 1.024-.882 1.895c-1.062 1.838-1.487 1.936-1.661 1.821-.405-.267-.304-1.073-.304-1.646 0-1.786.266-2.532-.519-2.724-.261-.064-.453-.106-1.120-.113-.857-.009-1.583.003-1.994.208-.274.137-.485.442-.356.46.159.022.520.099.711.364.247.342.238 1.111.238 1.111s.142 2.104-.331 2.365c-.325.179-.770-.186-1.726-1.854-.489-.844-.859-1.778-.859-1.778s-.071-.177-.198-.272c-.154-.115-.37-.152-.37-.152l-2.276.015s-.342.010-.467.161c-.111.134-.009.411-.009.411s1.777 4.237 3.788 6.373c1.843 1.958 3.933 1.829 3.933 1.829h.949z" />
-            </svg>
-            Продолжить с VK
-          </button>
         </div>
 
         <div className="text-center">
           <p className="text-xs text-[var(--tg-theme-hint-color,#999999)]">
             Нажимая кнопку входа, вы соглашаетесь с условиями использования
+          </p>
+          <p className="mt-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+            Следом подключим дополнительные провайдеры и email/password.
           </p>
         </div>
       </div>

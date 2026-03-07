@@ -5,8 +5,35 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.db.models import Account, AccountStatus, LoginSource
+from app.db.models import Account, AccountStatus, AuthAccount, AuthProvider, LoginSource
+from app.integrations.supabase.models import SupabaseIdentity, SupabaseUser
+
+
+class AccountIdentityConflictError(Exception):
+    pass
+
+
+SUPPORTED_SUPABASE_IDENTITY_PROVIDERS = {
+    "google": AuthProvider.GOOGLE,
+    "yandex": AuthProvider.YANDEX,
+    "vk": AuthProvider.VK,
+}
+
+
+def _ensure_referral_code(account: Account) -> None:
+    if account.referral_code is None:
+        account.referral_code = f"ref-{uuid.uuid4().hex[:8]}"
+
+
+async def get_account_by_id(session: AsyncSession, account_id) -> Account | None:
+    try:
+        account_uuid = uuid.UUID(str(account_id))
+    except (TypeError, ValueError):
+        return None
+    result = await session.execute(select(Account).where(Account.id == account_uuid))
+    return result.scalar_one_or_none()
 
 
 async def get_account_by_telegram_id(
@@ -14,6 +41,141 @@ async def get_account_by_telegram_id(
 ) -> Account | None:
     result = await session.execute(select(Account).where(Account.telegram_id == telegram_id))
     return result.scalar_one_or_none()
+
+
+async def _get_auth_account(
+    session: AsyncSession,
+    *,
+    provider: AuthProvider,
+    provider_uid: str,
+) -> AuthAccount | None:
+    result = await session.execute(
+        select(AuthAccount)
+        .options(selectinload(AuthAccount.account))
+        .where(
+            AuthAccount.provider == provider,
+            AuthAccount.provider_uid == provider_uid,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _build_supabase_identity_links(
+    supabase_user: SupabaseUser,
+) -> list[tuple[AuthProvider, str]]:
+    links: list[tuple[AuthProvider, str]] = [(AuthProvider.SUPABASE, supabase_user.id)]
+    seen = {(AuthProvider.SUPABASE, supabase_user.id)}
+
+    for identity in supabase_user.identities:
+        provider = SUPPORTED_SUPABASE_IDENTITY_PROVIDERS.get(identity.provider)
+        provider_uid = identity.provider_uid
+        if provider is None or not provider_uid:
+            continue
+
+        key = (provider, provider_uid)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        links.append(key)
+
+    return links
+
+
+def _identity_display_name(
+    supabase_user: SupabaseUser,
+    identity: SupabaseIdentity | None = None,
+) -> str | None:
+    if supabase_user.display_name:
+        return supabase_user.display_name
+
+    if identity is None:
+        return None
+
+    for key in ("full_name", "name", "display_name"):
+        value = identity.identity_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return None
+
+
+async def upsert_supabase_account(
+    session: AsyncSession,
+    *,
+    supabase_user: SupabaseUser,
+) -> Account:
+    now = datetime.utcnow()
+    identity_links = _build_supabase_identity_links(supabase_user)
+
+    resolved_account: Account | None = None
+    existing_links: dict[tuple[AuthProvider, str], AuthAccount] = {}
+
+    for provider, provider_uid in identity_links:
+        auth_account = await _get_auth_account(
+            session, provider=provider, provider_uid=provider_uid
+        )
+        if auth_account is None:
+            continue
+
+        existing_links[(provider, provider_uid)] = auth_account
+        if resolved_account is None:
+            resolved_account = auth_account.account
+            continue
+
+        if resolved_account.id != auth_account.account_id:
+            raise AccountIdentityConflictError(
+                "supabase identities point to different local accounts"
+            )
+
+    display_name = _identity_display_name(supabase_user)
+    locale = supabase_user.locale
+
+    if resolved_account is None:
+        resolved_account = Account(
+            email=supabase_user.email,
+            display_name=display_name,
+            locale=locale,
+            status=AccountStatus.ACTIVE,
+            last_login_source=LoginSource.BROWSER_OAUTH,
+            last_seen_at=now,
+        )
+        _ensure_referral_code(resolved_account)
+        session.add(resolved_account)
+        await session.flush()
+    else:
+        resolved_account.email = supabase_user.email or resolved_account.email
+        resolved_account.display_name = display_name or resolved_account.display_name
+        resolved_account.locale = locale or resolved_account.locale
+        resolved_account.last_login_source = LoginSource.BROWSER_OAUTH
+        resolved_account.last_seen_at = now
+        _ensure_referral_code(resolved_account)
+
+    identity_map = {identity.provider: identity for identity in supabase_user.identities}
+
+    for provider, provider_uid in identity_links:
+        auth_account = existing_links.get((provider, provider_uid))
+        identity = None if provider == AuthProvider.SUPABASE else identity_map.get(provider.value)
+        link_display_name = _identity_display_name(supabase_user, identity)
+
+        if auth_account is None:
+            session.add(
+                AuthAccount(
+                    account_id=resolved_account.id,
+                    provider=provider,
+                    provider_uid=provider_uid,
+                    email=supabase_user.email,
+                    display_name=link_display_name,
+                )
+            )
+            continue
+
+        auth_account.email = supabase_user.email or auth_account.email
+        auth_account.display_name = link_display_name or auth_account.display_name
+
+    await session.commit()
+    await session.refresh(resolved_account)
+    return resolved_account
 
 
 async def upsert_telegram_account(
@@ -62,9 +224,7 @@ async def upsert_telegram_account(
         account.last_login_source = last_login_source
         account.last_seen_at = now
 
-    # ensure referral_code exists
-    if account.referral_code is None:
-        account.referral_code = f"ref-{uuid.uuid4().hex[:8]}"
+    _ensure_referral_code(account)
 
     await session.commit()
     await session.refresh(account)

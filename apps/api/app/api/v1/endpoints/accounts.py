@@ -1,19 +1,26 @@
 from fastapi import APIRouter, Depends
-from fastapi import HTTPException, Query
-
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import get_current_account
 from app.db.session import get_session
 from app.schemas.account import AccountResponse, TelegramUpsertRequest
-from app.services.accounts import upsert_telegram_account, get_account_by_telegram_id
+from app.services.accounts import upsert_telegram_account
+from app.db.models import Account
 
 router = APIRouter()
 
 
 @router.post("/accounts/telegram", response_model=AccountResponse)
 async def upsert_account_from_telegram(
-    payload: TelegramUpsertRequest, session: AsyncSession = Depends(get_session)
+    payload: TelegramUpsertRequest,
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
 ) -> AccountResponse:
+    # Ensure the caller updates only their own account
+    if current_account.telegram_id != payload.telegram_id:
+        raise HTTPException(status_code=403, detail="cannot modify another account")
+
     account = await upsert_telegram_account(
         session,
         telegram_id=payload.telegram_id,
@@ -31,10 +38,6 @@ async def upsert_account_from_telegram(
 
 @router.get("/accounts/me", response_model=AccountResponse)
 async def get_account_me(
-    telegram_id: int = Query(..., description="Telegram user id"),
-    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
 ) -> AccountResponse:
-    account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
-    if account is None:
-        raise HTTPException(status_code=404, detail="account not found")
-    return account
+    return current_account
