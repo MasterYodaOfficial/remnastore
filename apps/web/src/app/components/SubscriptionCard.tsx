@@ -28,8 +28,8 @@ export function SubscriptionCard({
   return (
     <div className="bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] rounded-2xl p-4 m-4">
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 rounded-full bg-[var(--tg-theme-button-color,#3390ec)] flex items-center justify-center">
-          <Shield className="w-6 h-6 text-white" />
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)]">
+          <Shield className="h-6 w-6 text-[var(--tg-theme-button-text-color,#ffffff)]" />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-[var(--tg-theme-text-color,#000000)]">
@@ -69,7 +69,7 @@ export function SubscriptionCard({
           {subscription.hasTrial && !subscription.hasUsedTrial && (
             <button
               onClick={onActivateTrial}
-              className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-xl font-medium hover:opacity-90 transition-opacity"
+              className="w-full rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] py-3 font-medium text-[var(--tg-theme-text-color,#000000)] transition-colors hover:opacity-90"
             >
               Активировать пробный период (7 дней)
             </button>

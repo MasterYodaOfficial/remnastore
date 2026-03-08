@@ -34,7 +34,7 @@ class AccountResponse(BaseModel):
     subscription_url: Optional[str] = None
     last_login_source: Optional[LoginSource] = None
     last_seen_at: Optional[datetime] = None
-    balance_cents: int = 0
+    balance: int = 0
     referral_code: Optional[str] = None
     referral_earnings_cents: int = 0
     referrals_count: int = 0
@@ -45,3 +45,17 @@ class AccountResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LinkTelegramResponse(BaseModel):
+    """Response for generating Telegram linking URL."""
+    link_url: str = Field(..., description="URL to open in Telegram to link account")
+    link_token: str = Field(..., description="Token for reference")
+    expires_in_seconds: int = Field(..., description="Link expiration time in seconds")
+
+
+class LinkBrowserResponse(BaseModel):
+    """Response for generating browser linking URL."""
+    link_url: str = Field(..., description="URL to open in browser to link account")
+    link_token: str = Field(..., description="Token for reference")
+    expires_in_seconds: int = Field(..., description="Link expiration time in seconds")

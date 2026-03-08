@@ -112,6 +112,7 @@ async def upsert_supabase_account(
     resolved_account: Account | None = None
     existing_links: dict[tuple[AuthProvider, str], AuthAccount] = {}
 
+    # ЭТАП 1: Поиск по провайдерам (существующая логика)
     for provider, provider_uid in identity_links:
         auth_account = await _get_auth_account(
             session, provider=provider, provider_uid=provider_uid
@@ -129,9 +130,19 @@ async def upsert_supabase_account(
                 "supabase identities point to different local accounts"
             )
 
+    # ЭТАП 2: Поиск по email (НОВОЕ)
+    if resolved_account is None and supabase_user.email and supabase_user.email_confirmed_at:
+        result = await session.execute(
+            select(Account).where(Account.email == supabase_user.email)
+        )
+        email_account = result.scalar_one_or_none()
+        if email_account is not None:
+            resolved_account = email_account
+
     display_name = _identity_display_name(supabase_user)
     locale = supabase_user.locale
 
+    # ЭТАП 3: Создание нового аккаунта
     if resolved_account is None:
         resolved_account = Account(
             email=supabase_user.email,

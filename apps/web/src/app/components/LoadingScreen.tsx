@@ -5,8 +5,8 @@ export function LoadingScreen() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[var(--tg-theme-bg-color,#ffffff)] px-4">
       <div className="relative">
-        <div className="w-20 h-20 rounded-full bg-[var(--tg-theme-button-color,#3390ec)] flex items-center justify-center animate-pulse">
-          <Shield className="w-12 h-12 text-white" />
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] animate-pulse">
+          <Shield className="h-12 w-12 text-[var(--tg-theme-button-text-color,#ffffff)]" />
         </div>
         <div className="absolute inset-0 w-20 h-20 rounded-full border-4 border-[var(--tg-theme-button-color,#3390ec)] border-t-transparent animate-spin"></div>
       </div>

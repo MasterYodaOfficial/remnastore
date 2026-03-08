@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
+import { formatRubles } from '../../lib/currency';
 
 interface TopUpModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface TopUpModalProps {
 export function TopUpModal({ isOpen, onClose, onTopUp }: TopUpModalProps) {
   const [customAmount, setCustomAmount] = useState('');
   const presetAmounts = [500, 1000, 2000, 5000];
+  const parsedCustomAmount = Number.parseInt(customAmount, 10);
 
   if (!isOpen) return null;
 
@@ -19,7 +21,7 @@ export function TopUpModal({ isOpen, onClose, onTopUp }: TopUpModalProps) {
   };
 
   const handleCustomTopUp = () => {
-    const amount = parseFloat(customAmount);
+    const amount = parseInt(customAmount, 10);
     if (amount && amount > 0) {
       handleTopUp(amount);
       setCustomAmount('');
@@ -51,9 +53,9 @@ export function TopUpModal({ isOpen, onClose, onTopUp }: TopUpModalProps) {
                 <button
                   key={amount}
                   onClick={() => handleTopUp(amount)}
-                  className="py-3 bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] hover:bg-[var(--tg-theme-button-color,#3390ec)] hover:text-white rounded-xl font-semibold transition-colors text-[var(--tg-theme-text-color,#000000)]"
+                  className="rounded-xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] py-3 font-semibold text-[var(--tg-theme-text-color,#000000)] transition-colors hover:bg-[var(--tg-theme-button-color,#3390ec)] hover:text-[var(--tg-theme-button-text-color,#ffffff)]"
                 >
-                  {amount} ₽
+                  {formatRubles(amount)} ₽
                 </button>
               ))}
             </div>
@@ -71,10 +73,11 @@ export function TopUpModal({ isOpen, onClose, onTopUp }: TopUpModalProps) {
                 placeholder="Введите сумму"
                 className="flex-1 px-4 py-3 bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] rounded-xl text-[var(--tg-theme-text-color,#000000)] placeholder:text-[var(--tg-theme-hint-color,#999999)] focus:outline-none focus:ring-2 focus:ring-[var(--tg-theme-button-color,#3390ec)]"
                 min="1"
+                step="1"
               />
               <button
                 onClick={handleCustomTopUp}
-                disabled={!customAmount || parseFloat(customAmount) <= 0}
+                disabled={!customAmount || Number.isNaN(parsedCustomAmount) || parsedCustomAmount <= 0}
                 className="px-6 py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 ОК

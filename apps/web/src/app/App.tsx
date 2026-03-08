@@ -13,6 +13,7 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { BottomNav } from './components/BottomNav';
 import { TopUpModal } from './components/TopUpModal';
 import { LoadingScreen } from './components/LoadingScreen';
+import { formatAmount, formatRubles } from '../lib/currency';
 import { toast, Toaster } from 'sonner';
 import {
   CreditCard,
@@ -35,6 +36,53 @@ const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';
 const THEME_STORAGE_KEY = 'remnastore.theme';
 type AuthView = 'default' | 'recovery' | 'recovery-expired';
 
+const APP_THEME_TOKENS = {
+  light: {
+    '--tg-theme-bg-color': '#f8fafc',
+    '--tg-theme-text-color': '#0f172a',
+    '--tg-theme-hint-color': '#64748b',
+    '--tg-theme-link-color': '#2563eb',
+    '--tg-theme-button-color': '#2563eb',
+    '--tg-theme-button-text-color': '#ffffff',
+    '--tg-theme-secondary-bg-color': '#e5edf8',
+    '--app-surface-color': '#dbe4f2',
+    '--app-border-color': 'rgba(15, 23, 42, 0.12)',
+    '--app-toggle-track': '#dbe7ff',
+    '--app-toggle-thumb': '#ffffff',
+    '--app-danger-bg': '#ef4444',
+    '--app-danger-bg-hover': '#dc2626',
+    '--app-danger-text': '#ffffff',
+    '--app-success-color': '#16a34a',
+    '--app-success-bg': '#16a34a',
+    '--app-success-bg-hover': '#15803d',
+    '--app-success-text': '#ffffff',
+    '--app-warning-color': '#ca8a04',
+    '--app-muted-contrast': '#475569',
+  },
+  dark: {
+    '--tg-theme-bg-color': '#0b1220',
+    '--tg-theme-text-color': '#e5edf8',
+    '--tg-theme-hint-color': '#8ea0b9',
+    '--tg-theme-link-color': '#67d0ff',
+    '--tg-theme-button-color': '#67d0ff',
+    '--tg-theme-button-text-color': '#04111d',
+    '--tg-theme-secondary-bg-color': '#162033',
+    '--app-surface-color': '#22304a',
+    '--app-border-color': 'rgba(148, 163, 184, 0.18)',
+    '--app-toggle-track': '#22304a',
+    '--app-toggle-thumb': '#ffffff',
+    '--app-danger-bg': '#f87171',
+    '--app-danger-bg-hover': '#ef4444',
+    '--app-danger-text': '#ffffff',
+    '--app-success-color': '#4ade80',
+    '--app-success-bg': '#22c55e',
+    '--app-success-bg-hover': '#16a34a',
+    '--app-success-text': '#04110d',
+    '--app-warning-color': '#facc15',
+    '--app-muted-contrast': '#cbd5e1',
+  },
+} as const;
+
 interface BackendAccount {
   id: string;
   telegram_id?: number | null;
@@ -43,7 +91,7 @@ interface BackendAccount {
   username?: string | null;
   first_name?: string | null;
   last_name?: string | null;
-  balance_cents: number;
+  balance: number;
   referral_code?: string | null;
   referral_earnings_cents: number;
   referrals_count: number;
@@ -53,6 +101,7 @@ interface User {
   id: string;
   name: string;
   email: string;
+  telegram_id?: number | null;
   balance: number;
   referralCode: string;
   referralsCount: number;
@@ -89,7 +138,8 @@ function mapBackendAccountToUser(account: BackendAccount): User {
     id: account.id,
     name,
     email: account.email || '',
-    balance: (account.balance_cents || 0) / 100,
+    telegram_id: account.telegram_id ?? null,
+    balance: account.balance || 0,
     referralCode: account.referral_code || '',
     referralsCount: account.referrals_count || 0,
     earnings: (account.referral_earnings_cents || 0) / 100,
@@ -108,6 +158,17 @@ function getInitialTheme(): 'light' | 'dark' {
   }
 
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyAppThemeVariables(nextTheme: 'light' | 'dark') {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const root = window.document.documentElement;
+  for (const [tokenName, tokenValue] of Object.entries(APP_THEME_TOKENS[nextTheme])) {
+    root.style.setProperty(tokenName, tokenValue);
+  }
 }
 
 export default function App() {
@@ -129,6 +190,7 @@ export default function App() {
   const lastLoadedBrowserTokenRef = useRef<string | null>(null);
   const inFlightBrowserTokenRef = useRef<string | null>(null);
   const currentBrowserTokenRef = useRef<string | null>(null);
+  const inFlightLinkTokenRef = useRef<string | null>(null);
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
 
@@ -196,6 +258,21 @@ export default function App() {
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   };
 
+  const getBrowserLinkCallbackState = () => {
+    const url = new URL(window.location.href);
+    return {
+      linkToken: url.searchParams.get('link_token'),
+      linkFlow: url.searchParams.get('link_flow'),
+    };
+  };
+
+  const clearBrowserLinkCallbackState = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('link_token');
+    url.searchParams.delete('link_flow');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  };
+
   const markPasswordRecoveryActive = () => {
     window.sessionStorage.setItem(PASSWORD_RECOVERY_STORAGE_KEY, '1');
   };
@@ -215,27 +292,31 @@ export default function App() {
       
       const tg = getTelegramWebApp();
       if (tg && tg.initData) {
-        setIsTelegramWebApp(true);
-        setAuthViewMode('default');
-        // Apply Telegram theme
-        if (tg.colorScheme === 'dark') {
-          setTheme('dark');
-        } else if (tg.colorScheme === 'light') {
-          setTheme('light');
-        }
-        // Expand the WebApp to full height
-        tg.expand();
-        // Auto-authenticate Telegram users
-        handleTelegramAuth(tg);
-      } else {
-        setIsTelegramWebApp(false);
-        if (isPasswordRecoveryRequested()) {
-          setAuthViewMode('recovery');
-          preparePasswordRecovery();
-        } else {
+        // Only treat as Telegram WebApp if it's not desktop web platform
+        // Desktop Telegram app has platform='web' but should be treated like browser
+        const isMobileWebApp = tg.platform !== 'web';
+        setIsTelegramWebApp(isMobileWebApp);
+        
+        if (isMobileWebApp) {
           setAuthViewMode('default');
+          // Apply Telegram theme
+          if (tg.colorScheme === 'dark') {
+            setTheme('dark');
+          } else if (tg.colorScheme === 'light') {
+            setTheme('light');
+          }
+          // Expand the WebApp to full height
+          tg.expand();
+          // Auto-authenticate Telegram users
+          handleTelegramAuth(tg);
+        } else {
+          // Desktop Telegram app - treat as browser
+          setIsTelegramWebApp(false);
           checkSupabaseAuth();
         }
+      } else {
+        setIsTelegramWebApp(false);
+        checkSupabaseAuth();
       }
     };
 
@@ -248,6 +329,7 @@ export default function App() {
     }
 
     const root = window.document.documentElement;
+    applyAppThemeVariables(theme);
     root.classList.toggle('dark', theme === 'dark');
     root.classList.toggle('theme-dark', theme === 'dark');
     root.classList.toggle('theme-light', theme === 'light');
@@ -308,6 +390,18 @@ export default function App() {
     return () => mediaQuery.removeListener(listener);
   }, [isTelegramWebApp]);
 
+  // Refresh user data when window regains focus (after returning from Telegram linking)
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) return;
+
+    const handleFocus = () => {
+      refreshUserData();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [isAuthenticated, accessToken]);
+
   const handleTelegramAuth = async (tg: any) => {
     try {
       const telegramUser = tg.initDataUnsafe?.user;
@@ -318,12 +412,12 @@ export default function App() {
 
       let accountUser = mapBackendAccountToUser({
         id: String(telegramUser.id),
-        email: `telegram_${telegramUser.id}@vpn.service`,
+        telegram_id: telegramUser.id,
         display_name: telegramUser.first_name,
         username: telegramUser.username,
         first_name: telegramUser.first_name,
         last_name: telegramUser.last_name,
-        balance_cents: 0,
+        balance: 0,
         referral_earnings_cents: 0,
         referrals_count: 0,
       });
@@ -338,6 +432,7 @@ export default function App() {
         if (authResponse.ok) {
           const authData = await authResponse.json();
           accountUser = mapBackendAccountToUser(authData.account as BackendAccount);
+          setAccessToken(authData.access_token); // Save the JWT token
         }
       } catch {
         /* ignore */
@@ -348,7 +443,6 @@ export default function App() {
         avatar: telegramUser.photo_url,
       });
       setIsAuthenticated(true);
-      setAccessToken(null);
     } catch (err) {
       console.error('Telegram auth error:', err);
     } finally {
@@ -615,9 +709,137 @@ export default function App() {
   const handleLogout = async () => {
     manualLogoutRef.current = true;
     clearPasswordRecoveryActive();
+    clearBrowserLinkCallbackState();
     await supabase.auth.signOut();
     clearBrowserAuthState();
   };
+
+  const handleLinkTelegram = async () => {
+    if (!accessToken) {
+      toast.error('Необходимо войти в аккаунт');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/accounts/link-telegram`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Не удалось создать ссылку');
+      }
+
+      const data = await response.json();
+      window.open(data.link_url, '_blank');
+      toast.success('Ссылка для привязки Telegram открыта в новом окне');
+    } catch (err) {
+      console.error('Link Telegram error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось привязать Telegram');
+    }
+  };
+
+  const handleLinkBrowser = async () => {
+    if (!accessToken) {
+      toast.error('Необходимо войти в аккаунт');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/accounts/link-browser`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Не удалось создать ссылку');
+      }
+
+      const data = await response.json();
+      const tg = getTelegramWebApp();
+      if (isTelegramWebApp && tg?.openLink) {
+        tg.openLink(data.link_url, { try_browser: true });
+      } else {
+        window.location.href = data.link_url;
+      }
+    } catch (err) {
+      console.error('Link Browser error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось привязать браузерный аккаунт');
+    }
+  };
+
+  const completeBrowserLink = async (token: string, linkToken: string) => {
+    if (!linkToken || inFlightLinkTokenRef.current === linkToken) {
+      return;
+    }
+
+    inFlightLinkTokenRef.current = linkToken;
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/accounts/link-browser-complete`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ link_token: linkToken }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Не удалось завершить привязку');
+      }
+
+      clearBrowserLinkCallbackState();
+      await loadUserData(token);
+      toast.success('Браузерный аккаунт успешно привязан');
+    } catch (err) {
+      console.error('Complete browser link error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось завершить привязку аккаунта');
+    } finally {
+      if (inFlightLinkTokenRef.current === linkToken) {
+        inFlightLinkTokenRef.current = null;
+      }
+    }
+  };
+
+  const refreshUserData = async () => {
+    if (!accessToken) return;
+    
+    try {
+      const accountResponse = await fetch(`${BACKEND_API}/api/v1/accounts/me`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (accountResponse.ok) {
+        const accountData: BackendAccount = await accountResponse.json();
+        setUser(mapBackendAccountToUser(accountData));
+      }
+    } catch (err) {
+      console.error('Error refreshing user data:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isTelegramWebApp || !accessToken) {
+      return;
+    }
+
+    const { linkToken, linkFlow } = getBrowserLinkCallbackState();
+    if (linkFlow !== 'browser' || !linkToken) {
+      return;
+    }
+
+    void completeBrowserLink(accessToken, linkToken);
+  }, [accessToken, isTelegramWebApp]);
 
   const handlePasswordRecoveryComplete = async () => {
     setAuthViewMode('default');
@@ -781,6 +1003,10 @@ export default function App() {
             onThemeChange={setTheme}
             onLogout={handleLogout}
             showLogout={!isTelegramWebApp}
+            user={user}
+            onLinkTelegram={handleLinkTelegram}
+            onLinkBrowser={handleLinkBrowser}
+            isTelegramWebApp={isTelegramWebApp}
           />
         );
       default:
@@ -944,7 +1170,7 @@ export default function App() {
                 </div>
                 <div className="mt-5 rounded-2xl bg-white/8 p-4 dark:bg-white/5">
                   <div className="text-xs uppercase tracking-[0.16em] text-slate-300">Баланс</div>
-                  <div className="mt-2 text-3xl font-semibold">{user.balance.toFixed(2)} ₽</div>
+                  <div className="mt-2 text-3xl font-semibold">{formatRubles(user.balance)} ₽</div>
                 </div>
               </div>
 
@@ -977,7 +1203,7 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="mt-auto flex items-center justify-center gap-2 rounded-2xl bg-red-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-600"
+              className="mt-auto flex items-center justify-center gap-2 rounded-2xl bg-[var(--app-danger-bg,#ef4444)] px-4 py-3 text-sm font-semibold text-[var(--app-danger-text,#ffffff)] transition hover:bg-[var(--app-danger-bg-hover,#dc2626)]"
             >
               <LogOut className="h-4 w-4" />
               Выйти из аккаунта
@@ -1027,7 +1253,7 @@ export default function App() {
                   </span>
                   <Wallet className="h-5 w-5 text-slate-300" />
                 </div>
-                <div className="mt-4 text-3xl font-semibold">{user.balance.toFixed(2)} ₽</div>
+                <div className="mt-4 text-3xl font-semibold">{formatRubles(user.balance)} ₽</div>
                 <div className="mt-2 text-sm text-slate-300">Доступно для покупок и продления</div>
               </div>
 
@@ -1073,7 +1299,7 @@ export default function App() {
                   <Sparkles className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
-                  {user.earnings.toFixed(2)} ₽
+                  {formatAmount(user.earnings, 2)} ₽
                 </div>
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">Начислено по реферальной программе</div>
               </div>
@@ -1170,7 +1396,7 @@ export default function App() {
                       <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
                         Доступно к выводу
                       </div>
-                      <div className="mt-3 text-3xl font-semibold">{user.earnings.toFixed(2)} ₽</div>
+                      <div className="mt-3 text-3xl font-semibold">{formatAmount(user.earnings, 2)} ₽</div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
                       Детальный список рефералов появится автоматически, когда переведем
@@ -1229,7 +1455,7 @@ export default function App() {
 
                 <button
                   onClick={handleLogout}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-red-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-600"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--app-danger-bg,#ef4444)] px-4 py-3 text-sm font-semibold text-[var(--app-danger-text,#ffffff)] transition hover:bg-[var(--app-danger-bg-hover,#dc2626)]"
                 >
                   <LogOut className="h-4 w-4" />
                   Выйти из аккаунта

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Users, Copy, Check, DollarSign } from 'lucide-react';
+import { formatAmount } from '../../lib/currency';
 
 interface ReferralCardProps {
   referralCode: string;
@@ -19,14 +20,16 @@ export function ReferralCard({
   copied 
 }: ReferralCardProps) {
   return (
-    <div className="rounded-2xl p-4 m-4"
-         style={{
-           background: "var(--referral-bg)",
-           border: "1px solid var(--referral-border)"
-         }}>
+    <div
+      className="m-4 rounded-2xl p-4"
+      style={{
+        background: 'var(--referral-bg)',
+        border: '1px solid var(--referral-border)',
+      }}
+    >
       <div className="flex items-center gap-3 mb-4">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center">
-          <Users className="w-6 h-6 text-white" />
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]">
+          <Users className="w-6 h-6" />
         </div>
         <div>
           <h2 className="text-lg font-semibold text-[var(--tg-theme-text-color,#000000)]">
@@ -53,7 +56,7 @@ export function ReferralCard({
               Заработано
             </div>
             <div className="text-2xl font-bold text-[var(--tg-theme-button-color,#3390ec)]">
-              {earnings} ₽
+              {formatAmount(earnings, 2)} ₽
             </div>
           </div>
         </div>
@@ -69,7 +72,7 @@ export function ReferralCard({
             </code>
             <button
               onClick={onCopy}
-              className="p-2 bg-[var(--tg-theme-button-color,#3390ec)] text-white rounded-lg hover:opacity-90 transition-opacity"
+              className="rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] p-2 text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
             >
               {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
             </button>
@@ -79,7 +82,7 @@ export function ReferralCard({
         {earnings > 0 && (
           <button
             onClick={onWithdraw}
-            className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-success-bg,#16a34a)] py-3 font-medium text-[var(--app-success-text,#ffffff)] transition-colors hover:bg-[var(--app-success-bg-hover,#15803d)]"
           >
             <DollarSign className="w-5 h-5" />
             Вывести средства

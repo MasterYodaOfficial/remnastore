@@ -35,7 +35,12 @@ class Settings(BaseSettings):
         default="",
         validation_alias="BOT_TOKEN",
     )
+    telegram_bot_username: str = Field(
+        default="",
+        validation_alias="BOT_USERNAME",
+    )
     telegram_init_data_ttl_seconds: int = 600
+    webapp_url: str = Field(default="", validation_alias="WEBAPP_URL")
 
 
 settings = Settings()

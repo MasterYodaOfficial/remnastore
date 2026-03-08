@@ -75,10 +75,11 @@ export function LoginPage({
   const handleGoogleLogin = async () => {
     try {
       setActiveProvider('google');
+      const redirectUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: redirectUrl,
         },
       });
 
@@ -165,7 +166,7 @@ export function LoginPage({
         email: normalizedEmail,
         password,
         options: {
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}${window.location.search}`,
         },
       });
 

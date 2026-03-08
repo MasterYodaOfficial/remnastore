@@ -1,5 +1,6 @@
 import React from 'react';
 import { Users, TrendingUp, DollarSign } from 'lucide-react';
+import { formatAmount } from '../../lib/currency';
 
 interface Referral {
   id: string;
@@ -34,16 +35,20 @@ export function ReferralPage({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <div className="bg-gradient-to-br from-purple-500 to-blue-500 rounded-2xl p-4 text-white">
-          <TrendingUp className="w-6 h-6 mb-2 opacity-80" />
-          <div className="text-xs opacity-80 mb-1">Всего заработано</div>
-          <div className="text-2xl font-bold">{totalEarnings} ₽</div>
+        <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-4">
+          <TrendingUp className="mb-2 h-6 w-6 text-[var(--tg-theme-button-color,#3390ec)]" />
+          <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">Всего заработано</div>
+          <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
+            {formatAmount(totalEarnings, 2)} ₽
+          </div>
         </div>
-        
-        <div className="bg-gradient-to-br from-green-500 to-emerald-500 rounded-2xl p-4 text-white">
-          <DollarSign className="w-6 h-6 mb-2 opacity-80" />
-          <div className="text-xs opacity-80 mb-1">Доступно</div>
-          <div className="text-2xl font-bold">{availableForWithdraw} ₽</div>
+
+        <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-4">
+          <DollarSign className="mb-2 h-6 w-6 text-[var(--app-success-color,#16a34a)]" />
+          <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">Доступно</div>
+          <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
+            {formatAmount(availableForWithdraw, 2)} ₽
+          </div>
         </div>
       </div>
 
@@ -52,7 +57,7 @@ export function ReferralPage({
           onClick={onWithdraw}
           className="w-full py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity"
         >
-          Вывести на баланс {availableForWithdraw} ₽
+          Вывести на баланс {formatAmount(availableForWithdraw, 2)} ₽
         </button>
       )}
 
@@ -66,11 +71,11 @@ export function ReferralPage({
             {referrals.map((referral) => (
               <div
                 key={referral.id}
-                className="bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] rounded-xl p-4"
+                className="rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] p-4"
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[var(--tg-theme-button-color,#3390ec)] flex items-center justify-center text-white font-semibold">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
                       {referral.name.charAt(0)}
                     </div>
                     <div>
@@ -83,14 +88,14 @@ export function ReferralPage({
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="font-semibold text-green-600">
-                      +{referral.earned} ₽
+                    <div className="font-semibold text-[var(--app-success-color,#16a34a)]">
+                      +{formatAmount(referral.earned, 2)} ₽
                     </div>
                     <div
                       className={`text-xs ${
                         referral.status === 'active'
-                          ? 'text-green-600'
-                          : 'text-yellow-600'
+                          ? 'text-[var(--app-success-color,#16a34a)]'
+                          : 'text-[var(--app-warning-color,#ca8a04)]'
                       }`}
                     >
                       {referral.status === 'active' ? 'Активен' : 'Ожидание'}

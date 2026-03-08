@@ -6,7 +6,8 @@ class Settings(BaseSettings):
 
     bot_token: str = ""
     bot_admin_ids: str = ""
-    api_base_url: str = ""
+    api_url: str = ""
+    api_token: str = ""
     webapp_url: str = ""
     bot_use_webhook: bool = False
     bot_webhook_base_url: str = ""

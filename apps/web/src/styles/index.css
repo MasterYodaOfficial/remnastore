@@ -11,6 +11,19 @@
   --tg-theme-button-color: #3390ec;
   --tg-theme-button-text-color: #ffffff;
   --tg-theme-secondary-bg-color: #f4f4f5;
+  --app-surface-color: #dbe4f2;
+  --app-border-color: rgba(15, 23, 42, 0.12);
+  --app-toggle-track: #dbe7ff;
+  --app-toggle-thumb: #ffffff;
+  --app-danger-bg: #ef4444;
+  --app-danger-bg-hover: #dc2626;
+  --app-danger-text: #ffffff;
+  --app-success-color: #16a34a;
+  --app-success-bg: #16a34a;
+  --app-success-bg-hover: #15803d;
+  --app-success-text: #ffffff;
+  --app-warning-color: #ca8a04;
+  --app-muted-contrast: #475569;
 }
 
 /* Dark theme support */
@@ -23,6 +36,19 @@
     --tg-theme-button-color: #5ac8fa;
     --tg-theme-button-text-color: #ffffff;
     --tg-theme-secondary-bg-color: #232e3c;
+    --app-surface-color: #22304a;
+    --app-border-color: rgba(148, 163, 184, 0.18);
+    --app-toggle-track: #22304a;
+    --app-toggle-thumb: #ffffff;
+    --app-danger-bg: #f87171;
+    --app-danger-bg-hover: #ef4444;
+    --app-danger-text: #ffffff;
+    --app-success-color: #4ade80;
+    --app-success-bg: #22c55e;
+    --app-success-bg-hover: #16a34a;
+    --app-success-text: #04110d;
+    --app-warning-color: #facc15;
+    --app-muted-contrast: #cbd5e1;
   }
 }
 
@@ -34,6 +60,19 @@
   --tg-theme-button-color: #3390ec;
   --tg-theme-button-text-color: #ffffff;
   --tg-theme-secondary-bg-color: #f4f4f5;
+  --app-surface-color: #dbe4f2;
+  --app-border-color: rgba(15, 23, 42, 0.12);
+  --app-toggle-track: #dbe7ff;
+  --app-toggle-thumb: #ffffff;
+  --app-danger-bg: #ef4444;
+  --app-danger-bg-hover: #dc2626;
+  --app-danger-text: #ffffff;
+  --app-success-color: #16a34a;
+  --app-success-bg: #16a34a;
+  --app-success-bg-hover: #15803d;
+  --app-success-text: #ffffff;
+  --app-warning-color: #ca8a04;
+  --app-muted-contrast: #475569;
 }
 
 :root.theme-dark,
@@ -45,6 +84,19 @@
   --tg-theme-button-color: #5ac8fa;
   --tg-theme-button-text-color: #ffffff;
   --tg-theme-secondary-bg-color: #232e3c;
+  --app-surface-color: #22304a;
+  --app-border-color: rgba(148, 163, 184, 0.18);
+  --app-toggle-track: #22304a;
+  --app-toggle-thumb: #ffffff;
+  --app-danger-bg: #f87171;
+  --app-danger-bg-hover: #ef4444;
+  --app-danger-text: #ffffff;
+  --app-success-color: #4ade80;
+  --app-success-bg: #22c55e;
+  --app-success-bg-hover: #16a34a;
+  --app-success-text: #04110d;
+  --app-warning-color: #facc15;
+  --app-muted-contrast: #cbd5e1;
 }
 
 body {
@@ -59,7 +111,7 @@ body {
 
 /* Smooth transitions */
 * {
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 /* Custom scrollbar for better UX */

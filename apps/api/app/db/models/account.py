@@ -39,6 +39,11 @@ class AuthProvider(str, enum.Enum):
     VK = "vk"
 
 
+class LinkType(str, enum.Enum):
+    TELEGRAM_FROM_BROWSER = "telegram_from_browser"
+    BROWSER_FROM_TELEGRAM = "browser_from_telegram"
+
+
 class Account(Base):
     __tablename__ = "accounts"
     __table_args__ = (
@@ -63,7 +68,7 @@ class Account(Base):
     remnawave_user_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True))
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))
 
-    balance_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
     referral_earnings_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referrals_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -166,6 +171,15 @@ class AuthLinkToken(Base):
     consumed_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
 
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+
+    link_type: Mapped[Optional[LinkType]] = mapped_column(
+        Enum(
+            LinkType,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="linktype",
+            native_enum=True,
+        )
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

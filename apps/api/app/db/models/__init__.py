@@ -5,6 +5,7 @@ from app.db.models.account import (
     AuthLinkToken,
     AuthProvider,
     LoginSource,
+    LinkType,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "AuthAccount",
     "AuthProvider",
     "AuthLinkToken",
+    "LinkType",
 ]

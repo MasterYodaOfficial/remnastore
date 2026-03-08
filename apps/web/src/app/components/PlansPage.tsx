@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check, Zap } from 'lucide-react';
+import { formatRubles } from '../../lib/currency';
 
 interface Plan {
   id: string;
@@ -25,7 +26,7 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
           Выберите тариф
         </h1>
         <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-          Ваш баланс: <span className="font-semibold">{balance.toFixed(2)} ₽</span>
+          Ваш баланс: <span className="font-semibold">{formatRubles(balance)} ₽</span>
         </p>
       </div>
 
@@ -38,7 +39,7 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
             }`}
           >
             {plan.popular && (
-              <div className="absolute -top-2 left-4 bg-gradient-to-r from-purple-500 to-blue-500 text-white text-xs font-semibold px-3 py-1 rounded-full flex items-center gap-1">
+              <div className="absolute -top-2 left-4 flex items-center gap-1 rounded-full bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-xs font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
                 <Zap className="w-3 h-3" />
                 Популярный
               </div>
@@ -50,7 +51,7 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
               </h3>
               <div className="flex items-baseline gap-1 mt-2">
                 <span className="text-3xl font-bold text-[var(--tg-theme-button-color,#3390ec)]">
-                  {plan.price}
+                  {formatRubles(plan.price)}
                 </span>
                 <span className="text-lg text-[var(--tg-theme-hint-color,#999999)]">₽</span>
                 <span className="text-sm text-[var(--tg-theme-hint-color,#999999)] ml-1">
@@ -62,7 +63,7 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
             <div className="space-y-2 mb-4">
               {plan.features.map((feature, index) => (
                 <div key={index} className="flex items-start gap-2">
-                  <Check className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  <Check className="mt-0.5 h-5 w-5 shrink-0 text-[var(--app-success-color,#16a34a)]" />
                   <span className="text-sm text-[var(--tg-theme-text-color,#000000)]">
                     {feature}
                   </span>
@@ -81,7 +82,7 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
               className={`w-full py-3 rounded-xl font-medium hover:opacity-90 transition-opacity ${
                 balance >= plan.price
                   ? 'bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]'
-                  : 'bg-gray-300 text-gray-600'
+                  : 'bg-[var(--app-surface-color,#dbe4f2)] text-[var(--app-muted-contrast,#475569)]'
               }`}
             >
               {balance >= plan.price ? 'Купить' : 'Пополнить баланс'}
