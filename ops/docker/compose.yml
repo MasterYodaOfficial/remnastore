@@ -5,11 +5,15 @@ services:
       dockerfile: ops/docker/api.Dockerfile
     env_file:
       - ../../.env
+    environment:
+      REDIS_URL: redis://redis:6379/0
     ports:
       - "8000:8000"
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_started
+      redis:
+        condition: service_healthy
 
   bot:
     build:
@@ -50,6 +54,11 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   db-data:

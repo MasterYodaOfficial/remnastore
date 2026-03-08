@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import Account, AccountStatus, AuthAccount, AuthProvider, LoginSource
 from app.integrations.supabase.models import SupabaseIdentity, SupabaseUser
+from app.services.cache import get_cache
 
 
 class AccountIdentityConflictError(Exception):
@@ -175,6 +176,7 @@ async def upsert_supabase_account(
 
     await session.commit()
     await session.refresh(resolved_account)
+    await get_cache().delete(get_cache().account_response_key(str(resolved_account.id)))
     return resolved_account
 
 
@@ -228,4 +230,5 @@ async def upsert_telegram_account(
 
     await session.commit()
     await session.refresh(account)
+    await get_cache().delete(get_cache().account_response_key(str(account.id)))
     return account

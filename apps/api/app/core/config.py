@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     jwt_access_token_expires_seconds: int = 3600
     supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
     supabase_anon_key: str = Field(default="", validation_alias="SUPABASE_ANON_KEY")
+    supabase_user_cache_ttl_seconds: int = Field(
+        default=300, validation_alias="SUPABASE_USER_CACHE_TTL_SECONDS"
+    )
+    auth_token_cache_ttl_seconds: int = Field(
+        default=300, validation_alias="AUTH_TOKEN_CACHE_TTL_SECONDS"
+    )
+    account_response_cache_ttl_seconds: int = Field(
+        default=60, validation_alias="ACCOUNT_RESPONSE_CACHE_TTL_SECONDS"
+    )
 
     # Telegram
     telegram_bot_token: str = Field(

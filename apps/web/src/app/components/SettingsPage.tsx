@@ -1,31 +1,23 @@
 import React from 'react';
 import { Moon, Sun, LogOut, Globe, Bell, Shield, HelpCircle } from 'lucide-react';
+import { ThemeToggle } from './ThemeToggle';
 
 interface SettingsPageProps {
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onLogout: () => void;
+  showLogout?: boolean;
 }
 
-export function SettingsPage({ theme, onThemeChange, onLogout }: SettingsPageProps) {
+export function SettingsPage({
+  theme,
+  onThemeChange,
+  onLogout,
+  showLogout = true,
+}: SettingsPageProps) {
+  const toggleTheme = () => onThemeChange(theme === 'dark' ? 'light' : 'dark');
+
   const settingsSections = [
-    {
-      title: 'Внешний вид',
-      items: [
-        {
-          icon: theme === 'dark' ? Moon : Sun,
-          label: 'Тема',
-          action: (
-            <button
-              onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
-              className="px-4 py-1.5 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] text-sm font-medium"
-            >
-              {theme === 'dark' ? 'Темная' : 'Светлая'}
-            </button>
-          ),
-        },
-      ],
-    },
     {
       title: 'Основное',
       items: [
@@ -70,14 +62,16 @@ export function SettingsPage({ theme, onThemeChange, onLogout }: SettingsPagePro
           Настройки
         </h1>
       </div>
-      <div className="flex items-center gap-2 px-2">
-        <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">Тема</span>
-        <button
-          onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
-          className="px-3 py-1.5 rounded-lg border border-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-color,#3390ec)] text-sm font-medium"
-        >
-          {theme === 'dark' ? 'Светлая' : 'Тёмная'}
-        </button>
+      <div className="flex items-center justify-between gap-4 rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-4">
+        <div>
+          <div className="text-sm font-semibold text-[var(--tg-theme-text-color,#000000)]">
+            Тема интерфейса
+          </div>
+          <div className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+            Переключение между светлой и темной схемой
+          </div>
+        </div>
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
 
       {settingsSections.map((section, sectionIndex) => (
@@ -111,13 +105,15 @@ export function SettingsPage({ theme, onThemeChange, onLogout }: SettingsPagePro
         </div>
       ))}
 
-      <button
-        onClick={onLogout}
-        className="w-full flex items-center justify-center gap-2 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors"
-      >
-        <LogOut className="w-5 h-5" />
-        Выйти из аккаунта
-      </button>
+      {showLogout && (
+        <button
+          onClick={onLogout}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600 transition-colors"
+        >
+          <LogOut className="w-5 h-5" />
+          Выйти из аккаунта
+        </button>
+      )}
     </div>
   );
 }

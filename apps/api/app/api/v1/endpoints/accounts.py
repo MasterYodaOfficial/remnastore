@@ -3,9 +3,11 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_account
+from app.core.config import settings
 from app.db.session import get_session
 from app.schemas.account import AccountResponse, TelegramUpsertRequest
 from app.services.accounts import upsert_telegram_account
+from app.services.cache import get_cache
 from app.db.models import Account
 
 router = APIRouter()
@@ -40,4 +42,20 @@ async def upsert_account_from_telegram(
 async def get_account_me(
     current_account: Account = Depends(get_current_account),
 ) -> AccountResponse:
-    return current_account
+    cache = get_cache()
+    cache_key = cache.account_response_key(str(current_account.id))
+    cached_response = await cache.get_json(cache_key)
+
+    if isinstance(cached_response, dict):
+        try:
+            return AccountResponse.model_validate(cached_response)
+        except Exception:
+            await cache.delete(cache_key)
+
+    response = AccountResponse.model_validate(current_account)
+    await cache.set_json(
+        cache_key,
+        response.model_dump(mode="json"),
+        settings.account_response_cache_ttl_seconds,
+    )
+    return response
