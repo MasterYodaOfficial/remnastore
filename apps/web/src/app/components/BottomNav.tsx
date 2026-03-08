@@ -17,7 +17,7 @@ export function BottomNav({ activeTab, onTabChange, compact = false }: BottomNav
 
   return (
     <div
-      className={`bg-[var(--tg-theme-bg-color,#ffffff)] border-t border-[var(--tg-theme-hint-color,#e5e5e5)] safe-area-inset-bottom ${
+      className={`z-20 border-t border-[var(--tg-theme-hint-color,#e5e5e5)] bg-[var(--tg-theme-bg-color,#ffffff)] safe-area-inset-bottom ${
         compact ? 'absolute bottom-0 left-0 right-0' : 'fixed bottom-0 left-0 right-0'
       }`}
     >

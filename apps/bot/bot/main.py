@@ -62,13 +62,11 @@ async def ensure_webhook(bot: Bot, max_attempts: int = 5) -> None:
 def create_fastapi_app(bot: Bot, dp: Dispatcher) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        await dp.emit_startup(bot)
-        await on_startup(bot)
+        await dp.emit_startup(bot=bot)
         try:
             yield
         finally:
-            await on_shutdown(bot)
-            await dp.emit_shutdown(bot)
+            await dp.emit_shutdown(bot=bot)
 
     app = FastAPI(title="Bot Webhook", lifespan=lifespan)
 

@@ -13,7 +13,7 @@ interface HeaderProps {
 
 export function Header({ user, balance, onTopUp }: HeaderProps) {
   return (
-    <div className="bg-[var(--tg-theme-bg-color,#ffffff)] border-b border-[var(--tg-theme-hint-color,#e5e5e5)] p-4">
+    <div className="border-b border-[var(--tg-theme-hint-color,#e5e5e5)] bg-[var(--tg-theme-bg-color,#ffffff)] p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">

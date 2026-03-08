@@ -126,7 +126,49 @@ interface Plan {
   popular?: boolean;
 }
 
-function mapBackendAccountToUser(account: BackendAccount): User {
+interface SupabaseIdentityLike {
+  provider?: string;
+  identity_data?: Record<string, unknown> | null;
+}
+
+interface SupabaseUserLike {
+  user_metadata?: Record<string, unknown> | null;
+  identities?: SupabaseIdentityLike[] | null;
+}
+
+function pickAvatarUrl(source: Record<string, unknown> | null | undefined): string | undefined {
+  if (!source) {
+    return undefined;
+  }
+
+  for (const key of ['avatar_url', 'picture', 'photo_url', 'image', 'profile_image_url']) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function getSupabaseAvatarUrl(user: SupabaseUserLike | null | undefined): string | undefined {
+  if (!user) {
+    return undefined;
+  }
+
+  const identities = Array.isArray(user.identities) ? user.identities : [];
+  const googleIdentity = identities.find((identity) => identity?.provider === 'google');
+
+  return (
+    pickAvatarUrl(googleIdentity?.identity_data) ||
+    pickAvatarUrl(user.user_metadata) ||
+    identities
+      .map((identity) => pickAvatarUrl(identity?.identity_data))
+      .find((value): value is string => Boolean(value))
+  );
+}
+
+function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User {
   const name =
     account.display_name ||
     account.first_name ||
@@ -144,6 +186,7 @@ function mapBackendAccountToUser(account: BackendAccount): User {
     referralsCount: account.referrals_count || 0,
     earnings: (account.referral_earnings_cents || 0) / 100,
     hasUsedTrial: false,
+    avatar,
   };
 }
 
@@ -420,7 +463,7 @@ export default function App() {
         balance: 0,
         referral_earnings_cents: 0,
         referrals_count: 0,
-      });
+      }, telegramUser.photo_url);
 
       try {
         const authResponse = await fetch(`${BACKEND_API}/api/v1/auth/telegram/webapp`, {
@@ -431,17 +474,17 @@ export default function App() {
 
         if (authResponse.ok) {
           const authData = await authResponse.json();
-          accountUser = mapBackendAccountToUser(authData.account as BackendAccount);
+          accountUser = mapBackendAccountToUser(
+            authData.account as BackendAccount,
+            telegramUser.photo_url
+          );
           setAccessToken(authData.access_token); // Save the JWT token
         }
       } catch {
         /* ignore */
       }
 
-      setUser({
-        ...accountUser,
-        avatar: telegramUser.photo_url,
-      });
+      setUser(accountUser);
       setIsAuthenticated(true);
     } catch (err) {
       console.error('Telegram auth error:', err);
@@ -456,7 +499,10 @@ export default function App() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
-        restored = await syncBrowserAuth(session.access_token);
+        restored = await syncBrowserAuth(
+          session.access_token,
+          getSupabaseAvatarUrl(session.user as SupabaseUserLike)
+        );
       } else {
         const cachedToken = window.localStorage.getItem(BROWSER_TOKEN_STORAGE_KEY);
         if (cachedToken) {
@@ -583,7 +629,10 @@ export default function App() {
         }
 
         if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token) {
-          await syncBrowserAuth(session.access_token);
+          await syncBrowserAuth(
+            session.access_token,
+            getSupabaseAvatarUrl(session.user as SupabaseUserLike)
+          );
         } else if (event === 'SIGNED_OUT') {
           if (manualLogoutRef.current) {
             manualLogoutRef.current = false;
@@ -615,7 +664,7 @@ export default function App() {
     window.localStorage.removeItem(BROWSER_TOKEN_STORAGE_KEY);
   };
 
-  const syncBrowserAuth = async (token: string) => {
+  const syncBrowserAuth = async (token: string, browserAvatar?: string) => {
     if (!token) {
       return false;
     }
@@ -625,6 +674,11 @@ export default function App() {
     window.localStorage.setItem(BROWSER_TOKEN_STORAGE_KEY, token);
 
     if (lastLoadedBrowserTokenRef.current === token) {
+      if (browserAvatar) {
+        setUser((currentUser) =>
+          currentUser ? { ...currentUser, avatar: browserAvatar } : currentUser
+        );
+      }
       setIsAuthenticated(true);
       return true;
     }
@@ -634,7 +688,7 @@ export default function App() {
     }
 
     inFlightBrowserTokenRef.current = token;
-    const loaded = await loadUserData(token);
+    const loaded = await loadUserData(token, browserAvatar);
     if (loaded) {
       lastLoadedBrowserTokenRef.current = token;
       setIsAuthenticated(true);
@@ -646,7 +700,7 @@ export default function App() {
     return loaded;
   };
 
-  const loadUserData = async (token: string) => {
+  const loadUserData = async (token: string, browserAvatar?: string) => {
     try {
       const accountResponse = await fetch(`${BACKEND_API}/api/v1/accounts/me`, {
         headers: {
@@ -659,7 +713,12 @@ export default function App() {
       }
 
       const accountData: BackendAccount = await accountResponse.json();
-      setUser(mapBackendAccountToUser(accountData));
+      setUser((currentUser) =>
+        mapBackendAccountToUser(
+          accountData,
+          browserAvatar || currentUser?.avatar
+        )
+      );
       setSubscription(null);
       setPlans([]);
 
@@ -821,7 +880,12 @@ export default function App() {
 
       if (accountResponse.ok) {
         const accountData: BackendAccount = await accountResponse.json();
-        setUser(mapBackendAccountToUser(accountData));
+        setUser((currentUser) =>
+          mapBackendAccountToUser(
+            accountData,
+            currentUser?.avatar
+          )
+        );
       }
     } catch (err) {
       console.error('Error refreshing user data:', err);
@@ -1476,10 +1540,10 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen ${
+      className={`${
         isCompactBrowserLayout
-          ? 'bg-[linear-gradient(180deg,#eef4ff_0%,#f8fafc_45%,#eef2f7_100%)] sm:px-4 sm:py-6 md:px-6 md:py-8 dark:bg-[linear-gradient(180deg,#0f172a_0%,#111827_45%,#020617_100%)]'
-          : 'bg-[var(--tg-theme-bg-color,#ffffff)]'
+          ? 'h-[100dvh] overflow-hidden bg-[linear-gradient(180deg,#eef4ff_0%,#f8fafc_45%,#eef2f7_100%)] sm:px-4 sm:py-6 md:px-6 md:py-8 dark:bg-[linear-gradient(180deg,#0f172a_0%,#111827_45%,#020617_100%)]'
+          : 'min-h-screen bg-[var(--tg-theme-bg-color,#ffffff)]'
       }`}
     >
       <Toaster position="top-center" />
@@ -1492,16 +1556,32 @@ export default function App() {
       <div
         className={`${
           isCompactBrowserLayout
-            ? 'relative flex min-h-screen w-full flex-col bg-[var(--tg-theme-bg-color,#ffffff)] sm:mx-auto sm:min-h-[calc(100vh-3rem)] sm:max-w-[440px] sm:overflow-hidden sm:rounded-[30px] sm:border sm:border-white/70 sm:shadow-[0_28px_80px_rgba(15,23,42,0.16)] sm:backdrop-blur'
+            ? 'relative flex h-full w-full flex-col overflow-hidden bg-[var(--tg-theme-bg-color,#ffffff)] sm:mx-auto sm:max-w-[440px] sm:rounded-[30px] sm:border sm:border-white/70 sm:shadow-[0_28px_80px_rgba(15,23,42,0.16)] sm:backdrop-blur'
             : 'min-h-screen bg-[var(--tg-theme-bg-color,#ffffff)]'
         }`}
       >
-        <Header
-          user={{ name: user.name, avatar: user.avatar }}
-          balance={user.balance}
-          onTopUp={handleTopUp}
-        />
-        <main className="flex-1 pb-24">{renderContent()}</main>
+        <div
+          className={`${
+            isCompactBrowserLayout
+              ? 'safe-area-inset-top sticky top-0 z-20 shrink-0 bg-[var(--tg-theme-bg-color,#ffffff)]'
+              : 'shrink-0'
+          }`}
+        >
+          <Header
+            user={{ name: user.name, avatar: user.avatar }}
+            balance={user.balance}
+            onTopUp={handleTopUp}
+          />
+        </div>
+        <main
+          className={`${
+            isCompactBrowserLayout
+              ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain pb-24'
+              : 'flex-1 pb-24'
+          }`}
+        >
+          {renderContent()}
+        </main>
         <BottomNav activeTab={activeTab} onTabChange={setActiveTab} compact={isCompactBrowserLayout} />
       </div>
     </div>
