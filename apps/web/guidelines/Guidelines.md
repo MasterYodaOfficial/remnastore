@@ -1,61 +1,34 @@
-**Add your own guidelines here**
-<!--
+# Локальные правила для frontend
 
-System Guidelines
+Этот файл нужен как короткий набор правил для работы с интерфейсом в `apps/web`.
 
-Use this file to provide the AI with rules and guidelines you want it to follow.
-This template outlines a few examples of things you can add. You can add your own sections and format it to suit your needs
+## Общие правила
 
-TIP: More context isn't always better. It can confuse the LLM. Try and add the most important rules you need
+- по умолчанию делай адаптивную верстку через `flex` и `grid`
+- абсолютное позиционирование используй только там, где без него действительно нельзя
+- не держи критичную бизнес-логику во frontend
+- если компонент разрастается, выноси helper-логику и подкомпоненты отдельно
+- следи, чтобы mobile browser и Telegram Mini App выглядели согласованно
 
-# General guidelines
+## Тема и визуальная консистентность
 
-Any general rules you want the AI to follow.
-For example:
+- все цвета должны идти через CSS-переменные темы
+- при переключении темы должны обновляться не отдельные блоки, а весь интерфейс
+- избегай жестко захардкоженных цветов без необходимости
+- учитывай `safe-area` на мобильных устройствах
 
-* Only use absolute positioning when necessary. Opt for responsive and well structured layouts that use flexbox and grid by default
-* Refactor code as you go to keep code clean
-* Keep file sizes small and put helper functions and components in their own files.
+## Навигация
 
---------------
+- нижняя навигация не должна перекрывать контент
+- header и footer в мобильном shell должны оставаться закрепленными
+- основной скролл должен происходить внутри контентной области, а не у всей страницы
 
-# Design system guidelines
-Rules for how the AI should make generations look like your company's design system
+## Компоненты
 
-Additionally, if you select a design system to use in the prompt box, you can reference
-your design system's components, tokens, variables and components.
-For example:
+- кнопки должны иметь понятные action-oriented подписи
+- не перегружай экран большим количеством вторичных действий
+- если у действия есть финансовые последствия, состояние должно приходить с backend
 
-* Use a base font-size of 14px
-* Date formats should always be in the format “Jun 10”
-* The bottom toolbar should only ever have a maximum of 4 items
-* Never use the floating action button with the bottom toolbar
-* Chips should always come in sets of 3 or more
-* Don't use a dropdown if there are 2 or fewer options
+## Документация
 
-You can also create sub sections and add more specific details
-For example:
-
-
-## Button
-The Button component is a fundamental interactive element in our design system, designed to trigger actions or navigate
-users through the application. It provides visual feedback and clear affordances to enhance user experience.
-
-### Usage
-Buttons should be used for important actions that users need to take, such as form submissions, confirming choices,
-or initiating processes. They communicate interactivity and should have clear, action-oriented labels.
-
-### Variants
-* Primary Button
-  * Purpose : Used for the main action in a section or page
-  * Visual Style : Bold, filled with the primary brand color
-  * Usage : One primary button per section to guide users toward the most important action
-* Secondary Button
-  * Purpose : Used for alternative or supporting actions
-  * Visual Style : Outlined with the primary color, transparent background
-  * Usage : Can appear alongside a primary button for less important actions
-* Tertiary Button
-  * Purpose : Used for the least important actions
-  * Visual Style : Text-only with no border, using primary color
-  * Usage : For actions that should be available but not emphasized
--->
+Если правило влияет на всю frontend-разработку, лучше обновить не только этот файл, но и соответствующие документы в `docs/`.

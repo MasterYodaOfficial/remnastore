@@ -1,54 +1,60 @@
-# Настройка OAuth провайдеров
+# Настройка browser auth через Supabase
 
-Для работы авторизации через Google, Yandex и VK необходимо настроить OAuth провайдеры в Supabase.
+Документ описывает базовую настройку browser-аутентификации для web-приложения.
+
+Текущий целевой сценарий:
+- основной social provider: `Google`
+- дополнительно может использоваться `email/password` или `magic link`, если это нужно продукту
+- источник бизнес-состояния остается в локальном backend, а `Supabase Auth` используется только для login identity
 
 ## Google OAuth
 
-1. Откройте [Google Cloud Console](https://console.cloud.google.com/)
-2. Создайте новый проект или выберите существующий
-3. Перейдите в "APIs & Services" > "Credentials"
-4. Нажмите "Create Credentials" > "OAuth client ID"
-5. Выберите "Web application"
-6. Добавьте Authorized redirect URIs:
-   - `https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback`
-7. Скопируйте Client ID и Client Secret
-8. В Supabase Dashboard:
-   - Перейдите в Authentication > Providers > Google
-   - Включите Google provider
-   - Вставьте Client ID и Client Secret
-   - Сохраните изменения
+1. Открой `Google Cloud Console`.
+2. Создай проект или выбери существующий.
+3. Перейди в `APIs & Services -> Credentials`.
+4. Создай `OAuth client ID` типа `Web application`.
+5. Добавь redirect URL:
+   - `https://<SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback`
+6. Скопируй `Client ID` и `Client Secret`.
+7. В `Supabase Dashboard` открой `Authentication -> Providers -> Google`.
+8. Включи Google provider.
+9. Вставь `Client ID` и `Client Secret`.
+10. Сохрани изменения.
 
-Подробная инструкция: https://supabase.com/docs/guides/auth/social-login/auth-google
+Официальная документация:
+- https://supabase.com/docs/guides/auth/social-login/auth-google
 
-## Yandex OAuth
+## Redirect URLs
 
-1. Откройте [Yandex OAuth](https://oauth.yandex.ru/)
-2. Создайте новое приложение
-3. Добавьте Callback URI:
-   - `https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback`
-4. Скопируйте Client ID и Client Secret
-5. В Supabase Dashboard:
-   - Перейдите в Authentication > Providers > Yandex (если доступен)
-   - Включите Yandex provider
-   - Вставьте Client ID и Client Secret
+В `Supabase` также нужно задать корректные redirect URL для приложения.
 
-## VK OAuth
+Для локальной разработки обычно достаточно:
+- `http://localhost:5173`
+- `http://localhost:5173/`
 
-1. Откройте [VK Developers](https://vk.com/dev)
-2. Создайте новое приложение
-3. Настройте Authorized redirect URI:
-   - `https://YOUR_PROJECT_ID.supabase.co/auth/v1/callback`
-4. Скопируйте App ID и Secure key
-5. В Supabase Dashboard:
-   - Перейдите в Authentication > Providers
-   - Найдите VK (если доступен) или настройте через Generic OAuth
+Для production:
+- `https://app.domain.ru`
+- `https://app.domain.ru/`
 
-## Важно
+Если используется отдельный flow для связки аккаунтов, query-параметры вроде `link_token` должны сохраняться фронтом при возврате из OAuth.
 
-После настройки всех провайдеров приложение будет работать как в браузере (с OAuth), так и в Telegram WebApp (с автоматической авторизацией через Telegram ID).
+## Что важно не делать
 
-## Тестирование без OAuth
+- не использовать `service_role` или `sb_secret_*` на фронте
+- не считать `Supabase` источником баланса, подписок или рефералов
+- не включать лишние auth providers без необходимости
+- не оставлять слишком широкие wildcard redirect URL
 
-Для тестирования без настройки OAuth:
-- Откройте приложение в Telegram WebApp - авторизация произойдет автоматически
-- В браузере можно временно использовать email/password регистрацию (добавьте соответствующий функционал)
+## Проверка после настройки
+
+1. Открой web-приложение в браузере.
+2. Нажми вход через Google.
+3. Убедись, что после логина фронт получает сессию `Supabase`.
+4. Убедись, что backend endpoint `GET /api/v1/accounts/me` возвращает локальный аккаунт.
+5. Если аккаунт уже связан с Telegram, проверь, что профиль остается единым.
+
+## Связанные документы
+
+- [`README.md`](README.md)
+- [`../../docs/account-linking.md`](../../docs/account-linking.md)
+- [`../../docs/security-checklist.md`](../../docs/security-checklist.md)
