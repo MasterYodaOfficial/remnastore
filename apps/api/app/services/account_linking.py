@@ -185,6 +185,15 @@ def _ensure_no_scalar_conflicts(target: Account, source: Account) -> None:
         ("email", target.email, source.email),
         ("remnawave_user_uuid", target.remnawave_user_uuid, source.remnawave_user_uuid),
         ("subscription_url", target.subscription_url, source.subscription_url),
+        ("subscription_status", target.subscription_status, source.subscription_status),
+        ("subscription_expires_at", target.subscription_expires_at, source.subscription_expires_at),
+        (
+            "subscription_last_synced_at",
+            target.subscription_last_synced_at,
+            source.subscription_last_synced_at,
+        ),
+        ("trial_used_at", target.trial_used_at, source.trial_used_at),
+        ("trial_ends_at", target.trial_ends_at, source.trial_ends_at),
         ("referred_by_account_id", target.referred_by_account_id, source.referred_by_account_id),
     )
     for field_name, target_value, source_value in conflict_fields:
@@ -255,9 +264,14 @@ async def merge_accounts(
 
     moved_telegram_id = source_account.telegram_id if target_account.telegram_id is None else None
 
+    # Flush source unique values away before target takes them to avoid transient unique violations.
+    if moved_telegram_id is not None:
+        source_account.telegram_id = None
+        await session.flush()
+
     target_account.email = target_account.email or source_account.email
     target_account.display_name = target_account.display_name or source_account.display_name
-    target_account.telegram_id = target_account.telegram_id or source_account.telegram_id
+    target_account.telegram_id = target_account.telegram_id or moved_telegram_id
     target_account.username = target_account.username or source_account.username
     target_account.first_name = target_account.first_name or source_account.first_name
     target_account.last_name = target_account.last_name or source_account.last_name
@@ -267,6 +281,20 @@ async def merge_accounts(
         target_account.remnawave_user_uuid or source_account.remnawave_user_uuid
     )
     target_account.subscription_url = target_account.subscription_url or source_account.subscription_url
+    target_account.subscription_status = (
+        target_account.subscription_status or source_account.subscription_status
+    )
+    target_account.subscription_expires_at = (
+        target_account.subscription_expires_at or source_account.subscription_expires_at
+    )
+    target_account.subscription_last_synced_at = (
+        target_account.subscription_last_synced_at or source_account.subscription_last_synced_at
+    )
+    target_account.subscription_is_trial = (
+        target_account.subscription_is_trial or source_account.subscription_is_trial
+    )
+    target_account.trial_used_at = target_account.trial_used_at or source_account.trial_used_at
+    target_account.trial_ends_at = target_account.trial_ends_at or source_account.trial_ends_at
     target_account.referred_by_account_id = (
         target_account.referred_by_account_id or source_account.referred_by_account_id
     )
@@ -280,10 +308,6 @@ async def merge_accounts(
     )
     target_account.last_login_source = last_login_source
     target_account.last_seen_at = _utcnow()
-
-    # Clear unique identifiers on the source before any autoflush-triggering query.
-    if moved_telegram_id is not None:
-        source_account.telegram_id = None
 
     await _move_auth_accounts(
         session,

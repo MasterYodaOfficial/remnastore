@@ -71,7 +71,7 @@ export function SubscriptionCard({
               onClick={onActivateTrial}
               className="w-full rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] py-3 font-medium text-[var(--tg-theme-text-color,#000000)] transition-colors hover:opacity-90"
             >
-              Активировать пробный период (7 дней)
+              Активировать пробный период
             </button>
           )}
           

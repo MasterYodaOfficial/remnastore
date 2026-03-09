@@ -70,7 +70,7 @@
 
 - `BOT_TOKEN`
 - `API_URL`
-- `API_TOKEN`
+- `API_TOKEN` опционально, пока только как задел под будущую server-to-server авторизацию
 - `BOT_USE_WEBHOOK` и webhook-настройки, если используется webhook mode
 
 ### Web

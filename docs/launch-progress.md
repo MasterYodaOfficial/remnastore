@@ -10,7 +10,7 @@
 
 ## Статус на сейчас
 
-- Фаза 0: `В работе`
+- Фаза 0: `Завершена`
 - Фаза 1: `Не начато`
 - Фаза 2: `Не начато`
 - Фаза 3: `Не начато`
@@ -29,7 +29,7 @@
 5. Не деплоить в production до закрытия критичных пунктов Фазы 8
 
 ## Фаза 0. Стабилизация текущей базы
-Статус: `В работе`
+Статус: `Завершена`
 
 ### Технический долг и выравнивание текущего состояния
 - [x] Убрать старые рублевые/копеечные названия вроде `referral_earnings_cents`
@@ -55,9 +55,17 @@
 
 ### Базовая надежность
 - [x] Добавить интеграционные тесты на account linking
-- [ ] Добавить проверки eligibility для trial
-- [ ] Проверить subscription sync с Remnawave
-- [ ] Зафиксировать production env-переменные в документации
+- [x] Добавить проверки eligibility для trial
+- [x] Проверить subscription sync с Remnawave
+- [x] Зафиксировать production env-переменные в документации
+
+Закрыто 2026-03-09:
+- создан `docs/production-env.md` как единый production-контракт по env-переменным для `api`, `bot`, `web` и локального Docker Compose.
+- `.env.example` переведен в production-style шаблон с актуальными переменными и без неиспользуемого мусора.
+- добавлены backend endpoint'ы `GET /api/v1/subscriptions/`, `GET /api/v1/subscriptions/trial-eligibility`, `POST /api/v1/subscriptions/trial`, `POST /api/v1/subscriptions/sync`.
+- eligibility для trial теперь проверяется по локальному статусу аккаунта, факту уже использованного trial и конфликтам identity в Remnawave по `email/telegram_id`.
+- Remnawave sync проверен тестами на ручной sync endpoint и webhook `POST /api/v1/webhooks/remnawave` с HMAC-подписью `X-Remnawave-Signature`.
+- покрытие: `tests.test_subscriptions` и `tests.test_account_linking`, суммарно `Ran 11 tests ... OK`.
 
 ### Что делать завтра первым
 - [x] Просмотреть модели `accounts` и `schemas/account.py` на остатки старых денежных именований

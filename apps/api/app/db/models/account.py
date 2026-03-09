@@ -67,6 +67,12 @@ class Account(Base):
 
     remnawave_user_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True))
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))
+    subscription_status: Mapped[Optional[str]] = mapped_column(String(32))
+    subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    subscription_last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    subscription_is_trial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
@@ -107,6 +113,10 @@ class Account(Base):
     auth_accounts: Mapped[list["AuthAccount"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+
+    @property
+    def has_used_trial(self) -> bool:
+        return self.trial_used_at is not None
 
 
 provider_enum_kwargs = dict(

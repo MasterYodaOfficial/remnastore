@@ -10,6 +10,13 @@ from bot.core.config import settings
 router = Router()
 
 
+def build_api_headers() -> dict[str, str]:
+    token = settings.api_token.strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     """Handle /start command with optional linking token parameter."""
@@ -49,7 +56,7 @@ async def handle_browser_link(message: Message, link_token: str) -> None:
             response = await client.post(
                 f"{settings.api_url}/api/v1/accounts/link-browser-confirm",
                 json={"link_token": link_token, "telegram_id": telegram_id},
-                headers={"Authorization": f"Bearer {settings.api_token}"},
+                headers=build_api_headers(),
                 timeout=10.0,
             )
         
@@ -95,7 +102,7 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
                     "username": username,
                     "is_premium": is_premium,
                 },
-                headers={"Authorization": f"Bearer {settings.api_token}"},
+                headers=build_api_headers(),
                 timeout=10.0,
             )
         

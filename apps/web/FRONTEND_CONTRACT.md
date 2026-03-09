@@ -41,7 +41,7 @@ Frontend не является источником истины для:
 
 Если этот документ расходится с кодом, нужно исправить либо код, либо этот документ в том же изменении.
 
-Из репозитория удалены старые demo-артефакты `Supabase Edge Functions`, `KV Store` и примерочный `ACCOUNT_LINKING_EXAMPLE.tsx`.
+Из репозитория удалены старые demo-артефакты `Supabase Edge Functions`, `KV Store`, примерочный `ACCOUNT_LINKING_EXAMPLE.tsx` и runtime-fallback `utils/supabase/info.tsx`.
 Они не должны возвращаться как источник истины или рабочий runtime-контур frontend.
 
 ## Текущая архитектура
@@ -73,6 +73,13 @@ Frontend не является источником истины для:
 - это нужно только на переходный период
 - новые изменения должны использовать только `referral_earnings`
 
+## Контракт по Supabase env
+
+- `VITE_SUPABASE_URL` обязателен
+- `VITE_SUPABASE_ANON_KEY` обязателен
+- frontend больше не должен использовать зашитый fallback `projectId` или встроенный `publicAnonKey`
+- runtime-клиент Supabase должен собираться только из явных `VITE_*` переменных
+
 ## Актуальный backend API, который использует frontend
 
 ### Авторизация
@@ -101,8 +108,53 @@ Telegram Mini App flow:
 - `referral_code`
 - `referral_earnings`
 - `referrals_count`
+- `has_used_trial`
+- `subscription_status`
+- `subscription_url`
+- `subscription_expires_at`
+- `subscription_is_trial`
+- `trial_used_at`
+- `trial_ends_at`
 - `status`
 - `last_login_source`
+
+### Подписка
+
+`GET /api/v1/subscriptions/`
+
+Назначение:
+- получить локальный snapshot текущего subscription state
+
+Ожидаемые поля:
+- `status`
+- `expires_at`
+- `is_active`
+- `is_trial`
+- `has_used_trial`
+- `trial_used_at`
+- `trial_ends_at`
+- `days_left`
+- `subscription_url`
+
+`GET /api/v1/subscriptions/trial-eligibility`
+
+Назначение:
+- получить backend-решение, доступен ли trial сейчас
+
+Ожидаемые поля:
+- `eligible`
+- `reason`
+- `has_used_trial`
+
+`POST /api/v1/subscriptions/trial`
+
+Назначение:
+- активировать trial через backend и Remnawave
+
+`POST /api/v1/subscriptions/sync`
+
+Назначение:
+- вручную подтянуть актуальное состояние подписки из Remnawave
 
 ### Связка аккаунтов
 
@@ -172,7 +224,6 @@ Telegram Mini App flow:
 Сейчас в интерфейсе заглушками остаются:
 - пополнение баланса
 - покупка тарифа
-- активация trial
 - вывод средств
 - детальный backend-список рефералов
 
@@ -270,7 +321,7 @@ npm run build
 
 - [ ] Реальное пополнение баланса через новый API
 - [ ] Реальная покупка тарифа через новый API
-- [ ] Реальная активация trial через новый API
+- [x] Реальная активация trial через новый API
 - [ ] Реальный вывод средств через новый API
 - [ ] Детальный список рефералов из backend
 - [ ] Экран истории операций и ledger UI

@@ -96,6 +96,37 @@ interface BackendAccount {
   referral_earnings?: number;
   referral_earnings_cents?: number;
   referrals_count: number;
+  has_used_trial?: boolean;
+  subscription_status?: string | null;
+  subscription_url?: string | null;
+  subscription_expires_at?: string | null;
+  subscription_last_synced_at?: string | null;
+  subscription_is_trial?: boolean;
+  trial_used_at?: string | null;
+  trial_ends_at?: string | null;
+}
+
+interface BackendSubscriptionState {
+  remnawave_user_uuid?: string | null;
+  subscription_url?: string | null;
+  status?: string | null;
+  expires_at?: string | null;
+  last_synced_at?: string | null;
+  is_active: boolean;
+  is_trial: boolean;
+  has_used_trial: boolean;
+  trial_used_at?: string | null;
+  trial_ends_at?: string | null;
+  days_left?: number | null;
+}
+
+interface BackendTrialEligibility {
+  eligible: boolean;
+  reason?: string | null;
+  has_used_trial: boolean;
+  subscription_status?: string | null;
+  subscription_expires_at?: string | null;
+  remnawave_user_uuid?: string | null;
 }
 
 interface User {
@@ -113,9 +144,15 @@ interface User {
 
 interface Subscription {
   isActive: boolean;
-  startDate?: string;
-  endDate?: string;
-  isTrial?: boolean;
+  daysLeft?: number;
+  totalDays?: number;
+  hasTrial: boolean;
+  hasUsedTrial: boolean;
+  isTrial: boolean;
+  status?: string | null;
+  expiresAt?: string | null;
+  subscriptionUrl?: string | null;
+  trialEligibilityReason?: string | null;
 }
 
 interface Plan {
@@ -201,9 +238,104 @@ function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User
     referralCode: account.referral_code || '',
     referralsCount: account.referrals_count || 0,
     referralEarnings: getReferralEarnings(account),
-    hasUsedTrial: false,
+    hasUsedTrial: account.has_used_trial ?? Boolean(account.trial_used_at),
     avatar,
   };
+}
+
+function calculateTotalDays(
+  startedAt?: string | null,
+  endsAt?: string | null
+): number | undefined {
+  if (!startedAt || !endsAt) {
+    return undefined;
+  }
+
+  const started = new Date(startedAt);
+  const ends = new Date(endsAt);
+  if (Number.isNaN(started.getTime()) || Number.isNaN(ends.getTime())) {
+    return undefined;
+  }
+
+  const durationMs = ends.getTime() - started.getTime();
+  if (durationMs <= 0) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.ceil(durationMs / (1000 * 60 * 60 * 24)));
+}
+
+function calculateDaysLeft(expiresAt?: string | null): number | undefined {
+  if (!expiresAt) {
+    return undefined;
+  }
+
+  const ends = new Date(expiresAt);
+  if (Number.isNaN(ends.getTime())) {
+    return undefined;
+  }
+
+  const durationMs = ends.getTime() - Date.now();
+  if (durationMs <= 0) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.ceil(durationMs / (1000 * 60 * 60 * 24)));
+}
+
+function mapSubscriptionToView(
+  account: BackendAccount,
+  subscriptionState: BackendSubscriptionState | null,
+  trialEligibility: BackendTrialEligibility | null
+): Subscription {
+  const hasUsedTrial =
+    trialEligibility?.has_used_trial ??
+    account.has_used_trial ??
+    subscriptionState?.has_used_trial ??
+    Boolean(account.trial_used_at);
+
+  const status = subscriptionState?.status ?? account.subscription_status ?? null;
+  const expiresAt = subscriptionState?.expires_at ?? account.subscription_expires_at ?? null;
+  const trialUsedAt = subscriptionState?.trial_used_at ?? account.trial_used_at ?? null;
+  const trialEndsAt = subscriptionState?.trial_ends_at ?? account.trial_ends_at ?? null;
+  const isTrial = subscriptionState?.is_trial ?? account.subscription_is_trial ?? false;
+  const fallbackDaysLeft = calculateDaysLeft(expiresAt);
+  const isActive =
+    subscriptionState?.is_active ??
+    (status === 'ACTIVE' && fallbackDaysLeft !== undefined);
+  const daysLeft = subscriptionState?.days_left ?? fallbackDaysLeft;
+
+  return {
+    isActive,
+    daysLeft: daysLeft ?? undefined,
+    totalDays: calculateTotalDays(trialUsedAt, trialEndsAt),
+    hasTrial: trialEligibility?.eligible ?? !hasUsedTrial,
+    hasUsedTrial,
+    isTrial,
+    status,
+    expiresAt,
+    subscriptionUrl: subscriptionState?.subscription_url ?? account.subscription_url ?? null,
+    trialEligibilityReason: trialEligibility?.reason ?? null,
+  };
+}
+
+function getTrialErrorMessage(detail: string): string {
+  switch (detail) {
+    case 'account_blocked':
+      return 'Аккаунт заблокирован. Пробный период недоступен.';
+    case 'trial_already_used':
+      return 'Пробный период уже был использован.';
+    case 'subscription_exists':
+      return 'У аккаунта уже есть подписка в системе.';
+    case 'remnawave_identity_conflict':
+      return 'Для этого email или Telegram уже существует подписка в панели.';
+    case 'remnawave_not_configured':
+      return 'Интеграция с панелью подписок пока не настроена.';
+    case 'remnawave_unavailable':
+      return 'Панель подписок временно недоступна. Повтори позже.';
+    default:
+      return detail;
+  }
 }
 
 function getInitialTheme(): 'light' | 'dark' {
@@ -256,6 +388,37 @@ export default function App() {
   const setAuthViewMode = (view: AuthView) => {
     authViewRef.current = view;
     setAuthView(view);
+  };
+
+  const loadAccountSnapshot = async (token: string) => {
+    const authHeaders = {
+      Authorization: `Bearer ${token}`,
+    };
+    const [accountResponse, subscriptionResponse, trialEligibilityResponse] = await Promise.all([
+      fetch(`${BACKEND_API}/api/v1/accounts/me`, {
+        headers: authHeaders,
+      }),
+      fetch(`${BACKEND_API}/api/v1/subscriptions/`, {
+        headers: authHeaders,
+      }),
+      fetch(`${BACKEND_API}/api/v1/subscriptions/trial-eligibility`, {
+        headers: authHeaders,
+      }),
+    ]);
+
+    if (!accountResponse.ok) {
+      throw new Error('Failed to load account from backend');
+    }
+
+    return {
+      accountData: await accountResponse.json() as BackendAccount,
+      subscriptionData: subscriptionResponse.ok
+        ? await subscriptionResponse.json() as BackendSubscriptionState
+        : null,
+      trialEligibility: trialEligibilityResponse.ok
+        ? await trialEligibilityResponse.json() as BackendTrialEligibility
+        : null,
+    };
   };
 
   const isPasswordRecoveryRequested = () => {
@@ -469,6 +632,7 @@ export default function App() {
         return;
       }
 
+      let accountSubscription: Subscription | null = null;
       let accountUser = mapBackendAccountToUser({
         id: String(telegramUser.id),
         telegram_id: telegramUser.id,
@@ -490,17 +654,28 @@ export default function App() {
 
         if (authResponse.ok) {
           const authData = await authResponse.json();
-          accountUser = mapBackendAccountToUser(
-            authData.account as BackendAccount,
-            telegramUser.photo_url
-          );
-          setAccessToken(authData.access_token); // Save the JWT token
+          const backendAccount = authData.account as BackendAccount;
+          setAccessToken(authData.access_token);
+
+          try {
+            const loaded = await loadUserData(authData.access_token, telegramUser.photo_url);
+            if (loaded) {
+              setIsAuthenticated(true);
+              return;
+            }
+          } catch {
+            /* ignore and fallback to account snapshot from auth response */
+          }
+
+          accountUser = mapBackendAccountToUser(backendAccount, telegramUser.photo_url);
+          accountSubscription = mapSubscriptionToView(backendAccount, null, null);
         }
       } catch {
         /* ignore */
       }
 
       setUser(accountUser);
+      setSubscription(accountSubscription);
       setIsAuthenticated(true);
     } catch (err) {
       console.error('Telegram auth error:', err);
@@ -718,24 +893,15 @@ export default function App() {
 
   const loadUserData = async (token: string, browserAvatar?: string) => {
     try {
-      const accountResponse = await fetch(`${BACKEND_API}/api/v1/accounts/me`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const { accountData, subscriptionData, trialEligibility } = await loadAccountSnapshot(token);
 
-      if (!accountResponse.ok) {
-        throw new Error('Failed to load account from backend');
-      }
-
-      const accountData: BackendAccount = await accountResponse.json();
       setUser((currentUser) =>
         mapBackendAccountToUser(
           accountData,
           browserAvatar || currentUser?.avatar
         )
       );
-      setSubscription(null);
+      setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialEligibility));
       setPlans([]);
 
       return true;
@@ -757,7 +923,34 @@ export default function App() {
 
   const handleActivateTrial = async () => {
     if (!accessToken) return;
-    toast.error('Пробный период пока не перенесен на новый API.');
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/subscriptions/trial`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const detail =
+          errorData && typeof errorData.detail === 'string'
+            ? getTrialErrorMessage(errorData.detail)
+            : 'Не удалось активировать пробный период';
+        throw new Error(detail);
+      }
+
+      const reloaded = await loadUserData(accessToken, user?.avatar);
+      if (!reloaded) {
+        throw new Error('Пробный период активирован, но не удалось обновить профиль');
+      }
+
+      toast.success('Пробный период активирован');
+    } catch (err) {
+      console.error('Trial activation error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось активировать пробный период');
+    }
   };
 
   const handleBuyPlan = async (planId: string) => {
@@ -888,21 +1081,14 @@ export default function App() {
     if (!accessToken) return;
     
     try {
-      const accountResponse = await fetch(`${BACKEND_API}/api/v1/accounts/me`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      if (accountResponse.ok) {
-        const accountData: BackendAccount = await accountResponse.json();
-        setUser((currentUser) =>
-          mapBackendAccountToUser(
-            accountData,
-            currentUser?.avatar
-          )
-        );
-      }
+      const { accountData, subscriptionData, trialEligibility } = await loadAccountSnapshot(accessToken);
+      setUser((currentUser) =>
+        mapBackendAccountToUser(
+          accountData,
+          currentUser?.avatar
+        )
+      );
+      setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialEligibility));
     } catch (err) {
       console.error('Error refreshing user data:', err);
     }
@@ -973,34 +1159,13 @@ export default function App() {
     if (!subscription) {
       return {
         isActive: false,
-        hasTrial: true,
+        hasTrial: !user?.hasUsedTrial,
         hasUsedTrial: user?.hasUsedTrial || false,
+        isTrial: false,
       };
     }
 
-    const now = new Date();
-    const endDate = subscription.endDate ? new Date(subscription.endDate) : null;
-    const startDate = subscription.startDate ? new Date(subscription.startDate) : null;
-
-    if (!endDate || !startDate) {
-      return {
-        isActive: false,
-        hasTrial: true,
-        hasUsedTrial: user?.hasUsedTrial || false,
-      };
-    }
-
-    const isActive = now < endDate;
-    const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-    const daysLeft = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-    return {
-      isActive,
-      daysLeft: isActive ? Math.max(0, daysLeft) : undefined,
-      totalDays: isActive ? totalDays : undefined,
-      hasTrial: !user?.hasUsedTrial,
-      hasUsedTrial: user?.hasUsedTrial || false,
-    };
+    return subscription;
   };
 
   if (isLoading) {

@@ -29,18 +29,26 @@ packages/ Общие пакеты
 ### 1. Подготовить окружение
 
 ```bash
-cp .env.example .env
+cp .env_old.example .env_old
 ```
 
 Минимально заполни в `.env`:
 - `BOT_TOKEN`
 - `BOT_USERNAME`
+- `API_URL`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+- `VITE_API_BASE_URL`
+- `VITE_TELEGRAM_BOT_URL`
 - `JWT_SECRET`
 - `WEBAPP_URL`
+- `REMNAWAVE_API_URL`
+- `REMNAWAVE_API_TOKEN`
+- `REMNAWAVE_WEBHOOK_SECRET`
+
+Подробный production-контракт по env-переменным: [`docs/production-env.md`](docs/production-env.md)
 
 ### 2. Поднять стек
 
@@ -79,6 +87,7 @@ sudo docker compose -f ops/docker/compose.yml restart web
 - [`docs/account-linking.md`](docs/account-linking.md) - логика связки Telegram и browser-аккаунтов
 - [`docs/launch-roadmap.md`](docs/launch-roadmap.md) - путь до первого коммерческого запуска
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
+- [`docs/production-env.md`](docs/production-env.md) - production-контракт по env-переменным
 - [`docs/security-checklist.md`](docs/security-checklist.md) - базовый security checklist
 - [`apps/web/FRONTEND_CONTRACT.md`](apps/web/FRONTEND_CONTRACT.md) - единый контракт frontend на русском
 

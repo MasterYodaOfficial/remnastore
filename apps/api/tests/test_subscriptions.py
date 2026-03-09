@@ -1,0 +1,384 @@
+import hashlib
+import hmac
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+import tempfile
+import unittest
+import uuid
+from pathlib import Path
+
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.api.dependencies import get_current_account
+from app.core.config import settings
+from app.db.base import Base
+from app.db.models import Account, AccountStatus
+from app.db.session import get_session
+from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
+from app.main import create_app
+from app.services import subscriptions as subscriptions_service
+
+
+class DummyCache:
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {}
+
+    async def ping(self) -> bool:
+        return True
+
+    async def close(self) -> None:
+        return None
+
+    def auth_token_account_key(self, access_token: str) -> str:
+        return f"auth:{access_token}"
+
+    def account_response_key(self, account_id: str) -> str:
+        return f"account:{account_id}"
+
+    async def get_str(self, key: str) -> str | None:
+        return self._values.get(key)
+
+    async def set_str(self, key: str, value: str, ttl_seconds: int) -> None:
+        del ttl_seconds
+        self._values[key] = value
+
+    async def get_json(self, key: str):
+        del key
+        return None
+
+    async def set_json(self, key: str, value, ttl_seconds: int) -> None:
+        del key, value, ttl_seconds
+
+    async def delete(self, *keys: str) -> None:
+        for key in keys:
+            self._values.pop(key, None)
+
+
+@dataclass
+class FakeRemnawaveGateway:
+    users: dict[uuid.UUID, RemnawaveUser]
+
+    async def get_user_by_uuid(self, user_uuid: uuid.UUID) -> RemnawaveUser | None:
+        return self.users.get(user_uuid)
+
+    async def get_users_by_email(self, email: str) -> list[RemnawaveUser]:
+        return [user for user in self.users.values() if user.email == email]
+
+    async def get_users_by_telegram_id(self, telegram_id: int) -> list[RemnawaveUser]:
+        return [user for user in self.users.values() if user.telegram_id == telegram_id]
+
+    async def provision_user(
+        self,
+        *,
+        user_uuid: uuid.UUID,
+        expire_at: datetime,
+        email: str | None,
+        telegram_id: int | None,
+        is_trial: bool,
+    ) -> RemnawaveUser:
+        user = RemnawaveUser(
+            uuid=user_uuid,
+            username=f"acc_{user_uuid.hex}",
+            status="ACTIVE",
+            expire_at=expire_at,
+            subscription_url=f"https://panel.test/sub/{user_uuid.hex[:8]}",
+            telegram_id=telegram_id,
+            email=email,
+            tag="TRIAL" if is_trial else None,
+        )
+        self.users[user_uuid] = user
+        return user
+
+
+class UnavailableRemnawaveGateway:
+    async def get_user_by_uuid(self, user_uuid: uuid.UUID) -> RemnawaveUser | None:
+        del user_uuid
+        raise RemnawaveRequestError("ConnectError")
+
+    async def get_users_by_email(self, email: str) -> list[RemnawaveUser]:
+        del email
+        raise RemnawaveRequestError("ConnectError")
+
+    async def get_users_by_telegram_id(self, telegram_id: int) -> list[RemnawaveUser]:
+        del telegram_id
+        raise RemnawaveRequestError("ConnectError")
+
+    async def provision_user(
+        self,
+        *,
+        user_uuid: uuid.UUID,
+        expire_at: datetime,
+        email: str | None,
+        telegram_id: int | None,
+        is_trial: bool,
+    ) -> RemnawaveUser:
+        del user_uuid, expire_at, email, telegram_id, is_trial
+        raise RemnawaveRequestError("ConnectError")
+
+
+class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._db_path = Path(self._tmpdir.name) / "subscriptions.sqlite3"
+        self._engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
+        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
+        self._current_account_id: uuid.UUID | None = None
+        self._fake_gateway = FakeRemnawaveGateway(users={})
+
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        import app.services.cache as cache_module
+
+        self._cache_module = cache_module
+        self._original_cache = cache_module._cache
+        cache_module._cache = DummyCache()
+
+        self._original_trial_duration_days = settings.trial_duration_days
+        settings.trial_duration_days = 3
+        self._original_remnawave_webhook_secret = settings.remnawave_webhook_secret
+        settings.remnawave_webhook_secret = "test-remnawave-secret"
+
+        self._original_gateway_factory = subscriptions_service.get_remnawave_gateway
+        subscriptions_service.get_remnawave_gateway = lambda: self._fake_gateway
+
+        self.app = create_app()
+
+        async def override_get_session():
+            async with self._session_factory() as session:
+                yield session
+
+        async def override_get_current_account():
+            if self._current_account_id is None:
+                raise AssertionError("current account is not configured for test request")
+
+            async with self._session_factory() as session:
+                account = await session.get(Account, self._current_account_id)
+                if account is None:
+                    raise AssertionError(f"account not found: {self._current_account_id}")
+                return account
+
+        self.app.dependency_overrides[get_session] = override_get_session
+        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.client = AsyncClient(
+            transport=ASGITransport(app=self.app),
+            base_url="http://testserver",
+        )
+
+    async def asyncTearDown(self) -> None:
+        await self.client.aclose()
+        self.app.dependency_overrides.clear()
+        settings.trial_duration_days = self._original_trial_duration_days
+        settings.remnawave_webhook_secret = self._original_remnawave_webhook_secret
+        subscriptions_service.get_remnawave_gateway = self._original_gateway_factory
+        self._cache_module._cache = self._original_cache
+        await self._engine.dispose()
+        self._tmpdir.cleanup()
+
+    async def _create_account(self, **values) -> Account:
+        async with self._session_factory() as session:
+            account = Account(**values)
+            session.add(account)
+            await session.commit()
+            await session.refresh(account)
+            return account
+
+    async def _get_account(self, account_id: uuid.UUID) -> Account | None:
+        async with self._session_factory() as session:
+            return await session.get(Account, account_id)
+
+    async def test_activate_trial_creates_remote_user_and_marks_snapshot(self) -> None:
+        account = await self._create_account(email="trial@example.com")
+        self._current_account_id = account.id
+
+        response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(body["remnawave_user_uuid"], str(account.id))
+        self.assertEqual(body["status"], "ACTIVE")
+        self.assertTrue(body["is_active"])
+        self.assertTrue(body["is_trial"])
+        self.assertTrue(body["has_used_trial"])
+        self.assertIsNotNone(body["subscription_url"])
+        self.assertIsNotNone(body["trial_used_at"])
+        self.assertIsNotNone(body["trial_ends_at"])
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.remnawave_user_uuid, account.id)
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+        self.assertTrue(stored_account.subscription_is_trial)
+        self.assertIsNotNone(stored_account.trial_used_at)
+        self.assertIsNotNone(stored_account.trial_ends_at)
+
+    async def test_activate_trial_rejects_second_attempt(self) -> None:
+        account = await self._create_account(email="trial-repeat@example.com")
+        self._current_account_id = account.id
+
+        first_response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(first_response.status_code, 200)
+
+        second_response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(second_response.status_code, 400)
+        self.assertEqual(second_response.json()["detail"], "trial_already_used")
+
+    async def test_trial_eligibility_rejects_remnawave_identity_conflict(self) -> None:
+        account = await self._create_account(
+            email="conflict@example.com",
+            telegram_id=777001,
+        )
+        self._current_account_id = account.id
+
+        foreign_uuid = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        self._fake_gateway.users[foreign_uuid] = RemnawaveUser(
+            uuid=foreign_uuid,
+            username=f"acc_{foreign_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime.now(UTC) + timedelta(days=30),
+            subscription_url="https://panel.test/sub/conflict",
+            telegram_id=account.telegram_id,
+            email=account.email,
+            tag=None,
+        )
+
+        eligibility_response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+        self.assertEqual(eligibility_response.status_code, 200)
+        self.assertEqual(eligibility_response.json()["eligible"], False)
+        self.assertEqual(
+            eligibility_response.json()["reason"],
+            "remnawave_identity_conflict",
+        )
+
+        activation_response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(activation_response.status_code, 400)
+        self.assertEqual(
+            activation_response.json()["detail"],
+            "remnawave_identity_conflict",
+        )
+
+    async def test_activate_trial_rejects_blocked_account(self) -> None:
+        account = await self._create_account(
+            email="blocked@example.com",
+            status=AccountStatus.BLOCKED,
+        )
+        self._current_account_id = account.id
+
+        response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "account_blocked")
+
+    async def test_trial_eligibility_reports_remnawave_unavailable(self) -> None:
+        account = await self._create_account(email="unavailable@example.com")
+        self._current_account_id = account.id
+
+        subscriptions_service.get_remnawave_gateway = lambda: UnavailableRemnawaveGateway()
+
+        eligibility_response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+        self.assertEqual(eligibility_response.status_code, 200)
+        self.assertEqual(eligibility_response.json()["eligible"], False)
+        self.assertEqual(
+            eligibility_response.json()["reason"],
+            "remnawave_unavailable",
+        )
+
+        activation_response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(activation_response.status_code, 502)
+        self.assertEqual(
+            activation_response.json()["detail"],
+            "remnawave_unavailable",
+        )
+
+    async def test_sync_subscription_updates_local_snapshot(self) -> None:
+        account = await self._create_account(
+            email="sync@example.com",
+            remnawave_user_uuid=uuid.UUID("12345678-1234-5678-1234-567812345678"),
+        )
+        self._current_account_id = account.id
+
+        self._fake_gateway.users[account.remnawave_user_uuid] = RemnawaveUser(
+            uuid=account.remnawave_user_uuid,
+            username=f"acc_{account.remnawave_user_uuid.hex}",
+            status="EXPIRED",
+            expire_at=datetime.now(UTC) - timedelta(days=1),
+            subscription_url="https://panel.test/sub/existing",
+            telegram_id=None,
+            email=account.email,
+            tag=None,
+        )
+
+        response = await self.client.post("/api/v1/subscriptions/sync")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(body["status"], "EXPIRED")
+        self.assertFalse(body["is_active"])
+        self.assertEqual(body["subscription_url"], "https://panel.test/sub/existing")
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.subscription_status, "EXPIRED")
+        self.assertIsNotNone(stored_account.subscription_last_synced_at)
+
+    async def test_remnawave_webhook_updates_local_snapshot(self) -> None:
+        account = await self._create_account(email="webhook@example.com")
+
+        self._fake_gateway.users[account.id] = RemnawaveUser(
+            uuid=account.id,
+            username=f"acc_{account.id.hex}",
+            status="ACTIVE",
+            expire_at=datetime.now(UTC) + timedelta(days=10),
+            subscription_url="https://panel.test/sub/webhook",
+            telegram_id=None,
+            email=account.email,
+            tag="TRIAL",
+        )
+
+        payload = {"event": "user.modified", "data": str(account.id)}
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["processed"], True)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.remnawave_user_uuid, account.id)
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+        self.assertEqual(
+            stored_account.subscription_url,
+            "https://panel.test/sub/webhook",
+        )
+        self.assertTrue(stored_account.subscription_is_trial)
+
+    async def test_remnawave_webhook_rejects_invalid_signature(self) -> None:
+        account = await self._create_account(email="invalid-signature@example.com")
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            json={"event": "user.modified", "data": str(account.id)},
+            headers={"X-Remnawave-Signature": "invalid"},
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "invalid Remnawave signature")
+
+
+if __name__ == "__main__":
+    unittest.main()

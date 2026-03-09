@@ -10,7 +10,7 @@ node_modules/
 dist/
 
 # Env
-.env
+.env_old
 
 # OS
 .DS_Store
@@ -32,3 +32,4 @@ dist/
 /.idea/vcs.xml
 /.idea/workspace.xml
 /.idea/webResources.xml
+/.env

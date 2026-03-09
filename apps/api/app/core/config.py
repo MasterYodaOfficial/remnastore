@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env_old", extra="ignore")
 
     app_name: str = "remnastore-api"
     app_version: str = "0.1.0"
@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     remnawave_api_url: str = ""
     remnawave_api_token: str = ""
+    remnawave_webhook_secret: str = ""
+    trial_duration_days: int = 3
 
     # Auth
     jwt_secret: str = "change-me"
