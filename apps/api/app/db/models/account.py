@@ -70,7 +70,7 @@ class Account(Base):
 
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
-    referral_earnings_cents: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_earnings: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referrals_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referral_reward_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     referred_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(

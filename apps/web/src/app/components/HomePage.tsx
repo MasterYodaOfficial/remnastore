@@ -13,7 +13,7 @@ interface HomePageProps {
   referralData: {
     referralCode: string;
     referralsCount: number;
-    earnings: number;
+    referralEarnings: number;
   };
   onActivateTrial: () => void;
   onRenew: () => void;
@@ -45,7 +45,7 @@ export function HomePage({
       <ReferralCard
         referralCode={referralData.referralCode}
         referralsCount={referralData.referralsCount}
-        earnings={referralData.earnings}
+        referralEarnings={referralData.referralEarnings}
         onCopy={onCopyReferral}
         onWithdraw={onWithdraw}
         copied={referralCopied}

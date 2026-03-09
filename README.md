@@ -80,6 +80,7 @@ sudo docker compose -f ops/docker/compose.yml restart web
 - [`docs/launch-roadmap.md`](docs/launch-roadmap.md) - путь до первого коммерческого запуска
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
 - [`docs/security-checklist.md`](docs/security-checklist.md) - базовый security checklist
+- [`apps/web/FRONTEND_CONTRACT.md`](apps/web/FRONTEND_CONTRACT.md) - единый контракт frontend на русском
 
 ## Ключевые замечания
 
@@ -89,7 +90,7 @@ sudo docker compose -f ops/docker/compose.yml restart web
 - Telegram Mini App авторизуется через backend.
 - Локальные записи аккаунтов живут в проектной БД.
 - Browser и Telegram можно связать в один локальный аккаунт.
-- Баланс хранится в рублях как целое число.
+- Баланс и реферальные начисления хранятся в рублях как целые числа.
 
 ## Текущий стек
 

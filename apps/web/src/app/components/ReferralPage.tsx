@@ -1,6 +1,6 @@
 import React from 'react';
 import { Users, TrendingUp, DollarSign } from 'lucide-react';
-import { formatAmount } from '../../lib/currency';
+import { formatRubles } from '../../lib/currency';
 
 interface Referral {
   id: string;
@@ -39,7 +39,7 @@ export function ReferralPage({
           <TrendingUp className="mb-2 h-6 w-6 text-[var(--tg-theme-button-color,#3390ec)]" />
           <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">Всего заработано</div>
           <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
-            {formatAmount(totalEarnings, 2)} ₽
+            {formatRubles(totalEarnings)} ₽
           </div>
         </div>
 
@@ -47,7 +47,7 @@ export function ReferralPage({
           <DollarSign className="mb-2 h-6 w-6 text-[var(--app-success-color,#16a34a)]" />
           <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">Доступно</div>
           <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
-            {formatAmount(availableForWithdraw, 2)} ₽
+            {formatRubles(availableForWithdraw)} ₽
           </div>
         </div>
       </div>
@@ -57,7 +57,7 @@ export function ReferralPage({
           onClick={onWithdraw}
           className="w-full py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity"
         >
-          Вывести на баланс {formatAmount(availableForWithdraw, 2)} ₽
+          Вывести на баланс {formatRubles(availableForWithdraw)} ₽
         </button>
       )}
 
@@ -89,7 +89,7 @@ export function ReferralPage({
                   </div>
                   <div className="text-right">
                     <div className="font-semibold text-[var(--app-success-color,#16a34a)]">
-                      +{formatAmount(referral.earned, 2)} ₽
+                      +{formatRubles(referral.earned)} ₽
                     </div>
                     <div
                       className={`text-xs ${

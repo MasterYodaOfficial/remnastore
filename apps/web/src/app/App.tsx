@@ -13,7 +13,7 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { BottomNav } from './components/BottomNav';
 import { TopUpModal } from './components/TopUpModal';
 import { LoadingScreen } from './components/LoadingScreen';
-import { formatAmount, formatRubles } from '../lib/currency';
+import { formatRubles } from '../lib/currency';
 import { toast, Toaster } from 'sonner';
 import {
   CreditCard,
@@ -93,7 +93,8 @@ interface BackendAccount {
   last_name?: string | null;
   balance: number;
   referral_code?: string | null;
-  referral_earnings_cents: number;
+  referral_earnings?: number;
+  referral_earnings_cents?: number;
   referrals_count: number;
 }
 
@@ -105,7 +106,7 @@ interface User {
   balance: number;
   referralCode: string;
   referralsCount: number;
-  earnings: number;
+  referralEarnings: number;
   hasUsedTrial: boolean;
   avatar?: string;
 }
@@ -168,6 +169,21 @@ function getSupabaseAvatarUrl(user: SupabaseUserLike | null | undefined): string
   );
 }
 
+function getReferralEarnings(account: BackendAccount): number {
+  if (typeof account.referral_earnings === 'number' && Number.isFinite(account.referral_earnings)) {
+    return Math.trunc(account.referral_earnings);
+  }
+
+  if (
+    typeof account.referral_earnings_cents === 'number' &&
+    Number.isFinite(account.referral_earnings_cents)
+  ) {
+    return Math.trunc(account.referral_earnings_cents / 100);
+  }
+
+  return 0;
+}
+
 function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User {
   const name =
     account.display_name ||
@@ -184,7 +200,7 @@ function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User
     balance: account.balance || 0,
     referralCode: account.referral_code || '',
     referralsCount: account.referrals_count || 0,
-    earnings: (account.referral_earnings_cents || 0) / 100,
+    referralEarnings: getReferralEarnings(account),
     hasUsedTrial: false,
     avatar,
   };
@@ -461,7 +477,7 @@ export default function App() {
         first_name: telegramUser.first_name,
         last_name: telegramUser.last_name,
         balance: 0,
-        referral_earnings_cents: 0,
+        referral_earnings: 0,
         referrals_count: 0,
       }, telegramUser.photo_url);
 
@@ -1032,7 +1048,7 @@ export default function App() {
             referralData={{
               referralCode: user.referralCode || '',
               referralsCount: user.referralsCount || 0,
-              earnings: user.earnings || 0,
+              referralEarnings: user.referralEarnings || 0,
             }}
             onActivateTrial={handleActivateTrial}
             onRenew={() => setActiveTab('plans')}
@@ -1055,8 +1071,8 @@ export default function App() {
         return (
           <ReferralPage
             referrals={[]}
-            totalEarnings={user.earnings || 0}
-            availableForWithdraw={user.earnings || 0}
+            totalEarnings={user.referralEarnings || 0}
+            availableForWithdraw={user.referralEarnings || 0}
             onWithdraw={handleWithdraw}
           />
         );
@@ -1363,7 +1379,7 @@ export default function App() {
                   <Sparkles className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
-                  {formatAmount(user.earnings, 2)} ₽
+                  {formatRubles(user.referralEarnings)} ₽
                 </div>
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">Начислено по реферальной программе</div>
               </div>
@@ -1440,7 +1456,7 @@ export default function App() {
                   <ReferralCard
                     referralCode={user.referralCode || ''}
                     referralsCount={user.referralsCount || 0}
-                    earnings={user.earnings || 0}
+                    referralEarnings={user.referralEarnings || 0}
                     onCopy={handleCopyReferral}
                     onWithdraw={handleWithdraw}
                     copied={referralCopied}
@@ -1460,7 +1476,7 @@ export default function App() {
                       <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
                         Доступно к выводу
                       </div>
-                      <div className="mt-3 text-3xl font-semibold">{formatAmount(user.earnings, 2)} ₽</div>
+                      <div className="mt-3 text-3xl font-semibold">{formatRubles(user.referralEarnings)} ₽</div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
                       Детальный список рефералов появится автоматически, когда переведем

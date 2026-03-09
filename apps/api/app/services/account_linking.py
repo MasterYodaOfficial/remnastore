@@ -253,6 +253,8 @@ async def merge_accounts(
     source_account = await _load_account_for_update(session, account_id=source_account_id)
     _ensure_no_scalar_conflicts(target_account, source_account)
 
+    moved_telegram_id = source_account.telegram_id if target_account.telegram_id is None else None
+
     target_account.email = target_account.email or source_account.email
     target_account.display_name = target_account.display_name or source_account.display_name
     target_account.telegram_id = target_account.telegram_id or source_account.telegram_id
@@ -270,7 +272,7 @@ async def merge_accounts(
     )
 
     target_account.balance += source_account.balance
-    target_account.referral_earnings_cents += source_account.referral_earnings_cents
+    target_account.referral_earnings += source_account.referral_earnings
     target_account.referrals_count += source_account.referrals_count
     target_account.referral_reward_rate = max(
         float(target_account.referral_reward_rate or 0),
@@ -278,6 +280,10 @@ async def merge_accounts(
     )
     target_account.last_login_source = last_login_source
     target_account.last_seen_at = _utcnow()
+
+    # Clear unique identifiers on the source before any autoflush-triggering query.
+    if moved_telegram_id is not None:
+        source_account.telegram_id = None
 
     await _move_auth_accounts(
         session,

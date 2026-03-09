@@ -1,11 +1,11 @@
 import React from 'react';
 import { Users, Copy, Check, DollarSign } from 'lucide-react';
-import { formatAmount } from '../../lib/currency';
+import { formatRubles } from '../../lib/currency';
 
 interface ReferralCardProps {
   referralCode: string;
   referralsCount: number;
-  earnings: number;
+  referralEarnings: number;
   onCopy: () => void;
   onWithdraw: () => void;
   copied: boolean;
@@ -14,7 +14,7 @@ interface ReferralCardProps {
 export function ReferralCard({ 
   referralCode, 
   referralsCount, 
-  earnings,
+  referralEarnings,
   onCopy, 
   onWithdraw,
   copied 
@@ -56,7 +56,7 @@ export function ReferralCard({
               Заработано
             </div>
             <div className="text-2xl font-bold text-[var(--tg-theme-button-color,#3390ec)]">
-              {formatAmount(earnings, 2)} ₽
+              {formatRubles(referralEarnings)} ₽
             </div>
           </div>
         </div>
@@ -79,7 +79,7 @@ export function ReferralCard({
           </div>
         </div>
 
-        {earnings > 0 && (
+        {referralEarnings > 0 && (
           <button
             onClick={onWithdraw}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-success-bg,#16a34a)] py-3 font-medium text-[var(--app-success-text,#ffffff)] transition-colors hover:bg-[var(--app-success-bg-hover,#15803d)]"
