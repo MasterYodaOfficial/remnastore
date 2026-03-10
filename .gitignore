@@ -33,3 +33,4 @@ dist/
 /.idea/workspace.xml
 /.idea/webResources.xml
 /.env
+/tests.py

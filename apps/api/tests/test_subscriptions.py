@@ -215,6 +215,22 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account.trial_used_at)
         self.assertIsNotNone(stored_account.trial_ends_at)
 
+    async def test_bootstrap_me_uses_local_snapshot_without_remnawave_call(self) -> None:
+        account = await self._create_account(email="bootstrap@example.com")
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: UnavailableRemnawaveGateway()
+
+        response = await self.client.get("/api/v1/bootstrap/me")
+        self.assertEqual(response.status_code, 200)
+
+        body = response.json()
+        self.assertEqual(body["account"]["id"], str(account.id))
+        self.assertEqual(body["subscription"]["remnawave_user_uuid"], None)
+        self.assertEqual(body["trial_ui"]["can_start_now"], True)
+        self.assertEqual(body["trial_ui"]["reason"], None)
+        self.assertEqual(body["trial_ui"]["has_used_trial"], False)
+        self.assertEqual(body["trial_ui"]["strict_check_required_on_start"], True)
+
     async def test_activate_trial_rejects_second_attempt(self) -> None:
         account = await self._create_account(email="trial-repeat@example.com")
         self._current_account_id = account.id

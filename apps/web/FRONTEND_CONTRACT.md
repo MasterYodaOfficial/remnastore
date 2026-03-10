@@ -86,11 +86,27 @@ Frontend не является источником истины для:
 
 Browser flow:
 - browser login и signup идут через `Supabase Auth`
-- после получения сессии frontend запрашивает локальный аккаунт через `GET /api/v1/accounts/me`
+- после получения сессии frontend запрашивает единый bootstrap через `GET /api/v1/bootstrap/me`
 
 Telegram Mini App flow:
 - frontend отправляет `init_data` в `POST /api/v1/auth/telegram/webapp`
 - backend возвращает `{ access_token, account }`
+
+### Bootstrap
+
+`GET /api/v1/bootstrap/me`
+
+Назначение:
+- загрузить стартовый snapshot приложения одним запросом
+- заменить стартовую последовательность `accounts/me + subscriptions/ + subscriptions/trial-eligibility`
+
+Ожидаемые секции:
+- `account`
+- `subscription`
+- `trial_ui`
+
+`trial_ui` используется только для быстрой отрисовки CTA на старте.
+Финальная строгая проверка eligibility всё равно происходит на `POST /api/v1/subscriptions/trial`.
 
 ### Аккаунт
 
@@ -140,6 +156,7 @@ Telegram Mini App flow:
 
 Назначение:
 - получить backend-решение, доступен ли trial сейчас
+- не использовать как обязательный bootstrap-запрос на каждый старт приложения
 
 Ожидаемые поля:
 - `eligible`
@@ -294,7 +311,7 @@ npm run build
 Минимальный ручной smoke test:
 - открыть browser app
 - пройти login через Google или email
-- проверить загрузку `GET /api/v1/accounts/me`
+- проверить загрузку `GET /api/v1/bootstrap/me`
 - проверить баланс, профиль и настройки
 - проверить `Browser -> Telegram`
 - открыть Mini App в Telegram

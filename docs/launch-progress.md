@@ -11,7 +11,7 @@
 ## Статус на сейчас
 
 - Фаза 0: `Завершена`
-- Фаза 1: `Не начато`
+- Фаза 1: `В работе`
 - Фаза 2: `Не начато`
 - Фаза 3: `Не начато`
 - Фаза 4: `Не начато`
@@ -73,28 +73,119 @@
 - [x] Подготовить первую миграцию на выравнивание именований
 
 ## Фаза 1. Биллинг и ledger
-Статус: `Не начато`
+Статус: `В работе`
 
-- [ ] Спроектировать таблицу `ledger`
-- [ ] Добавить миграцию `ledger`
-- [ ] Реализовать `ledger service`
-- [ ] Перевести изменение баланса на ledger-backed операции
-- [ ] Добавить endpoint истории операций пользователя
+- [x] Спроектировать таблицу `ledger`
+- [x] Добавить миграцию `ledger`
+- [x] Реализовать `ledger service`
+- [x] Перевести изменение баланса на ledger-backed операции
+- [x] Добавить endpoint истории операций пользователя
 - [ ] Добавить admin flow корректировки баланса с обязательным комментарием
-- [ ] Покрыть credit/debit операции тестами
+- [x] Покрыть credit/debit операции тестами
+
+Утверждено 2026-03-10:
+- вводим одну append-only таблицу `ledger_entries` как источник истины для всех денежных движений
+- поле `accounts.balance` пока сохраняем как быстрый snapshot, но менять его разрешено только внутри ledger-backed транзакций
+- все денежные суммы в `ledger` храним в целых рублях без дробной части
+- каждая запись `ledger_entries` обязана хранить `balance_before` и `balance_after`, чтобы история оставалась самодостаточной без пересчета по всему хвосту
+- удаление и редактирование ledger-записей прикладным кодом запрещено; корректировки делаются только новыми compensating entries
+
+Целевая таблица `ledger_entries`:
+- `id`
+- `account_id`
+- `entry_type`
+- `amount`
+- `currency`
+- `balance_before`
+- `balance_after`
+- `reference_type`
+- `reference_id`
+- `comment`
+- `idempotency_key`
+- `created_at`
+- `created_by_account_id`
+- `created_by_admin_id`
+
+Первый набор `entry_type`:
+- `topup_manual`
+- `topup_payment`
+- `subscription_debit`
+- `referral_reward`
+- `promo_credit`
+- `refund`
+- `admin_credit`
+- `admin_debit`
+- `merge_credit`
+- `merge_debit`
+
+Инварианты Фазы 1:
+- ни одно изменение `accounts.balance` не должно происходить мимо `ledger service`
+- стандартный `debit` не может уводить баланс в минус
+- `admin_credit` и `admin_debit` требуют обязательный комментарий
+- операции с внешними callback и повторяемыми запросами должны использовать `idempotency_key`
+- merge аккаунтов должен оформляться парой записей `merge_debit` на source и `merge_credit` на target с общим `reference_id`
+- промокоды пока не реализованы отдельной системой; когда появятся, они должны создавать только `promo_credit` entries, без прямой записи в `accounts.balance`
+
+Реализовано 2026-03-10:
+- добавлена миграция `apps/api/alembic/versions/20260310_add_ledger_entries.py` с таблицей `ledger_entries`, индексами и constraint'ами на ненулевую сумму и консистентность `balance_after`
+- добавлена модель `LedgerEntry` и enum `LedgerEntryType`
+- реализован `apps/api/app/services/ledger.py` с `credit_balance`, `debit_balance`, `admin_adjust_balance`, idempotency и history-query
+- добавлен пользовательский endpoint `GET /api/v1/ledger/entries`
+- merge аккаунтов в `apps/api/app/services/account_linking.py` переведен с прямой мутации `target.balance += source.balance` на ledger-backed перенос через `merge_debit` и `merge_credit`
+- direct writes в `accounts.balance` теперь сосредоточены только внутри `ledger service`
+- покрытие расширено тестами `tests.test_ledger`; суммарно `Ran 21 tests ... OK`
+
+Остается до закрытия Фазы 1:
+- вынести admin correction в отдельный защищенный HTTP flow; доменный метод `admin_adjust_balance` уже есть, но endpoint не добавлен, пока не утверждена схема admin-auth
 
 ## Фаза 2. Платежи: YooKassa и Telegram Stars
-Статус: `Не начато`
+Статус: `В работе`
 
-- [ ] Спроектировать payment abstraction layer
-- [ ] Добавить модели платежей и историю статусов
-- [ ] Реализовать `YooKassaGateway`
+- [x] Спроектировать payment abstraction layer
+- [x] Добавить модели платежей и историю статусов
+- [x] Реализовать `YooKassaGateway`
 - [ ] Реализовать `TelegramStarsGateway`
-- [ ] Реализовать webhook/callback обработку с идемпотентностью
-- [ ] Поддержать `wallet_topup`
+- [x] Реализовать webhook/callback обработку с идемпотентностью
+- [x] Поддержать `wallet_topup`
 - [ ] Поддержать `direct_plan_purchase`
 - [ ] Добавить frontend checkout flow
-- [ ] Проверить защиту от двойных callback
+- [x] Проверить защиту от двойных callback
+
+Утверждено 2026-03-10:
+- все платежные провайдеры должны быть нормализованы через один внутренний контракт `PaymentGateway`
+- provider-специфичные payload, подписи и статусы не должны утекать в API routes и purchase flow
+- оба пользовательских сценария Фазы 2 идут через два `flow_type`: `wallet_topup` и `direct_plan_purchase`
+- результат создания платежа должен возвращаться как единый `payment intent` snapshot, независимо от провайдера
+- webhook/callback от провайдера должен нормализоваться в единый `payment event` snapshot с provider event id для идемпотентности
+- фактическое изменение баланса или выдача подписки не должны происходить внутри gateway; gateway только создает intent и нормализует внешние события
+
+Нормализованные сущности payment abstraction:
+- `PaymentProvider`: `yookassa`, `telegram_stars`
+- `PaymentFlowType`: `wallet_topup`, `direct_plan_purchase`
+- `PaymentStatus`: `created`, `pending`, `requires_action`, `succeeded`, `failed`, `cancelled`, `expired`
+- `PaymentIntent`: внутренний snapshot созданного платежа с `provider_payment_id`, `status`, `amount`, `currency`, `confirmation_url`, `external_reference`
+- `PaymentWebhookEvent`: внутренний snapshot callback/webhook события с `provider_event_id`, `provider_payment_id`, `status`, `amount`, `currency`, `flow_type`, `account_id`
+
+Инварианты Фазы 2:
+- один и тот же provider callback не должен финализировать платеж дважды
+- `wallet_topup` и `direct_plan_purchase` обязаны использовать один payment abstraction layer, даже если дальше расходятся в business flow
+- provider gateway не имеет права писать в `ledger` напрямую
+- provider gateway не имеет права создавать/продлевать подписку в Remnawave напрямую
+- raw provider payload должен сохраняться в платежной истории для аудита и отладки
+
+Утверждено 2026-03-10 по моделям:
+- `payments` хранит текущий нормализованный snapshot intent/invoice: провайдер, flow type, status, amount, currency, provider ids, confirmation URL, idempotency key, ссылки возврата и raw payload
+- `payment_events` хранит append-only историю внешних callback/status событий и является точкой webhook-идемпотентности через уникальный `(provider, provider_event_id)`
+- `payments` и `payment_events` не должны полагаться на cascade delete аккаунта; merge-логика при необходимости будет переносить бизнес-связь отдельно, audit должен сохраняться
+
+Утверждено 2026-03-10 по YooKassa:
+- используется официальный Python SDK `yookassa==3.10.0`
+- создание платежа идет через `Payment.create(..., idempotency_key)` с `capture=true`, `confirmation.type=redirect` и `return_url`
+- gateway нормализует статусы `pending`, `waiting_for_capture`, `succeeded`, `canceled` в общий `PaymentStatus`
+- webhook ЮKassa не дает отдельного подписанного event id, поэтому внутри payment abstraction используется синтетический `provider_event_id = "<event>:<payment_id>"`
+- webhook flow в backend уже реализован через `POST /api/v1/webhooks/payments/yookassa`; provider payload сначала нормализуется gateway, затем пишется в `payment_events` и идемпотентно финализирует локальный `payments` record
+- для проверки подлинности webhook gateway дополнительно перечитывает платеж через API ЮKassa по `payment.id` и использует именно верифицированный provider state/metadata
+- `wallet_topup` уже реализован через `POST /api/v1/payments/yookassa/topup`; успешный callback создает один `payment_event` и один ledger credit с idempotency key `payment:yookassa:<provider_payment_id>:credit`
 
 ## Фаза 3. Единый purchase flow и Remnawave
 Статус: `Не начато`

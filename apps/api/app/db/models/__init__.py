@@ -7,6 +7,8 @@ from app.db.models.account import (
     LoginSource,
     LinkType,
 )
+from app.db.models.ledger import LedgerEntry, LedgerEntryType
+from app.db.models.payment import Payment, PaymentEvent
 
 __all__ = [
     "Account",
@@ -16,4 +18,8 @@ __all__ = [
     "AuthProvider",
     "AuthLinkToken",
     "LinkType",
+    "LedgerEntry",
+    "LedgerEntryType",
+    "Payment",
+    "PaymentEvent",
 ]

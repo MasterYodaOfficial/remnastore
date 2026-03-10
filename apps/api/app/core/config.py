@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     remnawave_api_token: str = ""
     remnawave_webhook_secret: str = ""
     trial_duration_days: int = 3
+    yookassa_shop_id: str = Field(default="", validation_alias="YOOKASSA_SHOP_ID")
+    yookassa_secret_key: str = Field(default="", validation_alias="YOOKASSA_SECRET_KEY")
+    yookassa_api_url: str = Field(
+        default="https://api.yookassa.ru/v3",
+        validation_alias="YOOKASSA_API_URL",
+    )
+    yookassa_verify_tls: bool = Field(default=True, validation_alias="YOOKASSA_VERIFY_TLS")
 
     # Auth
     jwt_secret: str = "change-me"

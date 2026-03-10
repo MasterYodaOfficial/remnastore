@@ -32,6 +32,7 @@ const BACKEND_API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000
   ""
 );
 const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
+const TELEGRAM_AUTH_STORAGE_KEY = 'remnastore.telegram_auth';
 const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';
 const THEME_STORAGE_KEY = 'remnastore.theme';
 type AuthView = 'default' | 'recovery' | 'recovery-expired';
@@ -120,13 +121,23 @@ interface BackendSubscriptionState {
   days_left?: number | null;
 }
 
-interface BackendTrialEligibility {
-  eligible: boolean;
+interface BackendTrialUi {
+  can_start_now: boolean;
   reason?: string | null;
   has_used_trial: boolean;
-  subscription_status?: string | null;
-  subscription_expires_at?: string | null;
-  remnawave_user_uuid?: string | null;
+  checked_at: string;
+  strict_check_required_on_start: boolean;
+}
+
+interface BackendBootstrapResponse {
+  account: BackendAccount;
+  subscription: BackendSubscriptionState;
+  trial_ui: BackendTrialUi;
+}
+
+interface StoredTelegramAuth {
+  accessToken: string;
+  telegramUserId: number;
 }
 
 interface User {
@@ -286,10 +297,10 @@ function calculateDaysLeft(expiresAt?: string | null): number | undefined {
 function mapSubscriptionToView(
   account: BackendAccount,
   subscriptionState: BackendSubscriptionState | null,
-  trialEligibility: BackendTrialEligibility | null
+  trialUi: BackendTrialUi | null
 ): Subscription {
   const hasUsedTrial =
-    trialEligibility?.has_used_trial ??
+    trialUi?.has_used_trial ??
     account.has_used_trial ??
     subscriptionState?.has_used_trial ??
     Boolean(account.trial_used_at);
@@ -309,13 +320,13 @@ function mapSubscriptionToView(
     isActive,
     daysLeft: daysLeft ?? undefined,
     totalDays: calculateTotalDays(trialUsedAt, trialEndsAt),
-    hasTrial: trialEligibility?.eligible ?? !hasUsedTrial,
+    hasTrial: trialUi?.can_start_now ?? !hasUsedTrial,
     hasUsedTrial,
     isTrial,
     status,
     expiresAt,
     subscriptionUrl: subscriptionState?.subscription_url ?? account.subscription_url ?? null,
-    trialEligibilityReason: trialEligibility?.reason ?? null,
+    trialEligibilityReason: trialUi?.reason ?? null,
   };
 }
 
@@ -362,6 +373,53 @@ function applyAppThemeVariables(nextTheme: 'light' | 'dark') {
   }
 }
 
+function readStoredTelegramAuth(): StoredTelegramAuth | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(TELEGRAM_AUTH_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredTelegramAuth>;
+    if (
+      typeof parsed.accessToken === 'string' &&
+      parsed.accessToken &&
+      typeof parsed.telegramUserId === 'number' &&
+      Number.isFinite(parsed.telegramUserId)
+    ) {
+      return {
+        accessToken: parsed.accessToken,
+        telegramUserId: parsed.telegramUserId,
+      };
+    }
+  } catch {
+    /* ignore malformed storage */
+  }
+
+  window.localStorage.removeItem(TELEGRAM_AUTH_STORAGE_KEY);
+  return null;
+}
+
+function writeStoredTelegramAuth(value: StoredTelegramAuth) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(TELEGRAM_AUTH_STORAGE_KEY, JSON.stringify(value));
+}
+
+function clearStoredTelegramAuth() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(TELEGRAM_AUTH_STORAGE_KEY);
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -382,6 +440,7 @@ export default function App() {
   const inFlightBrowserTokenRef = useRef<string | null>(null);
   const currentBrowserTokenRef = useRef<string | null>(null);
   const inFlightLinkTokenRef = useRef<string | null>(null);
+  const pendingTelegramLinkRefreshRef = useRef(false);
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
 
@@ -390,35 +449,18 @@ export default function App() {
     setAuthView(view);
   };
 
-  const loadAccountSnapshot = async (token: string) => {
-    const authHeaders = {
-      Authorization: `Bearer ${token}`,
-    };
-    const [accountResponse, subscriptionResponse, trialEligibilityResponse] = await Promise.all([
-      fetch(`${BACKEND_API}/api/v1/accounts/me`, {
-        headers: authHeaders,
-      }),
-      fetch(`${BACKEND_API}/api/v1/subscriptions/`, {
-        headers: authHeaders,
-      }),
-      fetch(`${BACKEND_API}/api/v1/subscriptions/trial-eligibility`, {
-        headers: authHeaders,
-      }),
-    ]);
+  const loadBootstrapSnapshot = async (token: string) => {
+    const response = await fetch(`${BACKEND_API}/api/v1/bootstrap/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-    if (!accountResponse.ok) {
-      throw new Error('Failed to load account from backend');
+    if (!response.ok) {
+      throw new Error('Failed to load bootstrap from backend');
     }
 
-    return {
-      accountData: await accountResponse.json() as BackendAccount,
-      subscriptionData: subscriptionResponse.ok
-        ? await subscriptionResponse.json() as BackendSubscriptionState
-        : null,
-      trialEligibility: trialEligibilityResponse.ok
-        ? await trialEligibilityResponse.json() as BackendTrialEligibility
-        : null,
-    };
+    return await response.json() as BackendBootstrapResponse;
   };
 
   const isPasswordRecoveryRequested = () => {
@@ -612,12 +654,18 @@ export default function App() {
     return () => mediaQuery.removeListener(listener);
   }, [isTelegramWebApp]);
 
-  // Refresh user data when window regains focus (after returning from Telegram linking)
   useEffect(() => {
-    if (!isAuthenticated || !accessToken) return;
+    if (!isAuthenticated || !accessToken) {
+      return;
+    }
 
-    const handleFocus = () => {
-      refreshUserData();
+    const handleFocus = async () => {
+      if (!pendingTelegramLinkRefreshRef.current) {
+        return;
+      }
+
+      pendingTelegramLinkRefreshRef.current = false;
+      await refreshUserData();
     };
 
     window.addEventListener('focus', handleFocus);
@@ -632,18 +680,19 @@ export default function App() {
         return;
       }
 
-      let accountSubscription: Subscription | null = null;
-      let accountUser = mapBackendAccountToUser({
-        id: String(telegramUser.id),
-        telegram_id: telegramUser.id,
-        display_name: telegramUser.first_name,
-        username: telegramUser.username,
-        first_name: telegramUser.first_name,
-        last_name: telegramUser.last_name,
-        balance: 0,
-        referral_earnings: 0,
-        referrals_count: 0,
-      }, telegramUser.photo_url);
+      const storedTelegramAuth = readStoredTelegramAuth();
+      if (storedTelegramAuth?.telegramUserId === telegramUser.id) {
+        setAccessToken(storedTelegramAuth.accessToken);
+        const restored = await loadUserData(storedTelegramAuth.accessToken, telegramUser.photo_url);
+        if (restored) {
+          setIsAuthenticated(true);
+          return;
+        }
+
+        clearStoredTelegramAuth();
+      } else if (storedTelegramAuth) {
+        clearStoredTelegramAuth();
+      }
 
       try {
         const authResponse = await fetch(`${BACKEND_API}/api/v1/auth/telegram/webapp`, {
@@ -652,32 +701,49 @@ export default function App() {
           body: JSON.stringify({ init_data: tg.initData }),
         });
 
-        if (authResponse.ok) {
-          const authData = await authResponse.json();
-          const backendAccount = authData.account as BackendAccount;
-          setAccessToken(authData.access_token);
-
-          try {
-            const loaded = await loadUserData(authData.access_token, telegramUser.photo_url);
-            if (loaded) {
-              setIsAuthenticated(true);
-              return;
-            }
-          } catch {
-            /* ignore and fallback to account snapshot from auth response */
-          }
-
-          accountUser = mapBackendAccountToUser(backendAccount, telegramUser.photo_url);
-          accountSubscription = mapSubscriptionToView(backendAccount, null, null);
+        if (!authResponse.ok) {
+          const errorData = await authResponse.json().catch(() => null);
+          const detail =
+            errorData && typeof errorData.detail === 'string'
+              ? errorData.detail
+              : 'Не удалось подтвердить Telegram-сессию';
+          throw new Error(detail);
         }
-      } catch {
-        /* ignore */
-      }
 
-      setUser(accountUser);
-      setSubscription(accountSubscription);
-      setIsAuthenticated(true);
+        const authData = await authResponse.json();
+        const backendAccount = authData.account as BackendAccount;
+        setAccessToken(authData.access_token);
+        writeStoredTelegramAuth({
+          accessToken: authData.access_token,
+          telegramUserId: telegramUser.id,
+        });
+
+        const loaded = await loadUserData(authData.access_token, telegramUser.photo_url);
+        if (loaded) {
+          setIsAuthenticated(true);
+          return;
+        }
+
+        setUser(mapBackendAccountToUser(backendAccount, telegramUser.photo_url));
+        setSubscription(mapSubscriptionToView(backendAccount, null, null));
+        setIsAuthenticated(true);
+      } catch (err) {
+        clearStoredTelegramAuth();
+        setIsAuthenticated(false);
+        setUser(null);
+        setSubscription(null);
+        setAccessToken(null);
+        console.error('Telegram auth error:', err);
+        toast.error(
+          err instanceof Error ? err.message : 'Не удалось подтвердить Telegram-сессию'
+        );
+      }
     } catch (err) {
+      clearStoredTelegramAuth();
+      setIsAuthenticated(false);
+      setUser(null);
+      setSubscription(null);
+      setAccessToken(null);
       console.error('Telegram auth error:', err);
     } finally {
       setIsLoading(false);
@@ -849,6 +915,7 @@ export default function App() {
     setIsAuthenticated(false);
     setUser(null);
     setAccessToken(null);
+    pendingTelegramLinkRefreshRef.current = false;
     currentBrowserTokenRef.current = null;
     lastLoadedBrowserTokenRef.current = null;
     inFlightBrowserTokenRef.current = null;
@@ -893,7 +960,10 @@ export default function App() {
 
   const loadUserData = async (token: string, browserAvatar?: string) => {
     try {
-      const { accountData, subscriptionData, trialEligibility } = await loadAccountSnapshot(token);
+      const bootstrap = await loadBootstrapSnapshot(token);
+      const accountData = bootstrap.account;
+      const subscriptionData = bootstrap.subscription;
+      const trialUi = bootstrap.trial_ui;
 
       setUser((currentUser) =>
         mapBackendAccountToUser(
@@ -901,7 +971,7 @@ export default function App() {
           browserAvatar || currentUser?.avatar
         )
       );
-      setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialEligibility));
+      setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
       setPlans([]);
 
       return true;
@@ -1002,6 +1072,7 @@ export default function App() {
       }
 
       const data = await response.json();
+      pendingTelegramLinkRefreshRef.current = true;
       window.open(data.link_url, '_blank');
       toast.success('Ссылка для привязки Telegram открыта в новом окне');
     } catch (err) {
@@ -1081,14 +1152,17 @@ export default function App() {
     if (!accessToken) return;
     
     try {
-      const { accountData, subscriptionData, trialEligibility } = await loadAccountSnapshot(accessToken);
+      const bootstrap = await loadBootstrapSnapshot(accessToken);
+      const accountData = bootstrap.account;
+      const subscriptionData = bootstrap.subscription;
+      const trialUi = bootstrap.trial_ui;
       setUser((currentUser) =>
         mapBackendAccountToUser(
           accountData,
           currentUser?.avatar
         )
       );
-      setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialEligibility));
+      setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
     } catch (err) {
       console.error('Error refreshing user data:', err);
     }

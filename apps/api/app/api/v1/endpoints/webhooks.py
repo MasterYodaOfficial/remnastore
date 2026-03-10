@@ -8,6 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.session import get_session
+from app.schemas.payment import PaymentWebhookProcessResponse
+from app.services.payments import (
+    PaymentConflictError,
+    PaymentGatewayConfigurationError,
+    PaymentGatewayError,
+    PaymentWebhookProcessResult,
+    process_yookassa_webhook,
+)
 from app.services.subscriptions import RemnawaveSyncError, sync_subscription_by_remnawave_user_uuid
 
 router = APIRouter()
@@ -67,9 +75,47 @@ def _extract_remnawave_user_uuid(payload: dict) -> UUID:
     )
 
 
-@router.post("/payments")
-async def payments_webhook() -> dict:
-    return {"todo": "handle payment webhook"}
+def _payment_webhook_response(result: PaymentWebhookProcessResult) -> PaymentWebhookProcessResponse:
+    return PaymentWebhookProcessResponse(
+        payment_id=result.payment_id,
+        provider_payment_id=result.provider_payment_id,
+        status=result.status,
+        duplicate=result.duplicate,
+        ledger_applied=result.ledger_applied,
+    )
+
+
+@router.post("/payments/yookassa", response_model=PaymentWebhookProcessResponse)
+async def yookassa_payments_webhook(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> PaymentWebhookProcessResponse:
+    raw_body = await request.body()
+    headers = {key: value for key, value in request.headers.items()}
+
+    try:
+        result = await process_yookassa_webhook(
+            session,
+            raw_body=raw_body,
+            headers=headers,
+        )
+    except PaymentGatewayConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except PaymentConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except PaymentGatewayError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return _payment_webhook_response(result)
 
 
 @router.post("/remnawave")

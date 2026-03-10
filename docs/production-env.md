@@ -117,6 +117,14 @@
   - используется API endpoint `POST /api/v1/webhooks/remnawave`
   - должен совпадать с секретом, настроенным в панели Remnawave
 
+- `YOOKASSA_SHOP_ID`
+  - идентификатор магазина ЮKassa
+  - обязателен для платежей через YooKassa
+
+- `YOOKASSA_SECRET_KEY`
+  - секретный ключ магазина ЮKassa
+  - обязательный секрет
+
 ### Web
 
 - `VITE_SUPABASE_URL`
@@ -136,6 +144,8 @@
 - `ACCOUNT_RESPONSE_CACHE_TTL_SECONDS`
 - `TELEGRAM_INIT_DATA_TTL_SECONDS`
 - `TRIAL_DURATION_DAYS`
+- `YOOKASSA_API_URL`
+- `YOOKASSA_VERIFY_TLS`
 
 Их можно не менять на первом production deploy, если дефолты подходят.
 
@@ -165,6 +175,8 @@
 
 - `BOT_WEBHOOK_SECRET` должен быть отдельной случайной строкой, а не копией `BOT_TOKEN`
 - `REMNAWAVE_WEBHOOK_SECRET` должен быть отдельной случайной строкой и использоваться только для проверки webhook от Remnawave
+- `YOOKASSA_SECRET_KEY` должен храниться только на backend и никогда не попадать во frontend bundle
+- у webhook ЮKassa нет отдельного shared secret; подлинность уведомлений нужно проверять по IP-адресу отправителя и/или дополнительной сверкой статуса платежа через API
 - `VITE_*` переменные считаются публичными и попадают во frontend bundle
 - `SUPABASE_ANON_KEY` и `VITE_SUPABASE_ANON_KEY` обычно совпадают
 - `SUPABASE_URL` и `VITE_SUPABASE_URL` обычно совпадают

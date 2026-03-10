@@ -4,6 +4,7 @@ from uuid import UUID
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -102,6 +103,30 @@ def _identity_display_name(
 
 
 async def upsert_supabase_account(
+    session: AsyncSession,
+    *,
+    supabase_user: SupabaseUser,
+) -> Account:
+    for attempt in range(2):
+        try:
+            return await _upsert_supabase_account_once(
+                session,
+                supabase_user=supabase_user,
+            )
+        except IntegrityError as exc:
+            await session.rollback()
+            if "uq_auth_provider_uid" not in str(exc):
+                raise
+
+            if attempt == 1:
+                raise AccountIdentityConflictError(
+                    "supabase identity link could not be persisted consistently"
+                ) from exc
+
+    raise AssertionError("unreachable")
+
+
+async def _upsert_supabase_account_once(
     session: AsyncSession,
     *,
     supabase_user: SupabaseUser,

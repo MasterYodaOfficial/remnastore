@@ -17,6 +17,7 @@ from app.db.models import (
     LinkType,
 )
 from app.services.cache import get_cache
+from app.services.ledger import transfer_balance_for_merge
 
 
 class LinkTokenExpiredError(Exception):
@@ -299,7 +300,14 @@ async def merge_accounts(
         target_account.referred_by_account_id or source_account.referred_by_account_id
     )
 
-    target_account.balance += source_account.balance
+    if source_account.balance > 0:
+        await transfer_balance_for_merge(
+            session,
+            source_account=source_account,
+            target_account=target_account,
+            amount=source_account.balance,
+            reference_id=uuid.uuid4().hex,
+        )
     target_account.referral_earnings += source_account.referral_earnings
     target_account.referrals_count += source_account.referrals_count
     target_account.referral_reward_rate = max(
