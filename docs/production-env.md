@@ -78,9 +78,10 @@
   - если bot и api в одном compose-сети, обычно `http://api:8000`
 
 - `API_TOKEN`
-  - зарезервирован для будущей server-to-server авторизации bot -> api
-  - сейчас bot его отправляет, но API его не валидирует
-  - пока можно оставлять пустым
+  - обязательный shared secret для внутренних callback'ов bot -> api
+  - используется для `POST /api/v1/webhooks/payments/telegram-stars/pre-checkout`
+  - используется для `POST /api/v1/webhooks/payments/telegram-stars`
+  - должен быть одинаковым в `apps/api` и `apps/bot`
 
 ### API
 
@@ -117,6 +118,13 @@
   - используется API endpoint `POST /api/v1/webhooks/remnawave`
   - должен совпадать с секретом, настроенным в панели Remnawave
 
+- backend-каталог тарифов теперь читается из файла
+  - [subscription-plans.json](/home/yoda/PycharmProjects/remnastore/apps/api/app/config/subscription-plans.json)
+  - это runtime-источник истины для `GET /api/v1/payments/plans`, `POST /api/v1/payments/yookassa/plans/{plan_code}` и `POST /api/v1/payments/telegram-stars/plans/{plan_code}`
+  - каждый тариф должен содержать `code`, `name`, `price_rub`, `duration_days`, `features[]`
+  - `price_stars` опционален; если не задан, Mini App не предлагает оплату этого тарифа через Telegram Stars
+  - `popular` опционален
+
 - `YOOKASSA_SHOP_ID`
   - идентификатор магазина ЮKassa
   - обязателен для платежей через YooKassa
@@ -124,6 +132,9 @@
 - `YOOKASSA_SECRET_KEY`
   - секретный ключ магазина ЮKassa
   - обязательный секрет
+
+- `BOT_TOKEN`
+  - обязателен также для создания invoice link через Telegram Stars
 
 ### Web
 
@@ -176,7 +187,9 @@
 - `BOT_WEBHOOK_SECRET` должен быть отдельной случайной строкой, а не копией `BOT_TOKEN`
 - `REMNAWAVE_WEBHOOK_SECRET` должен быть отдельной случайной строкой и использоваться только для проверки webhook от Remnawave
 - `YOOKASSA_SECRET_KEY` должен храниться только на backend и никогда не попадать во frontend bundle
+- `API_TOKEN` должен храниться только на backend и в bot, но не во frontend bundle
 - у webhook ЮKassa нет отдельного shared secret; подлинность уведомлений нужно проверять по IP-адресу отправителя и/или дополнительной сверкой статуса платежа через API
+- `API_TOKEN` теперь является обязательным для Telegram Stars; без него pre-checkout и finalization callbacks из bot в api не пройдут
 - `VITE_*` переменные считаются публичными и попадают во frontend bundle
 - `SUPABASE_ANON_KEY` и `VITE_SUPABASE_ANON_KEY` обычно совпадают
 - `SUPABASE_URL` и `VITE_SUPABASE_URL` обычно совпадают
@@ -203,6 +216,7 @@ cp .env.example .env
 - `WEBAPP_URL`
 - `VITE_API_BASE_URL`
 - `VITE_TELEGRAM_BOT_URL`
+- `API_TOKEN`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `VITE_SUPABASE_URL`

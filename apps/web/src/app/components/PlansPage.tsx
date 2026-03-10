@@ -6,6 +6,7 @@ interface Plan {
   id: string;
   name: string;
   price: number;
+  priceStars?: number | null;
   duration: number; // days
   features: string[];
   popular?: boolean;
@@ -16,9 +17,67 @@ interface PlansPageProps {
   balance: number;
   onBuyPlan: (planId: string) => void;
   onTopUp: () => void;
+  isLoading?: boolean;
+  checkoutPlanId?: string | null;
+  isTelegramWebApp?: boolean;
 }
 
-export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps) {
+export function PlansPage({
+  plans,
+  balance,
+  onBuyPlan,
+  onTopUp,
+  isLoading = false,
+  checkoutPlanId = null,
+  isTelegramWebApp = false,
+}: PlansPageProps) {
+  const getPlanButtonLabel = (plan: Plan): string => {
+    if (!isTelegramWebApp) {
+      return 'Оплатить тариф';
+    }
+    if (plan.priceStars) {
+      return 'Выбрать способ оплаты';
+    }
+    return 'Оплатить картой';
+  };
+
+  if (isLoading && !plans.length) {
+    return (
+      <div className="pb-20 px-4 pt-4 space-y-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
+            Выберите тариф
+          </h1>
+          <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+            Загружаем актуальные тарифы с backend...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!plans.length) {
+    return (
+      <div className="pb-20 px-4 pt-4 space-y-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
+            Выберите тариф
+          </h1>
+          <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+            Каталог тарифов пока недоступен. Попробуйте открыть экран позже.
+          </p>
+        </div>
+
+        <button
+          onClick={onTopUp}
+          className="w-full rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] py-3 font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+        >
+          Пополнить баланс
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="pb-20 px-4 pt-4 space-y-4">
       <div>
@@ -49,14 +108,21 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
               <h3 className="text-xl font-bold text-[var(--tg-theme-text-color,#000000)]">
                 {plan.name}
               </h3>
-              <div className="flex items-baseline gap-1 mt-2">
-                <span className="text-3xl font-bold text-[var(--tg-theme-button-color,#3390ec)]">
-                  {formatRubles(plan.price)}
-                </span>
-                <span className="text-lg text-[var(--tg-theme-hint-color,#999999)]">₽</span>
-                <span className="text-sm text-[var(--tg-theme-hint-color,#999999)] ml-1">
-                  / {plan.duration} дней
-                </span>
+              <div className="mt-2 space-y-1">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-3xl font-bold text-[var(--tg-theme-button-color,#3390ec)]">
+                    {formatRubles(plan.price)}
+                  </span>
+                  <span className="text-lg text-[var(--tg-theme-hint-color,#999999)]">₽</span>
+                  <span className="ml-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
+                    / {plan.duration} дней
+                  </span>
+                </div>
+                {isTelegramWebApp && plan.priceStars ? (
+                  <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+                    Или {plan.priceStars} Stars внутри Telegram.
+                  </p>
+                ) : null}
               </div>
             </div>
 
@@ -72,20 +138,13 @@ export function PlansPage({ plans, balance, onBuyPlan, onTopUp }: PlansPageProps
             </div>
 
             <button
-              onClick={() => {
-                if (balance >= plan.price) {
-                  onBuyPlan(plan.id);
-                } else {
-                  onTopUp();
-                }
-              }}
-              className={`w-full py-3 rounded-xl font-medium hover:opacity-90 transition-opacity ${
-                balance >= plan.price
-                  ? 'bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]'
-                  : 'bg-[var(--app-surface-color,#dbe4f2)] text-[var(--app-muted-contrast,#475569)]'
-              }`}
+              onClick={() => onBuyPlan(plan.id)}
+              disabled={checkoutPlanId === plan.id}
+              className="w-full py-3 rounded-xl font-medium bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {balance >= plan.price ? 'Купить' : 'Пополнить баланс'}
+              {checkoutPlanId === plan.id
+                ? 'Открываем оплату...'
+                : getPlanButtonLabel(plan)}
             </button>
           </div>
         ))}

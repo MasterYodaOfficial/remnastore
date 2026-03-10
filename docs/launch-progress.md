@@ -12,7 +12,7 @@
 
 - Фаза 0: `Завершена`
 - Фаза 1: `В работе`
-- Фаза 2: `Не начато`
+- Фаза 2: `Завершена`
 - Фаза 3: `Не начато`
 - Фаза 4: `Не начато`
 - Фаза 5: `Не начато`
@@ -139,16 +139,16 @@
 - вынести admin correction в отдельный защищенный HTTP flow; доменный метод `admin_adjust_balance` уже есть, но endpoint не добавлен, пока не утверждена схема admin-auth
 
 ## Фаза 2. Платежи: YooKassa и Telegram Stars
-Статус: `В работе`
+Статус: `Завершена`
 
 - [x] Спроектировать payment abstraction layer
 - [x] Добавить модели платежей и историю статусов
 - [x] Реализовать `YooKassaGateway`
-- [ ] Реализовать `TelegramStarsGateway`
+- [x] Реализовать `TelegramStarsGateway`
 - [x] Реализовать webhook/callback обработку с идемпотентностью
 - [x] Поддержать `wallet_topup`
-- [ ] Поддержать `direct_plan_purchase`
-- [ ] Добавить frontend checkout flow
+- [x] Поддержать `direct_plan_purchase`
+- [x] Добавить frontend checkout flow
 - [x] Проверить защиту от двойных callback
 
 Утверждено 2026-03-10:
@@ -186,6 +186,18 @@
 - webhook flow в backend уже реализован через `POST /api/v1/webhooks/payments/yookassa`; provider payload сначала нормализуется gateway, затем пишется в `payment_events` и идемпотентно финализирует локальный `payments` record
 - для проверки подлинности webhook gateway дополнительно перечитывает платеж через API ЮKassa по `payment.id` и использует именно верифицированный provider state/metadata
 - `wallet_topup` уже реализован через `POST /api/v1/payments/yookassa/topup`; успешный callback создает один `payment_event` и один ledger credit с idempotency key `payment:yookassa:<provider_payment_id>:credit`
+- backend-каталог тарифов теперь читается из `apps/api/app/config/subscription-plans.json`, отдается через `GET /api/v1/payments/plans` и является источником истины для `direct_plan_purchase`
+- платная покупка тарифа через YooKassa создается endpoint `POST /api/v1/payments/yookassa/plans/{plan_code}` и сохраняет plan metadata в локальном `payments` snapshot
+- платная покупка тарифа через Telegram Stars создается endpoint `POST /api/v1/payments/telegram-stars/plans/{plan_code}` и доступна только для `direct_plan_purchase`
+- Telegram Stars не используются для `wallet_topup`; этот flow остается только за YooKassa, чтобы не смешивать `RUB` и `XTR` в кошельке
+- для Telegram Stars введены внутренние bot -> api callbacks:
+  - `POST /api/v1/webhooks/payments/telegram-stars/pre-checkout`
+  - `POST /api/v1/webhooks/payments/telegram-stars`
+  оба защищены `API_TOKEN`
+- в `subscription-plans.json` тариф теперь может содержать `price_stars`; если поле не заполнено, Mini App не предлагает оплату этого тарифа через Stars
+- для rollback-safe выдачи paid subscription добавлена таблица `subscription_grants`: сначала webhook фиксирует `target_expires_at`, потом отдельно финализирует продление в Remnawave по этому зафиксированному значению
+- повторный callback с тем же `provider_event_id` больше не может продлить подписку второй раз; если первый проход успел только зафиксировать event/grant, повторный webhook безопасно завершит незакрытую финализацию
+- frontend checkout flow теперь использует реальные endpoints `GET /api/v1/payments/plans`, `POST /api/v1/payments/yookassa/topup`, `POST /api/v1/payments/yookassa/plans/{plan_code}` и `POST /api/v1/payments/telegram-stars/plans/{plan_code}` вместо заглушек
 
 ## Фаза 3. Единый purchase flow и Remnawave
 Статус: `Не начато`

@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env_old", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "remnastore-api"
     app_version: str = "0.1.0"
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         validation_alias="YOOKASSA_API_URL",
     )
     yookassa_verify_tls: bool = Field(default=True, validation_alias="YOOKASSA_VERIFY_TLS")
+    api_token: str = Field(default="", validation_alias="API_TOKEN")
 
     # Auth
     jwt_secret: str = "change-me"

@@ -57,6 +57,20 @@ def _normalize_datetime(value: datetime | None) -> datetime | None:
     return value
 
 
+def compute_paid_plan_window(
+    account: Account,
+    *,
+    duration_days: int,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    effective_now = now or _utcnow()
+    current_expires_at = _normalize_datetime(account.subscription_expires_at)
+    base_expires_at = effective_now
+    if current_expires_at is not None and current_expires_at > effective_now:
+        base_expires_at = current_expires_at
+    return base_expires_at, base_expires_at + timedelta(days=duration_days)
+
+
 async def _clear_account_cache(account_id: UUID) -> None:
     cache = get_cache()
     await cache.delete(cache.account_response_key(str(account_id)))
@@ -111,6 +125,32 @@ def _clear_remote_subscription_snapshot(account: Account) -> None:
 
 async def get_current_subscription(account: Account) -> SubscriptionStateResponse:
     return SubscriptionStateResponse.from_account(account)
+
+
+async def provision_paid_subscription(
+    account: Account,
+    *,
+    target_expires_at: datetime,
+) -> RemnawaveUser:
+    try:
+        gateway = get_remnawave_gateway()
+    except RemnawaveConfigurationError as exc:
+        raise RemnawaveSyncError(str(exc)) from exc
+
+    try:
+        remote_user = await gateway.provision_user(
+            user_uuid=_target_remnawave_user_uuid(account),
+            expire_at=target_expires_at,
+            email=account.email,
+            telegram_id=account.telegram_id,
+            is_trial=False,
+        )
+    except RemnawaveRequestError as exc:
+        raise RemnawaveSyncError(str(exc)) from exc
+
+    _apply_remote_user(account, remote_user)
+    account.subscription_is_trial = False
+    return remote_user
 
 
 async def _find_remnawave_identity_conflict(

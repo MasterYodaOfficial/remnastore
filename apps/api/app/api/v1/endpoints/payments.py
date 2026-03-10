@@ -4,15 +4,48 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_account
 from app.db.models import Account
 from app.db.session import get_session
-from app.schemas.payment import CreateYooKassaTopupRequest, PaymentIntentResponse
+from app.schemas.payment import (
+    CreateTelegramStarsPlanPurchaseRequest,
+    CreateYooKassaPlanPurchaseRequest,
+    CreateYooKassaTopupRequest,
+    PaymentIntentResponse,
+    SubscriptionPlanResponse,
+)
+from app.services.plans import SubscriptionPlanError, get_subscription_plans
 from app.services.payments import (
     PaymentConflictError,
     PaymentGatewayConfigurationError,
     PaymentGatewayError,
+    create_telegram_stars_plan_purchase_payment,
+    create_yookassa_plan_purchase_payment,
     create_yookassa_topup_payment,
 )
 
 router = APIRouter()
+
+
+@router.get("/plans", response_model=list[SubscriptionPlanResponse])
+async def list_subscription_plans() -> list[SubscriptionPlanResponse]:
+    try:
+        plans = get_subscription_plans()
+    except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return [
+        SubscriptionPlanResponse(
+            code=plan.code,
+            name=plan.name,
+            price_rub=plan.price_rub,
+            price_stars=plan.price_stars,
+            duration_days=plan.duration_days,
+            features=list(plan.features),
+            popular=plan.popular,
+        )
+        for plan in plans
+    ]
 
 
 @router.post("/yookassa/topup", response_model=PaymentIntentResponse)
@@ -31,6 +64,86 @@ async def create_yookassa_topup(
             description=payload.description,
             idempotency_key=payload.idempotency_key,
         )
+    except PaymentGatewayConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except PaymentConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except PaymentGatewayError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)
+
+
+@router.post("/yookassa/plans/{plan_code}", response_model=PaymentIntentResponse)
+async def create_yookassa_plan_purchase(
+    plan_code: str,
+    payload: CreateYooKassaPlanPurchaseRequest,
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
+) -> PaymentIntentResponse:
+    try:
+        snapshot = await create_yookassa_plan_purchase_payment(
+            session,
+            account=current_account,
+            plan_code=plan_code,
+            success_url=payload.success_url,
+            cancel_url=payload.cancel_url,
+            description=payload.description,
+            idempotency_key=payload.idempotency_key,
+        )
+    except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PaymentGatewayConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except PaymentConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except PaymentGatewayError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)
+
+
+@router.post("/telegram-stars/plans/{plan_code}", response_model=PaymentIntentResponse)
+async def create_telegram_stars_plan_purchase(
+    plan_code: str,
+    payload: CreateTelegramStarsPlanPurchaseRequest,
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
+) -> PaymentIntentResponse:
+    try:
+        snapshot = await create_telegram_stars_plan_purchase_payment(
+            session,
+            account=current_account,
+            plan_code=plan_code,
+            description=payload.description,
+            idempotency_key=payload.idempotency_key,
+        )
+    except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     except PaymentGatewayConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

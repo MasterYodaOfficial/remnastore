@@ -31,7 +31,7 @@ class PaymentStatus(StrEnum):
 class CreatePaymentIntentCommand:
     account_id: UUID
     flow_type: PaymentFlowType
-    amount_rub: int
+    amount: int
     currency: str = "RUB"
     plan_code: str | None = None
     success_url: str | None = None
@@ -47,7 +47,7 @@ class PaymentIntentSnapshot:
     flow_type: PaymentFlowType
     account_id: UUID
     status: PaymentStatus
-    amount_rub: int
+    amount: int
     currency: str
     provider_payment_id: str
     external_reference: str | None = None
@@ -62,7 +62,7 @@ class PaymentWebhookEvent:
     provider_event_id: str
     provider_payment_id: str
     status: PaymentStatus
-    amount_rub: int
+    amount: int
     currency: str
     flow_type: PaymentFlowType
     account_id: UUID

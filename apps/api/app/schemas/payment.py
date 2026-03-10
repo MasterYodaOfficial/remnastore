@@ -14,18 +14,53 @@ class CreateYooKassaTopupRequest(BaseModel):
     idempotency_key: str | None = None
 
 
+class CreateYooKassaPlanPurchaseRequest(BaseModel):
+    success_url: str | None = None
+    cancel_url: str | None = None
+    description: str | None = None
+    idempotency_key: str | None = None
+
+
+class CreateTelegramStarsPlanPurchaseRequest(BaseModel):
+    description: str | None = None
+    idempotency_key: str | None = None
+
+
+class SubscriptionPlanResponse(BaseModel):
+    code: str
+    name: str
+    price_rub: int
+    price_stars: int | None = None
+    duration_days: int
+    features: list[str]
+    popular: bool = False
+
+
 class PaymentIntentResponse(BaseModel):
     provider: PaymentProvider
     flow_type: PaymentFlowType
     account_id: UUID
     status: PaymentStatus
-    amount_rub: int
+    amount: int
     currency: str
     provider_payment_id: str
     external_reference: str | None = None
     confirmation_url: str | None = None
     expires_at: datetime | None = None
     raw_payload: dict | None = None
+
+
+class TelegramStarsPreCheckoutRequest(BaseModel):
+    telegram_id: int
+    invoice_payload: str
+    total_amount: int = Field(gt=0)
+    currency: str
+    pre_checkout_query_id: str
+
+
+class TelegramStarsPreCheckoutResponse(BaseModel):
+    ok: bool
+    error_message: str | None = None
 
 
 class PaymentWebhookProcessResponse(BaseModel):
@@ -35,3 +70,4 @@ class PaymentWebhookProcessResponse(BaseModel):
     status: PaymentStatus
     duplicate: bool = False
     ledger_applied: bool = False
+    subscription_applied: bool = False

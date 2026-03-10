@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
     func,
@@ -54,14 +55,14 @@ class Payment(Base):
     )
     amount: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
-    provider_payment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_payment_id: Mapped[str] = mapped_column(Text(), nullable=False)
     external_reference: Mapped[str | None] = mapped_column(String(128))
     idempotency_key: Mapped[str | None] = mapped_column(String(128))
     plan_code: Mapped[str | None] = mapped_column(String(64))
     description: Mapped[str | None] = mapped_column(String(255))
-    success_url: Mapped[str | None] = mapped_column(String(512))
-    cancel_url: Mapped[str | None] = mapped_column(String(512))
-    confirmation_url: Mapped[str | None] = mapped_column(String(1024))
+    success_url: Mapped[str | None] = mapped_column(Text())
+    cancel_url: Mapped[str | None] = mapped_column(Text())
+    confirmation_url: Mapped[str | None] = mapped_column(Text())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload: Mapped[dict | None] = mapped_column(JSON())
@@ -99,8 +100,8 @@ class PaymentEvent(Base):
         Enum(PaymentStatus, **payment_enum_kwargs, length=32),
         nullable=False,
     )
-    provider_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    provider_payment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_event_id: Mapped[str] = mapped_column(Text(), nullable=False)
+    provider_payment_id: Mapped[str] = mapped_column(Text(), nullable=False)
     event_type: Mapped[str | None] = mapped_column(String(64))
     amount: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")

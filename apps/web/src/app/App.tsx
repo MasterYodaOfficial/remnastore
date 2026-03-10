@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase/client';
-import { loadTelegramScript, getTelegramWebApp } from '../../utils/telegram';
+import { loadTelegramScript, getTelegramWebApp, openTelegramInvoice } from '../../utils/telegram';
 import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
 import { HomePage } from './components/HomePage';
@@ -11,6 +11,7 @@ import { SettingsPage } from './components/SettingsPage';
 import { SubscriptionCard } from './components/SubscriptionCard';
 import { ThemeToggle } from './components/ThemeToggle';
 import { BottomNav } from './components/BottomNav';
+import { PaymentMethodSheet, type PaymentMethodOption, type PaymentMethodProvider } from './components/PaymentMethodSheet';
 import { TopUpModal } from './components/TopUpModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { formatRubles } from '../lib/currency';
@@ -135,6 +136,28 @@ interface BackendBootstrapResponse {
   trial_ui: BackendTrialUi;
 }
 
+interface BackendPlan {
+  code: string;
+  name: string;
+  price_rub: number;
+  price_stars?: number | null;
+  duration_days: number;
+  features: string[];
+  popular?: boolean;
+}
+
+interface BackendPaymentIntent {
+  provider: string;
+  flow_type: string;
+  account_id: string;
+  status: string;
+  amount: number;
+  currency: string;
+  provider_payment_id: string;
+  external_reference?: string | null;
+  confirmation_url?: string | null;
+}
+
 interface StoredTelegramAuth {
   accessToken: string;
   telegramUserId: number;
@@ -170,10 +193,24 @@ interface Plan {
   id: string;
   name: string;
   price: number;
+  priceStars?: number | null;
   duration: number;
   features: string[];
   popular?: boolean;
 }
+
+type PaymentSelectionState =
+  | {
+      kind: 'plan';
+      planId: string;
+      planName: string;
+      methods: PaymentMethodOption[];
+    }
+  | {
+      kind: 'topup';
+      amount: number;
+      methods: PaymentMethodOption[];
+    };
 
 interface SupabaseIdentityLike {
   provider?: string;
@@ -349,6 +386,82 @@ function getTrialErrorMessage(detail: string): string {
   }
 }
 
+function getPaymentErrorMessage(detail: string): string {
+  switch (detail) {
+    case 'YooKassa credentials are not configured':
+      return 'Платежный шлюз пока не настроен.';
+    case 'BOT_TOKEN is required for Telegram Stars':
+      return 'Telegram Stars пока не настроены.';
+    case 'API_TOKEN is required for Telegram Stars callbacks':
+      return 'Внутренний callback для Telegram Stars пока не настроен.';
+    default:
+      if (detail.startsWith('Telegram Stars price is not configured for plan ')) {
+        return 'Для этого тарифа пока не настроена цена в Telegram Stars.';
+      }
+      return detail;
+  }
+}
+
+function mapBackendPlanToView(plan: BackendPlan): Plan {
+  return {
+    id: plan.code,
+    name: plan.name,
+    price: plan.price_rub,
+    priceStars: plan.price_stars ?? null,
+    duration: plan.duration_days,
+    features: plan.features,
+    popular: Boolean(plan.popular),
+  };
+}
+
+function createClientIdempotencyKey(prefix: string): string {
+  const randomPart =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${randomPart}`;
+}
+
+function getPaymentReturnUrl(): string {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const { origin, pathname } = window.location;
+  return `${origin}${pathname}`;
+}
+
+function buildYooKassaMethod(isTelegramWebApp: boolean): PaymentMethodOption {
+  return {
+    provider: 'yookassa',
+    label: 'Банковская карта',
+    description: isTelegramWebApp
+      ? 'Переход на YooKassa во внешнем браузере.'
+      : 'Оплата картой через YooKassa.',
+    note: isTelegramWebApp ? 'Мини-приложение откроет внешнюю ссылку на оплату.' : undefined,
+  };
+}
+
+function getAvailableTopUpPaymentMethods(isTelegramWebApp: boolean): PaymentMethodOption[] {
+  return [buildYooKassaMethod(isTelegramWebApp)];
+}
+
+function getAvailablePlanPaymentMethods(plan: Plan, isTelegramWebApp: boolean): PaymentMethodOption[] {
+  const methods: PaymentMethodOption[] = [];
+
+  if (isTelegramWebApp && plan.priceStars) {
+    methods.push({
+      provider: 'telegram_stars',
+      label: 'Telegram Stars',
+      description: 'Оплата внутри Telegram без перехода в браузер.',
+      note: `Списание ${plan.priceStars} Stars.`,
+    });
+  }
+
+  methods.push(buildYooKassaMethod(isTelegramWebApp));
+  return methods;
+}
+
 function getInitialTheme(): 'light' | 'dark' {
   if (typeof window === 'undefined') {
     return 'light';
@@ -429,6 +542,11 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [isLoadingPlans, setIsLoadingPlans] = useState(false);
+  const [isTopUpSubmitting, setIsTopUpSubmitting] = useState(false);
+  const [checkoutPlanId, setCheckoutPlanId] = useState<string | null>(null);
+  const [paymentMethodSelection, setPaymentMethodSelection] = useState<PaymentSelectionState | null>(null);
+  const [paymentMethodSubmitting, setPaymentMethodSubmitting] = useState<PaymentMethodProvider | null>(null);
   const [activeTab, setActiveTab] = useState('home');
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [referralCopied, setReferralCopied] = useState(false);
@@ -441,6 +559,8 @@ export default function App() {
   const currentBrowserTokenRef = useRef<string | null>(null);
   const inFlightLinkTokenRef = useRef<string | null>(null);
   const pendingTelegramLinkRefreshRef = useRef(false);
+  const pendingPaymentRefreshRef = useRef(false);
+  const attemptedPlansTokenRef = useRef<string | null>(null);
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
 
@@ -461,6 +581,20 @@ export default function App() {
     }
 
     return await response.json() as BackendBootstrapResponse;
+  };
+
+  const loadPlansSnapshot = async (token: string) => {
+    const response = await fetch(`${BACKEND_API}/api/v1/payments/plans`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load plans from backend');
+    }
+
+    return await response.json() as BackendPlan[];
   };
 
   const isPasswordRecoveryRequested = () => {
@@ -659,17 +793,39 @@ export default function App() {
       return;
     }
 
-    const handleFocus = async () => {
-      if (!pendingTelegramLinkRefreshRef.current) {
+    const refreshPendingState = async () => {
+      if (!pendingTelegramLinkRefreshRef.current && !pendingPaymentRefreshRef.current) {
         return;
       }
 
+      const hadPendingTelegramRefresh = pendingTelegramLinkRefreshRef.current;
+      const hadPendingPaymentRefresh = pendingPaymentRefreshRef.current;
       pendingTelegramLinkRefreshRef.current = false;
-      await refreshUserData();
+      pendingPaymentRefreshRef.current = false;
+
+      const refreshed = await refreshUserData();
+      if (!refreshed) {
+        pendingTelegramLinkRefreshRef.current = hadPendingTelegramRefresh;
+        pendingPaymentRefreshRef.current = hadPendingPaymentRefresh;
+      }
+    };
+
+    const handleFocus = () => {
+      void refreshPendingState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshPendingState();
+      }
     };
 
     window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [isAuthenticated, accessToken]);
 
   const handleTelegramAuth = async (tg: any) => {
@@ -732,6 +888,8 @@ export default function App() {
         setIsAuthenticated(false);
         setUser(null);
         setSubscription(null);
+        setPlans([]);
+        attemptedPlansTokenRef.current = null;
         setAccessToken(null);
         console.error('Telegram auth error:', err);
         toast.error(
@@ -743,6 +901,8 @@ export default function App() {
       setIsAuthenticated(false);
       setUser(null);
       setSubscription(null);
+      setPlans([]);
+      attemptedPlansTokenRef.current = null;
       setAccessToken(null);
       console.error('Telegram auth error:', err);
     } finally {
@@ -915,7 +1075,10 @@ export default function App() {
     setIsAuthenticated(false);
     setUser(null);
     setAccessToken(null);
+    setPlans([]);
+    attemptedPlansTokenRef.current = null;
     pendingTelegramLinkRefreshRef.current = false;
+    pendingPaymentRefreshRef.current = false;
     currentBrowserTokenRef.current = null;
     lastLoadedBrowserTokenRef.current = null;
     inFlightBrowserTokenRef.current = null;
@@ -972,7 +1135,6 @@ export default function App() {
         )
       );
       setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
-      setPlans([]);
 
       return true;
     } catch (err) {
@@ -981,14 +1143,143 @@ export default function App() {
     }
   };
 
+  const loadPlans = async (token: string) => {
+    attemptedPlansTokenRef.current = token;
+    setIsLoadingPlans(true);
+
+    try {
+      const planData = await loadPlansSnapshot(token);
+      setPlans(planData.map(mapBackendPlanToView));
+      return true;
+    } catch (err) {
+      console.error('Error loading plans:', err);
+      setPlans([]);
+      return false;
+    } finally {
+      setIsLoadingPlans(false);
+    }
+  };
+
+  const openCheckoutConfirmation = (
+    confirmationUrl: string,
+    options: {
+      provider?: string;
+      onPaid?: () => void;
+    } = {}
+  ) => {
+    pendingPaymentRefreshRef.current = true;
+
+    if (options.provider === 'telegram_stars' && isTelegramWebApp) {
+      const opened = openTelegramInvoice(confirmationUrl, (status) => {
+        if (status === 'paid') {
+          pendingPaymentRefreshRef.current = false;
+          void refreshUserData();
+          options.onPaid?.();
+        }
+      });
+      if (opened) {
+        return;
+      }
+    }
+
+    if (isTelegramWebApp) {
+      const tg = getTelegramWebApp();
+      if (tg?.openLink) {
+        tg.openLink(confirmationUrl, { try_browser: true });
+        return;
+      }
+    }
+
+    const openedWindow = window.open(confirmationUrl, '_blank', 'noopener,noreferrer');
+    if (!openedWindow) {
+      window.location.href = confirmationUrl;
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      return;
+    }
+
+    if (!isDesktopBrowser && activeTab !== 'plans') {
+      return;
+    }
+
+    if (plans.length || isLoadingPlans || attemptedPlansTokenRef.current === accessToken) {
+      return;
+    }
+
+    void loadPlans(accessToken);
+  }, [isAuthenticated, accessToken, activeTab, isDesktopBrowser, plans.length, isLoadingPlans]);
+
   const handleTopUp = async () => {
     setIsTopUpModalOpen(true);
   };
 
-  const handleTopUpAmount = async (amount: number) => {
+  const createTopUpPayment = async (amount: number, provider: PaymentMethodProvider) => {
     if (!accessToken) return;
+    if (provider !== 'yookassa') {
+      throw new Error('Этот способ пополнения пока не поддерживается.');
+    }
 
-    toast.error('Пополнение пока не перенесено на новый API.');
+    setIsTopUpSubmitting(true);
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/payments/yookassa/topup`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount_rub: amount,
+          success_url: getPaymentReturnUrl(),
+          description: `Пополнение баланса на ${formatRubles(amount)} ₽`,
+          idempotency_key: createClientIdempotencyKey('topup'),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const detail =
+          errorData && typeof errorData.detail === 'string'
+            ? getPaymentErrorMessage(errorData.detail)
+            : 'Не удалось создать платёж на пополнение';
+        throw new Error(detail);
+      }
+
+      const paymentIntent = (await response.json()) as BackendPaymentIntent;
+      if (!paymentIntent.confirmation_url) {
+        throw new Error('Платёж создан без ссылки на подтверждение');
+      }
+
+      setIsTopUpModalOpen(false);
+      toast.success('Открываем YooKassa для пополнения');
+      openCheckoutConfirmation(paymentIntent.confirmation_url, {
+        provider: paymentIntent.provider,
+      });
+    } catch (err) {
+      console.error('Top-up payment error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось создать платёж');
+    } finally {
+      setIsTopUpSubmitting(false);
+    }
+  };
+
+  const handleTopUpAmount = async (amount: number) => {
+    const methods = getAvailableTopUpPaymentMethods(isTelegramWebApp);
+
+    if (methods.length === 1) {
+      await createTopUpPayment(amount, methods[0].provider);
+      return;
+    }
+
+    setIsTopUpModalOpen(false);
+    setPaymentMethodSelection({
+      kind: 'topup',
+      amount,
+      methods,
+    });
   };
 
   const handleActivateTrial = async () => {
@@ -1023,10 +1314,113 @@ export default function App() {
     }
   };
 
-  const handleBuyPlan = async (planId: string) => {
+  const createPlanPayment = async (planId: string, provider: PaymentMethodProvider) => {
     if (!accessToken) return;
-    void planId;
-    toast.error('Покупка тарифа пока не перенесена на новый API.');
+
+    const selectedPlan = plans.find((plan) => plan.id === planId);
+    if (!selectedPlan) {
+      throw new Error('Выбранный тариф не найден.');
+    }
+
+    setCheckoutPlanId(planId);
+
+    try {
+      if (provider === 'telegram_stars' && !selectedPlan.priceStars) {
+        throw new Error('Для этого тарифа пока не настроена цена в Telegram Stars.');
+      }
+
+      const useTelegramStars = provider === 'telegram_stars';
+      const endpoint = useTelegramStars
+        ? `${BACKEND_API}/api/v1/payments/telegram-stars/plans/${encodeURIComponent(planId)}`
+        : `${BACKEND_API}/api/v1/payments/yookassa/plans/${encodeURIComponent(planId)}`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          description: selectedPlan ? `Оплата тарифа ${selectedPlan.name}` : `Оплата тарифа ${planId}`,
+          idempotency_key: createClientIdempotencyKey(`plan-${planId}`),
+          ...(useTelegramStars ? {} : { success_url: getPaymentReturnUrl() }),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const detail =
+          errorData && typeof errorData.detail === 'string'
+            ? getPaymentErrorMessage(errorData.detail)
+            : 'Не удалось создать платёж на покупку тарифа';
+        throw new Error(detail);
+      }
+
+      const paymentIntent = (await response.json()) as BackendPaymentIntent;
+      if (!paymentIntent.confirmation_url) {
+        throw new Error('Платёж создан без ссылки на подтверждение');
+      }
+
+      toast.success(
+        useTelegramStars ? 'Открываем оплату в Telegram Stars' : 'Открываем YooKassa для оплаты тарифа'
+      );
+      openCheckoutConfirmation(paymentIntent.confirmation_url, {
+        provider: paymentIntent.provider,
+        onPaid: () => toast.success('Платёж подтверждён. Обновляем подписку.'),
+      });
+    } catch (err) {
+      console.error('Plan payment error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось создать платёж');
+    } finally {
+      setCheckoutPlanId(null);
+    }
+  };
+
+  const handleBuyPlan = async (planId: string) => {
+    const selectedPlan = plans.find((plan) => plan.id === planId);
+    if (!selectedPlan) {
+      toast.error('Выбранный тариф не найден.');
+      return;
+    }
+
+    const methods = getAvailablePlanPaymentMethods(selectedPlan, isTelegramWebApp);
+
+    if (!methods.length) {
+      toast.error('Для этого тарифа пока не настроен ни один способ оплаты.');
+      return;
+    }
+
+    if (methods.length === 1) {
+      await createPlanPayment(planId, methods[0].provider);
+      return;
+    }
+
+    setPaymentMethodSelection({
+      kind: 'plan',
+      planId,
+      planName: selectedPlan.name,
+      methods,
+    });
+  };
+
+  const handlePaymentMethodSelect = async (provider: PaymentMethodProvider) => {
+    if (!paymentMethodSelection) {
+      return;
+    }
+
+    const selection = paymentMethodSelection;
+    setPaymentMethodSelection(null);
+    setPaymentMethodSubmitting(provider);
+
+    try {
+      if (selection.kind === 'plan') {
+        await createPlanPayment(selection.planId, provider);
+        return;
+      }
+
+      await createTopUpPayment(selection.amount, provider);
+    } finally {
+      setPaymentMethodSubmitting(null);
+    }
   };
 
   const handleCopyReferral = () => {
@@ -1149,7 +1543,7 @@ export default function App() {
   };
 
   const refreshUserData = async () => {
-    if (!accessToken) return;
+    if (!accessToken) return false;
     
     try {
       const bootstrap = await loadBootstrapSnapshot(accessToken);
@@ -1163,8 +1557,10 @@ export default function App() {
         )
       );
       setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
+      return true;
     } catch (err) {
       console.error('Error refreshing user data:', err);
+      return false;
     }
   };
 
@@ -1304,6 +1700,9 @@ export default function App() {
             balance={user.balance}
             onBuyPlan={handleBuyPlan}
             onTopUp={handleTopUp}
+            isLoading={isLoadingPlans}
+            checkoutPlanId={checkoutPlanId}
+            isTelegramWebApp={isTelegramWebApp}
           />
         );
       case 'referral':
@@ -1345,6 +1744,26 @@ export default function App() {
   ];
 
   const renderDesktopPlans = () => {
+    if (isLoadingPlans && !plans.length) {
+      return (
+        <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50/70 p-6 dark:border-slate-700 dark:bg-slate-900/70">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white dark:bg-sky-500 dark:text-slate-950">
+              <Sparkles className="h-6 w-6" />
+            </div>
+            <div>
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-50">
+                Загружаем тарифы
+              </h3>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-300">
+                Получаем актуальный каталог тарифов с backend.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (!plans.length) {
       return (
         <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50/70 p-6 dark:border-slate-700 dark:bg-slate-900/70">
@@ -1421,19 +1840,12 @@ export default function App() {
               </div>
               <button
                 onClick={() => {
-                  if (user.balance >= plan.price) {
-                    handleBuyPlan(plan.id);
-                    return;
-                  }
-                  handleTopUp();
+                  void handleBuyPlan(plan.id);
                 }}
-                className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold transition ${
-                  user.balance >= plan.price
-                    ? 'bg-slate-900 text-white hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400'
-                    : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900'
-                }`}
+                disabled={checkoutPlanId === plan.id}
+                className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
               >
-                {user.balance >= plan.price ? 'Купить тариф' : 'Пополнить для покупки'}
+                {checkoutPlanId === plan.id ? 'Открываем оплату...' : 'Оплатить тариф'}
               </button>
             </div>
           </div>
@@ -1449,6 +1861,33 @@ export default function App() {
         isOpen={isTopUpModalOpen}
         onClose={() => setIsTopUpModalOpen(false)}
         onTopUp={handleTopUpAmount}
+        isSubmitting={isTopUpSubmitting}
+      />
+      <PaymentMethodSheet
+        isOpen={Boolean(paymentMethodSelection)}
+        title={
+          paymentMethodSelection?.kind === 'topup'
+            ? 'Выберите способ пополнения'
+            : 'Выберите способ оплаты'
+        }
+        subtitle={
+          paymentMethodSelection?.kind === 'plan'
+            ? `Тариф: ${paymentMethodSelection.planName}`
+            : paymentMethodSelection?.kind === 'topup'
+              ? `Сумма пополнения: ${formatRubles(paymentMethodSelection.amount)} ₽`
+              : undefined
+        }
+        methods={paymentMethodSelection?.methods ?? []}
+        isSubmitting={Boolean(paymentMethodSubmitting)}
+        selectedProvider={paymentMethodSubmitting}
+        onClose={() => {
+          if (!paymentMethodSubmitting) {
+            setPaymentMethodSelection(null);
+          }
+        }}
+        onSelect={(provider) => {
+          void handlePaymentMethodSelect(provider);
+        }}
       />
 
       <div className="mx-auto flex max-w-[1520px] gap-6">
@@ -1806,6 +2245,33 @@ export default function App() {
         isOpen={isTopUpModalOpen}
         onClose={() => setIsTopUpModalOpen(false)}
         onTopUp={handleTopUpAmount}
+        isSubmitting={isTopUpSubmitting}
+      />
+      <PaymentMethodSheet
+        isOpen={Boolean(paymentMethodSelection)}
+        title={
+          paymentMethodSelection?.kind === 'topup'
+            ? 'Выберите способ пополнения'
+            : 'Выберите способ оплаты'
+        }
+        subtitle={
+          paymentMethodSelection?.kind === 'plan'
+            ? `Тариф: ${paymentMethodSelection.planName}`
+            : paymentMethodSelection?.kind === 'topup'
+              ? `Сумма пополнения: ${formatRubles(paymentMethodSelection.amount)} ₽`
+              : undefined
+        }
+        methods={paymentMethodSelection?.methods ?? []}
+        isSubmitting={Boolean(paymentMethodSubmitting)}
+        selectedProvider={paymentMethodSubmitting}
+        onClose={() => {
+          if (!paymentMethodSubmitting) {
+            setPaymentMethodSelection(null);
+          }
+        }}
+        onSelect={(provider) => {
+          void handlePaymentMethodSelect(provider);
+        }}
       />
 
       <div

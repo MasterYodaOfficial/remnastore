@@ -9,6 +9,7 @@ from app.db.models.account import (
 )
 from app.db.models.ledger import LedgerEntry, LedgerEntryType
 from app.db.models.payment import Payment, PaymentEvent
+from app.db.models.subscription_grant import SubscriptionGrant
 
 __all__ = [
     "Account",
@@ -22,4 +23,5 @@ __all__ = [
     "LedgerEntryType",
     "Payment",
     "PaymentEvent",
+    "SubscriptionGrant",
 ]

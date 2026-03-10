@@ -27,3 +27,21 @@ export const getTelegramWebApp = () => {
   }
   return null;
 };
+
+export const openTelegramInvoice = (
+  invoiceUrl: string,
+  callback?: (status: string) => void
+): boolean => {
+  const tg = getTelegramWebApp();
+  if (!tg?.openInvoice) {
+    return false;
+  }
+
+  try {
+    tg.openInvoice(invoiceUrl, callback);
+    return true;
+  } catch (err) {
+    console.error('Telegram invoice open error:', err);
+    return false;
+  }
+};

@@ -1,0 +1,48 @@
+[
+  {
+    "code": "plan_1m",
+    "name": "1 месяц",
+    "price_rub": 299,
+    "price_stars": 1,
+    "duration_days": 30,
+    "features": [
+      "Доступ ко всем серверам",
+      "Мгновенная активация"
+    ],
+    "popular": true
+  },
+  {
+    "code": "plan_3m",
+    "name": "3 месяца",
+    "price_rub": 480,
+    "price_stars": 1,
+    "duration_days": 90,
+    "features": [
+      "Доступ ко всем серверам",
+      "Выгоднее чем помесячно"
+    ]
+  },
+  {
+    "code": "plan_6m",
+    "name": "6 месяцев",
+    "price_rub": 1490,
+    "price_stars": 1,
+    "duration_days": 180,
+    "features": [
+      "Доступ ко всем серверам",
+      "Хорошая экономия"
+    ]
+  },
+  {
+    "code": "plan_12m",
+    "name": "12 месяцев",
+    "price_rub": 2690,
+    "price_stars": 1,
+    "duration_days": 365,
+    "features": [
+      "Доступ ко всем серверам",
+      "Максимальная выгода",
+      "Год без продлений"
+    ]
+  }
+]

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.dependencies import get_current_account
 from app.db.base import Base
-from app.db.models import Account, LedgerEntry, LedgerEntryType, Payment
+from app.db.models import Account, LedgerEntry, LedgerEntryType, Payment, PaymentEvent, SubscriptionGrant
 from app.db.session import get_session
 from app.main import create_app
 from app.services.payments import (
@@ -22,7 +23,10 @@ from app.services.payments import (
     PaymentProvider,
     PaymentStatus,
     PaymentWebhookEvent,
+    TelegramStarsGateway,
     YooKassaGateway,
+    _build_telegram_stars_invoice_payload,
+    get_telegram_stars_gateway,
     get_yookassa_gateway,
 )
 
@@ -46,15 +50,15 @@ class DummyYooKassaResponse:
         )
         self.expires_at = expires_at
 
-    def json(self) -> dict:
-        return {
+    def json(self) -> str:
+        return json.dumps({
             "id": self.id,
             "status": self.status,
             "amount": {
                 "value": self.amount.value,
                 "currency": self.amount.currency,
             },
-        }
+        })
 
 
 class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -68,7 +72,7 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
         command = CreatePaymentIntentCommand(
             account_id=account_id,
             flow_type=PaymentFlowType.WALLET_TOPUP,
-            amount_rub=499,
+            amount=499,
             success_url="https://app.example.com/payments/return",
             description="Пополнение баланса",
             idempotency_key="pay-123",
@@ -87,11 +91,13 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.flow_type, PaymentFlowType.WALLET_TOPUP)
         self.assertEqual(snapshot.account_id, account_id)
         self.assertEqual(snapshot.status, PaymentStatus.PENDING)
-        self.assertEqual(snapshot.amount_rub, 499)
+        self.assertEqual(snapshot.amount, 499)
         self.assertEqual(snapshot.currency, "RUB")
         self.assertEqual(snapshot.provider_payment_id, "2d10f42f-000f-5000-9000-1a2b3c4d5e6f")
         self.assertEqual(snapshot.external_reference, "pay-123")
         self.assertEqual(snapshot.confirmation_url, "https://yookassa.test/confirm")
+        self.assertIsInstance(snapshot.raw_payload, dict)
+        self.assertEqual(snapshot.raw_payload["id"], "2d10f42f-000f-5000-9000-1a2b3c4d5e6f")
 
         create_payment.assert_called_once()
         params, idempotency_key = create_payment.call_args.args
@@ -150,11 +156,13 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.provider_event_id, "payment.succeeded:2419a771-000f-5000-9000-1edaf29243f2")
         self.assertEqual(event.provider_payment_id, "2419a771-000f-5000-9000-1edaf29243f2")
         self.assertEqual(event.status, PaymentStatus.SUCCEEDED)
-        self.assertEqual(event.amount_rub, 1000)
+        self.assertEqual(event.amount, 1000)
         self.assertEqual(event.currency, "RUB")
         self.assertEqual(event.flow_type, PaymentFlowType.DIRECT_PLAN_PURCHASE)
         self.assertEqual(event.account_id, account_id)
         self.assertEqual(event.external_reference, "purchase-1")
+        self.assertIsInstance(event.raw_payload, dict)
+        self.assertEqual(event.raw_payload["id"], "2419a771-000f-5000-9000-1edaf29243f2")
 
     async def test_parse_webhook_rejects_missing_metadata(self) -> None:
         gateway = YooKassaGateway(
@@ -190,6 +198,66 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
                 )
 
 
+class TelegramStarsGatewayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_create_payment_intent_returns_invoice_link(self) -> None:
+        account_id = uuid.uuid4()
+        gateway = TelegramStarsGateway(bot_token="telegram-token", api_base_url="https://api.telegram.org")
+        command = CreatePaymentIntentCommand(
+            account_id=account_id,
+            flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+            amount=85,
+            currency="XTR",
+            plan_code="plan_1m",
+            idempotency_key="stars-85",
+            description="Оплата тарифа 1 месяц",
+            metadata={"rm_plan_name": "1 месяц"},
+        )
+
+        with patch.object(gateway, "_call_bot_api", return_value={"result": "https://t.me/invoice/test"}) as bot_api:
+            with patch("app.services.payments.settings.api_token", "internal-token"):
+                snapshot = await gateway.create_payment_intent(command)
+
+        self.assertEqual(snapshot.provider, PaymentProvider.TELEGRAM_STARS)
+        self.assertEqual(snapshot.amount, 85)
+        self.assertEqual(snapshot.currency, "XTR")
+        self.assertEqual(snapshot.confirmation_url, "https://t.me/invoice/test")
+        self.assertTrue(snapshot.provider_payment_id.startswith("rmstars:dp:"))
+        bot_api.assert_called_once()
+
+    async def test_parse_webhook_maps_successful_payment(self) -> None:
+        account_id = uuid.uuid4()
+        invoice_payload = _build_telegram_stars_invoice_payload(
+            account_id=account_id,
+            flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+            payment_reference="stars-85",
+        )
+        gateway = TelegramStarsGateway(bot_token="telegram-token")
+
+        event = await gateway.parse_webhook(
+            raw_body=json.dumps(
+                {
+                    "event_type": "successful_payment",
+                    "telegram_id": 758107031,
+                    "currency": "XTR",
+                    "total_amount": 85,
+                    "invoice_payload": invoice_payload,
+                    "telegram_payment_charge_id": "tg-charge-1",
+                    "provider_payment_charge_id": "provider-charge-1",
+                }
+            ).encode("utf-8"),
+            headers={},
+        )
+
+        self.assertEqual(event.provider, PaymentProvider.TELEGRAM_STARS)
+        self.assertEqual(event.provider_event_id, "successful_payment:tg-charge-1")
+        self.assertEqual(event.provider_payment_id, invoice_payload)
+        self.assertEqual(event.status, PaymentStatus.SUCCEEDED)
+        self.assertEqual(event.amount, 85)
+        self.assertEqual(event.currency, "XTR")
+        self.assertEqual(event.flow_type, PaymentFlowType.DIRECT_PLAN_PURCHASE)
+        self.assertEqual(event.account_id, account_id)
+
+
 class DummyCache:
     def __init__(self) -> None:
         self._values: dict[str, str] = {}
@@ -220,13 +288,49 @@ class FakeYooKassaGateway:
             flow_type=command.flow_type,
             account_id=command.account_id,
             status=PaymentStatus.PENDING,
-            amount_rub=command.amount_rub,
+            amount=command.amount,
             currency="RUB",
             provider_payment_id=f"yoopay-{command.idempotency_key or 'generated'}",
             external_reference=command.idempotency_key,
             confirmation_url="https://yookassa.test/confirm",
             expires_at=None,
             raw_payload={"provider_payment_id": f"yoopay-{command.idempotency_key or 'generated'}"},
+        )
+
+    async def parse_webhook(self, *, raw_body: bytes, headers):
+        del headers
+        payload = json.loads(raw_body)
+        event_id = payload["event_id"]
+        return self._events[event_id]
+
+    def put_event(self, event_id: str, event: PaymentWebhookEvent) -> None:
+        self._events[event_id] = event
+
+
+class FakeTelegramStarsGateway:
+    provider = PaymentProvider.TELEGRAM_STARS
+
+    def __init__(self) -> None:
+        self._events: dict[str, PaymentWebhookEvent] = {}
+
+    async def create_payment_intent(self, command: CreatePaymentIntentCommand):
+        provider_payment_id = _build_telegram_stars_invoice_payload(
+            account_id=command.account_id,
+            flow_type=command.flow_type,
+            payment_reference=command.idempotency_key or "generated",
+        )
+        return SimpleNamespace(
+            provider=PaymentProvider.TELEGRAM_STARS,
+            flow_type=command.flow_type,
+            account_id=command.account_id,
+            status=PaymentStatus.PENDING,
+            amount=command.amount,
+            currency="XTR",
+            provider_payment_id=provider_payment_id,
+            external_reference=command.idempotency_key,
+            confirmation_url=f"https://t.me/invoice/{command.idempotency_key or 'generated'}",
+            expires_at=None,
+            raw_payload={"provider_payment_id": provider_payment_id},
         )
 
     async def parse_webhook(self, *, raw_body: bytes, headers):
@@ -247,6 +351,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
         self._current_account_id: uuid.UUID | None = None
         self._fake_gateway = FakeYooKassaGateway()
+        self._fake_stars_gateway = FakeTelegramStarsGateway()
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -260,7 +365,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self._payments_service = payments_service
         self._original_gateway_factory = payments_service.get_yookassa_gateway
+        self._original_stars_gateway_factory = payments_service.get_telegram_stars_gateway
+        self._original_api_token = payments_service.settings.api_token
         payments_service.get_yookassa_gateway = lambda: self._fake_gateway
+        payments_service.get_telegram_stars_gateway = lambda: self._fake_stars_gateway
+        payments_service.settings.api_token = "internal-token"
 
         self.app = create_app()
 
@@ -289,6 +398,8 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._payments_service.get_yookassa_gateway = self._original_gateway_factory
+        self._payments_service.get_telegram_stars_gateway = self._original_stars_gateway_factory
+        self._payments_service.settings.api_token = self._original_api_token
         self._cache_module._cache = self._original_cache
         await self._engine.dispose()
         self._tmpdir.cleanup()
@@ -321,6 +432,25 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _get_subscription_grants(self, account_id: uuid.UUID) -> list[SubscriptionGrant]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SubscriptionGrant)
+                .where(SubscriptionGrant.account_id == account_id)
+                .order_by(SubscriptionGrant.id.asc())
+            )
+            return list(result.scalars().all())
+
+    async def _create_direct_plan_payment(self, account: Account) -> None:
+        response = await self.client.post(
+            "/api/v1/payments/yookassa/plans/plan_1m",
+            json={
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "plan-1m",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
     async def test_create_yookassa_topup_endpoint_persists_pending_payment(self) -> None:
         account = await self._create_account(balance=0, email="payer@example.com")
         self._current_account_id = account.id
@@ -337,7 +467,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
 
         self.assertEqual(body["status"], "pending")
-        self.assertEqual(body["amount_rub"], 500)
+        self.assertEqual(body["amount"], 500)
         self.assertEqual(body["provider_payment_id"], "yoopay-topup-500")
         self.assertEqual(body["external_reference"], "topup-500")
 
@@ -347,6 +477,22 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.account_id, account.id)
         self.assertEqual(stored_payment.status, PaymentStatus.PENDING)
         self.assertEqual(stored_payment.amount, 500)
+
+    async def test_list_subscription_plans_returns_backend_catalog(self) -> None:
+        account = await self._create_account(email="plans@example.com")
+        self._current_account_id = account.id
+
+        response = await self.client.get("/api/v1/payments/plans")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertGreaterEqual(len(body), 3)
+        self.assertEqual(body[0]["code"], "plan_1m")
+        self.assertEqual(body[0]["price_rub"], 299)
+        self.assertIsInstance(body[0]["price_stars"], int)
+        self.assertGreater(body[0]["price_stars"], 0)
+        self.assertEqual(body[0]["duration_days"], 30)
+        self.assertTrue(body[0]["popular"])
 
     async def test_yookassa_webhook_succeeded_credits_balance_once(self) -> None:
         account = await self._create_account(balance=100, email="payer@example.com")
@@ -369,7 +515,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                 provider_event_id="payment.succeeded:yoopay-topup-500",
                 provider_payment_id="yoopay-topup-500",
                 status=PaymentStatus.SUCCEEDED,
-                amount_rub=500,
+                amount=500,
                 currency="RUB",
                 flow_type=PaymentFlowType.WALLET_TOPUP,
                 account_id=account.id,
@@ -418,4 +564,369 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertEqual(stored_account.balance, 600)
+
+    async def test_yookassa_webhook_root_alias_is_supported(self) -> None:
+        account = await self._create_account(balance=100)
+        self._current_account_id = account.id
+
+        create_response = await self.client.post(
+            "/api/v1/payments/yookassa/topup",
+            json={
+                "amount_rub": 500,
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "topup-root-alias",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        self._fake_gateway.put_event(
+            "event-root-alias",
+            PaymentWebhookEvent(
+                provider=PaymentProvider.YOOKASSA,
+                provider_event_id="payment.succeeded:yoopay-topup-root-alias",
+                provider_payment_id="yoopay-topup-root-alias",
+                status=PaymentStatus.SUCCEEDED,
+                amount=500,
+                currency="RUB",
+                flow_type=PaymentFlowType.WALLET_TOPUP,
+                account_id=account.id,
+                external_reference="topup-root-alias",
+                raw_payload={"status": "succeeded"},
+            ),
+        )
+
+        response = await self.client.post(
+            "/webhooks/payments/yookassa",
+            content=json.dumps({"event_id": "event-root-alias"}),
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["ledger_applied"], True)
         self.assertEqual(len(await self._get_ledger_entries(account.id)), 1)
+
+    async def test_plan_purchase_webhook_applies_subscription_once(self) -> None:
+        account = await self._create_account(balance=0, email="paid@example.com")
+        self._current_account_id = account.id
+
+        async def fake_provision_paid_subscription(account_obj: Account, *, target_expires_at: datetime):
+            account_obj.remnawave_user_uuid = account_obj.id
+            account_obj.subscription_status = "ACTIVE"
+            account_obj.subscription_expires_at = target_expires_at
+            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_is_trial = False
+            return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
+
+        with patch(
+            "app.services.payments.provision_paid_subscription",
+            side_effect=fake_provision_paid_subscription,
+        ):
+            await self._create_direct_plan_payment(account)
+
+            self._fake_gateway.put_event(
+                "plan-event-1",
+                PaymentWebhookEvent(
+                    provider=PaymentProvider.YOOKASSA,
+                    provider_event_id="payment.succeeded:yoopay-plan-1m",
+                    provider_payment_id="yoopay-plan-1m",
+                    status=PaymentStatus.SUCCEEDED,
+                    amount=299,
+                    currency="RUB",
+                    flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    account_id=account.id,
+                    external_reference="plan-1m",
+                    raw_payload={"status": "succeeded"},
+                ),
+            )
+
+            response = await self.client.post(
+                "/api/v1/webhooks/payments/yookassa",
+                content=json.dumps({"event_id": "plan-event-1"}),
+                headers={"content-type": "application/json"},
+            )
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertEqual(body["duplicate"], False)
+            self.assertEqual(body["ledger_applied"], False)
+            self.assertEqual(body["subscription_applied"], True)
+            self.assertEqual(body["status"], "succeeded")
+
+            stored_account = await self._get_account(account.id)
+            self.assertIsNotNone(stored_account)
+            assert stored_account is not None
+            self.assertEqual(stored_account.subscription_status, "ACTIVE")
+            self.assertFalse(stored_account.subscription_is_trial)
+            first_expires_at = stored_account.subscription_expires_at
+            self.assertIsNotNone(first_expires_at)
+
+            stored_payment = await self._get_payment("yoopay-plan-1m")
+            self.assertIsNotNone(stored_payment)
+            assert stored_payment is not None
+            self.assertEqual(stored_payment.plan_code, "plan_1m")
+            self.assertEqual(stored_payment.status, PaymentStatus.SUCCEEDED)
+            self.assertIsNotNone(stored_payment.finalized_at)
+
+            grants = await self._get_subscription_grants(account.id)
+            self.assertEqual(len(grants), 1)
+            self.assertEqual(grants[0].plan_code, "plan_1m")
+            self.assertEqual(grants[0].duration_days, 30)
+            self.assertIsNotNone(grants[0].applied_at)
+
+            duplicate_response = await self.client.post(
+                "/api/v1/webhooks/payments/yookassa",
+                content=json.dumps({"event_id": "plan-event-1"}),
+                headers={"content-type": "application/json"},
+            )
+            self.assertEqual(duplicate_response.status_code, 200)
+            duplicate_body = duplicate_response.json()
+            self.assertEqual(duplicate_body["duplicate"], True)
+            self.assertEqual(duplicate_body["subscription_applied"], False)
+
+            stored_account = await self._get_account(account.id)
+            self.assertIsNotNone(stored_account)
+            assert stored_account is not None
+            self.assertEqual(stored_account.subscription_expires_at, first_expires_at)
+
+    async def test_duplicate_event_can_resume_pending_plan_finalization(self) -> None:
+        account = await self._create_account(balance=0, email="resume@example.com")
+        self._current_account_id = account.id
+
+        async def fake_provision_paid_subscription(account_obj: Account, *, target_expires_at: datetime):
+            account_obj.remnawave_user_uuid = account_obj.id
+            account_obj.subscription_status = "ACTIVE"
+            account_obj.subscription_expires_at = target_expires_at
+            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_is_trial = False
+            return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
+
+        await self._create_direct_plan_payment(account)
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Payment).where(Payment.provider_payment_id == "yoopay-plan-1m")
+            )
+            payment = result.scalar_one()
+            payment.status = PaymentStatus.SUCCEEDED
+            payment.finalized_at = None
+            session.add(
+                PaymentEvent(
+                    payment_id=payment.id,
+                    account_id=payment.account_id,
+                    provider=PaymentProvider.YOOKASSA,
+                    flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    status=PaymentStatus.SUCCEEDED,
+                    provider_event_id="payment.succeeded:yoopay-plan-1m",
+                    provider_payment_id=payment.provider_payment_id,
+                    event_type="payment.succeeded",
+                    amount=payment.amount,
+                    currency=payment.currency,
+                    raw_payload={"status": "succeeded"},
+                    processed_at=datetime.now(UTC),
+                )
+            )
+            session.add(
+                SubscriptionGrant(
+                    account_id=account.id,
+                    payment_id=payment.id,
+                    plan_code="plan_1m",
+                    amount=payment.amount,
+                    currency=payment.currency,
+                    duration_days=30,
+                    base_expires_at=datetime.now(UTC),
+                    target_expires_at=datetime.now(UTC) + timedelta(days=30),
+                )
+            )
+            await session.commit()
+
+        self._fake_gateway.put_event(
+            "plan-event-resume",
+            PaymentWebhookEvent(
+                provider=PaymentProvider.YOOKASSA,
+                provider_event_id="payment.succeeded:yoopay-plan-1m",
+                provider_payment_id="yoopay-plan-1m",
+                status=PaymentStatus.SUCCEEDED,
+                amount=299,
+                currency="RUB",
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                account_id=account.id,
+                external_reference="plan-1m",
+                raw_payload={"status": "succeeded"},
+            ),
+        )
+
+        with patch(
+            "app.services.payments.provision_paid_subscription",
+            side_effect=fake_provision_paid_subscription,
+        ):
+            response = await self.client.post(
+                "/api/v1/webhooks/payments/yookassa",
+                content=json.dumps({"event_id": "plan-event-resume"}),
+                headers={"content-type": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["duplicate"], True)
+        self.assertEqual(body["subscription_applied"], True)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_create_telegram_stars_plan_purchase_persists_pending_payment(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="stars@example.com",
+            telegram_id=758107031,
+        )
+        self._current_account_id = account.id
+
+        with patch(
+            "app.services.payments.get_subscription_plan",
+            return_value=SimpleNamespace(
+                code="plan_1m",
+                name="1 месяц",
+                price_rub=299,
+                price_stars=85,
+                duration_days=30,
+            ),
+        ):
+            response = await self.client.post(
+                "/api/v1/payments/telegram-stars/plans/plan_1m",
+                json={"idempotency_key": "stars-plan-1m"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["provider"], "telegram_stars")
+        self.assertEqual(body["amount"], 85)
+        self.assertEqual(body["currency"], "XTR")
+        self.assertTrue(body["provider_payment_id"].startswith("rmstars:dp:"))
+        self.assertIn("https://t.me/invoice/", body["confirmation_url"])
+
+        stored_payment = await self._get_payment(body["provider_payment_id"])
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.provider, PaymentProvider.TELEGRAM_STARS)
+        self.assertEqual(stored_payment.amount, 85)
+        self.assertEqual(stored_payment.plan_code, "plan_1m")
+
+    async def test_telegram_stars_pre_checkout_and_successful_payment_finalize_once(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="stars-paid@example.com",
+            telegram_id=758107031,
+        )
+        self._current_account_id = account.id
+
+        async def fake_provision_paid_subscription(account_obj: Account, *, target_expires_at: datetime):
+            account_obj.remnawave_user_uuid = account_obj.id
+            account_obj.subscription_status = "ACTIVE"
+            account_obj.subscription_expires_at = target_expires_at
+            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_is_trial = False
+            return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
+
+        with patch(
+            "app.services.payments.get_subscription_plan",
+            return_value=SimpleNamespace(
+                code="plan_1m",
+                name="1 месяц",
+                price_rub=299,
+                price_stars=85,
+                duration_days=30,
+            ),
+        ):
+            create_response = await self.client.post(
+                "/api/v1/payments/telegram-stars/plans/plan_1m",
+                json={"idempotency_key": "stars-plan-1m"},
+            )
+        self.assertEqual(create_response.status_code, 200)
+        payment_body = create_response.json()
+        provider_payment_id = payment_body["provider_payment_id"]
+
+        pre_checkout_response = await self.client.post(
+            "/api/v1/webhooks/payments/telegram-stars/pre-checkout",
+            json={
+                "telegram_id": 758107031,
+                "invoice_payload": provider_payment_id,
+                "total_amount": 85,
+                "currency": "XTR",
+                "pre_checkout_query_id": "pcq-1",
+            },
+            headers={"Authorization": "Bearer internal-token"},
+        )
+        self.assertEqual(pre_checkout_response.status_code, 200)
+        self.assertEqual(pre_checkout_response.json(), {"ok": True, "error_message": None})
+
+        long_charge_id = "tg-charge-" + ("x" * 180)
+
+        self._fake_stars_gateway.put_event(
+            "stars-event-1",
+            PaymentWebhookEvent(
+                provider=PaymentProvider.TELEGRAM_STARS,
+                provider_event_id=f"successful_payment:{long_charge_id}",
+                provider_payment_id=provider_payment_id,
+                status=PaymentStatus.SUCCEEDED,
+                amount=85,
+                currency="XTR",
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                account_id=account.id,
+                external_reference="provider-charge-1",
+                raw_payload={
+                    "event_type": "successful_payment",
+                    "telegram_id": 758107031,
+                    "currency": "XTR",
+                    "total_amount": 85,
+                    "invoice_payload": provider_payment_id,
+                    "telegram_payment_charge_id": long_charge_id,
+                    "provider_payment_charge_id": "provider-charge-1",
+                },
+            ),
+        )
+
+        with patch(
+            "app.services.payments.provision_paid_subscription",
+            side_effect=fake_provision_paid_subscription,
+        ):
+            response = await self.client.post(
+                "/api/v1/webhooks/payments/telegram-stars",
+                content=json.dumps({"event_id": "stars-event-1"}),
+                headers={
+                    "Authorization": "Bearer internal-token",
+                    "content-type": "application/json",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["duplicate"], False)
+        self.assertEqual(body["subscription_applied"], True)
+        self.assertEqual(body["status"], "succeeded")
+
+        stored_payment = await self._get_payment(provider_payment_id)
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.status, PaymentStatus.SUCCEEDED)
+        self.assertIsNotNone(stored_payment.finalized_at)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        duplicate_response = await self.client.post(
+            "/api/v1/webhooks/payments/telegram-stars",
+            content=json.dumps({"event_id": "stars-event-1"}),
+            headers={
+                "Authorization": "Bearer internal-token",
+                "content-type": "application/json",
+            },
+        )
+        self.assertEqual(duplicate_response.status_code, 200)
+        self.assertTrue(duplicate_response.json()["duplicate"])

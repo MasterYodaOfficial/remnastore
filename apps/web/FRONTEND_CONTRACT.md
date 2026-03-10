@@ -168,6 +168,50 @@ Telegram Mini App flow:
 Назначение:
 - активировать trial через backend и Remnawave
 
+### Платежи и тарифы
+
+`GET /api/v1/payments/plans`
+
+Назначение:
+- получить backend-каталог тарифов как источник истины
+
+Ожидаемые поля плана:
+- `code`
+- `name`
+- `price_rub`
+- `price_stars`
+- `duration_days`
+- `features`
+- `popular`
+
+`POST /api/v1/payments/yookassa/topup`
+
+Назначение:
+- создать redirect payment intent YooKassa для пополнения баланса
+
+`POST /api/v1/payments/yookassa/plans/{plan_code}`
+
+Назначение:
+- создать redirect payment intent YooKassa для прямой покупки тарифа
+- backend сам определяет цену и длительность по `plan_code`
+
+`POST /api/v1/payments/telegram-stars/plans/{plan_code}`
+
+Назначение:
+- создать invoice link Telegram Stars для прямой покупки тарифа внутри Mini App
+- backend сам определяет цену в `XTR` и длительность по `plan_code`
+
+Примечание:
+- frontend checkout flow должен использовать эти endpoint'ы как источник истины
+- frontend не должен заново хардкодить каталог тарифов в runtime
+- если для сценария доступен только один шлюз, frontend должен сразу открывать его без дополнительного окна выбора
+- в браузере покупка тарифа идет через YooKassa
+- в Telegram Mini App покупка тарифа должна показывать выбор способа оплаты:
+  - `Telegram Stars`, если у плана заполнен `price_stars`
+  - `YooKassa` через внешний переход в браузер
+- если `price_stars` не задан, в Mini App для тарифа остается только `YooKassa`
+- пополнение баланса в браузере и в Mini App сейчас идет через YooKassa; в Mini App это внешний переход в браузер
+
 `POST /api/v1/subscriptions/sync`
 
 Назначение:

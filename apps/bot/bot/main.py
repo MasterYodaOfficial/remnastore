@@ -10,12 +10,13 @@ from uvicorn import Config, Server
 
 from bot.core.config import settings
 from bot.core.logging import configure_logging
-from bot.handlers import start, webapp
+from bot.handlers import payments, start, webapp
 
 
 def create_dispatcher() -> Dispatcher:
     dp = Dispatcher()
     dp.include_router(start.router)
+    dp.include_router(payments.router)
     dp.include_router(webapp.router)
     return dp
 
