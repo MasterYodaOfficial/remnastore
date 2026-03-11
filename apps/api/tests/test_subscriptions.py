@@ -119,6 +119,28 @@ class UnavailableRemnawaveGateway:
         raise RemnawaveRequestError("ConnectError")
 
 
+class MissingSubscriptionUrlGateway(FakeRemnawaveGateway):
+    async def provision_user(
+        self,
+        *,
+        user_uuid: uuid.UUID,
+        expire_at: datetime,
+        email: str | None,
+        telegram_id: int | None,
+        is_trial: bool,
+    ) -> RemnawaveUser:
+        user = await super().provision_user(
+            user_uuid=user_uuid,
+            expire_at=expire_at,
+            email=email,
+            telegram_id=telegram_id,
+            is_trial=is_trial,
+        )
+        user.subscription_url = " "
+        self.users[user_uuid] = user
+        return user
+
+
 class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -327,6 +349,22 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             "remnawave_unavailable",
         )
 
+    async def test_activate_trial_fails_when_remnawave_returns_empty_subscription_url(self) -> None:
+        account = await self._create_account(email="trial-empty-url@example.com")
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: MissingSubscriptionUrlGateway(users={})
+
+        response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["detail"], "Remnawave did not return subscription_url")
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertIsNone(stored_account.subscription_url)
+        self.assertIsNone(stored_account.subscription_status)
+        self.assertFalse(stored_account.has_used_trial)
+
     async def test_wallet_plan_purchase_debits_balance_and_applies_subscription(self) -> None:
         account = await self._create_account(email="wallet@example.com", balance=1000)
         self._current_account_id = account.id
@@ -340,12 +378,14 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(body["status"], "ACTIVE")
         self.assertFalse(body["is_trial"])
+        self.assertTrue(body["subscription_url"])
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertEqual(stored_account.balance, 701)
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
+        self.assertTrue(stored_account.subscription_url)
 
         entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(entries), 1)
@@ -444,6 +484,82 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         grants = await self._get_subscription_grants(account.id)
         self.assertEqual(len(grants), 1)
         self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_wallet_plan_purchase_can_resume_after_empty_subscription_url(self) -> None:
+        account = await self._create_account(email="wallet-empty-url@example.com", balance=1000)
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: MissingSubscriptionUrlGateway(users={})
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-empty-url"},
+        )
+        self.assertEqual(first_response.status_code, 502)
+        self.assertEqual(first_response.json()["detail"], "Remnawave did not return subscription_url")
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertIsNone(stored_account.subscription_url)
+        self.assertIsNone(stored_account.subscription_status)
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNone(grants[0].applied_at)
+
+        subscriptions_service.get_remnawave_gateway = lambda: self._fake_gateway
+        second_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-empty-url"},
+        )
+        self.assertEqual(second_response.status_code, 200)
+        self.assertTrue(second_response.json()["subscription_url"])
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertTrue(stored_account.subscription_url)
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_wallet_plan_purchase_applies_first_referral_reward(self) -> None:
+        referrer = await self._create_account(
+            email="referrer@example.com",
+            referral_code="ref-wallet",
+        )
+        account = await self._create_account(
+            email="wallet-ref@example.com",
+            balance=1000,
+            referral_code="ref-wallet-user",
+        )
+        self._current_account_id = account.id
+
+        claim_response = await self.client.post(
+            "/api/v1/referrals/claim",
+            json={"referral_code": "ref-wallet"},
+        )
+        self.assertEqual(claim_response.status_code, 200)
+
+        response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-referral-reward"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        stored_referrer = await self._get_account(referrer.id)
+        self.assertIsNotNone(stored_referrer)
+        assert stored_referrer is not None
+        self.assertEqual(stored_referrer.referrals_count, 1)
+        self.assertEqual(stored_referrer.referral_earnings, 59)
+
+        referrer_entries = await self._get_ledger_entries(referrer.id)
+        self.assertEqual(len(referrer_entries), 1)
+        self.assertEqual(referrer_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD)
+        self.assertEqual(referrer_entries[0].amount, 59)
 
     async def test_wallet_plan_repeat_purchase_extends_active_subscription(self) -> None:
         account = await self._create_account(email="wallet-extend@example.com", balance=2000)

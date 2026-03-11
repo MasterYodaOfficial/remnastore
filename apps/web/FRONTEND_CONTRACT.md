@@ -15,6 +15,7 @@ Frontend отвечает за:
 - browser login через `Supabase Auth`
 - Telegram Mini App UI и получение backend JWT
 - отображение профиля, баланса, подписки и реферального раздела
+- обработку входных referral-ссылок вида `?ref=<referral_code>`
 - запуск flow связки browser и Telegram аккаунтов
 - пользовательские настройки, тему и навигацию
 
@@ -124,6 +125,7 @@ Telegram Mini App flow:
 - `referral_code`
 - `referral_earnings`
 - `referrals_count`
+- `referred_by_account_id`
 - `has_used_trial`
 - `subscription_status`
 - `subscription_url`
@@ -225,6 +227,92 @@ Telegram Mini App flow:
 Назначение:
 - вручную подтянуть актуальное состояние подписки из Remnawave
 
+### Рефералы
+
+`POST /api/v1/referrals/claim`
+
+Назначение:
+- привязать входной `referral_code` к текущему аккаунту
+- endpoint вызывается только после авторизации, если frontend ранее зафиксировал `?ref=<code>`
+
+Тело запроса:
+- `referral_code`
+
+Семантика:
+- `created=true` означает новую успешную атрибуцию
+- `created=false` означает безопасный повтор того же claim
+- self-referral должен блокироваться
+- после первой успешной платной покупки claim должен блокироваться
+
+`GET /api/v1/referrals/summary`
+
+Назначение:
+- получить реальный referral summary для вкладки рефералов
+
+Ожидаемые поля:
+- `referral_code`
+- `referrals_count`
+- `referral_earnings`
+- `available_for_withdraw`
+- `effective_reward_rate`
+- `items`
+
+Ожидаемые поля `items[*]`:
+- `referred_account_id`
+- `display_name`
+- `created_at`
+- `reward_amount`
+- `status`
+
+Примечание:
+- `available_for_withdraw` должен трактоваться как backend-рассчитанный остаток для заявки на вывод
+- frontend не должен пытаться вычислять его сам из `referral_earnings`
+
+### Выводы
+
+`POST /api/v1/withdrawals`
+
+Назначение:
+- создать пользовательскую заявку на вывод реферальных средств
+
+Тело запроса:
+- `amount`
+- `destination_type` (`card` или `sbp`)
+- `destination_value`
+- `user_comment` опционально
+
+Семантика:
+- backend сам проверяет минимальную сумму вывода
+- backend сам проверяет реальный `available_for_withdraw`
+- при успешном создании заявки backend сразу резервирует сумму и уменьшает доступный баланс
+
+`GET /api/v1/withdrawals`
+
+Назначение:
+- получить список текущих и прошлых заявок на вывод
+
+Ожидаемые поля ответа:
+- `items`
+- `total`
+- `limit`
+- `offset`
+- `available_for_withdraw`
+- `minimum_amount_rub`
+
+Ожидаемые поля `items[*]`:
+- `id`
+- `amount`
+- `destination_type`
+- `destination_value`
+- `user_comment`
+- `admin_comment`
+- `status`
+- `reserved_ledger_entry_id`
+- `released_ledger_entry_id`
+- `processed_at`
+- `created_at`
+- `updated_at`
+
 ### Связка аккаунтов
 
 `POST /api/v1/accounts/link-telegram`
@@ -263,6 +351,8 @@ Telegram Mini App flow:
 - email/password sign in
 - signup
 - password reset
+- если URL содержит `?ref=<code>`, frontend должен сохранить код локально до завершения авторизации
+- после успешной авторизации frontend должен попытаться вызвать `POST /api/v1/referrals/claim`
 
 ### Telegram Mini App login
 
@@ -271,6 +361,7 @@ Telegram Mini App flow:
 - backend verification
 - получение backend JWT
 - загрузка локального аккаунта
+- если при входе был входной `?ref=<code>`, после получения токена frontend должен так же вызвать `POST /api/v1/referrals/claim`
 
 ### Browser -> Telegram
 
@@ -291,10 +382,9 @@ Telegram Mini App flow:
 На сегодня frontend еще не переведен полностью на новый коммерческий backend flow.
 
 Сейчас в интерфейсе заглушками остаются:
-- пополнение баланса
-- покупка тарифа
 - вывод средств
-- детальный backend-список рефералов
+
+При этом backend API для выводов уже существует; заглушкой остается именно frontend-экран и пользовательский flow в UI.
 
 Если действие еще не перенесено на новый API, UI должен явно это показывать и не симулировать успешную бизнес-операцию.
 

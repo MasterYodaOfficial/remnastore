@@ -6,6 +6,7 @@ from app.db.models import Account
 from app.integrations.remnawave.client import RemnawaveUser
 from app.services.purchases import (
     PurchaseSource,
+    RemnawaveSyncError,
     apply_paid_purchase,
     apply_trial_purchase,
     compute_paid_plan_window,
@@ -44,6 +45,27 @@ class FakeGateway:
             email=email,
             tag="TRIAL" if is_trial else None,
         )
+
+
+class MissingSubscriptionUrlGateway(FakeGateway):
+    async def provision_user(
+        self,
+        *,
+        user_uuid: uuid.UUID,
+        expire_at: datetime,
+        email: str | None,
+        telegram_id: int | None,
+        is_trial: bool,
+    ) -> RemnawaveUser:
+        user = await super().provision_user(
+            user_uuid=user_uuid,
+            expire_at=expire_at,
+            email=email,
+            telegram_id=telegram_id,
+            is_trial=is_trial,
+        )
+        user.subscription_url = "   "
+        return user
 
 
 class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
@@ -94,6 +116,49 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.trial_used_at, purchased_at - timedelta(days=2))
         self.assertEqual(account.trial_ends_at, purchased_at + timedelta(days=1))
         self.assertEqual(gateway.calls[0]["is_trial"], False)
+
+    async def test_apply_trial_purchase_requires_subscription_url(self) -> None:
+        gateway = MissingSubscriptionUrlGateway()
+        now = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
+        account = Account(id=uuid.uuid4(), email="trial-missing-url@example.com", telegram_id=1001)
+
+        with self.assertRaisesRegex(
+            RemnawaveSyncError,
+            "Remnawave did not return subscription_url",
+        ):
+            await apply_trial_purchase(
+                account,
+                trial_duration_days=3,
+                now=now,
+                gateway_factory=lambda: gateway,
+            )
+
+        self.assertIsNone(account.subscription_url)
+        self.assertIsNone(account.subscription_status)
+        self.assertFalse(account.subscription_is_trial)
+        self.assertIsNone(account.trial_used_at)
+        self.assertIsNone(account.trial_ends_at)
+
+    async def test_apply_paid_purchase_requires_subscription_url(self) -> None:
+        gateway = MissingSubscriptionUrlGateway()
+        purchased_at = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
+        account = Account(id=uuid.uuid4(), email="paid-missing-url@example.com")
+
+        with self.assertRaisesRegex(
+            RemnawaveSyncError,
+            "Remnawave did not return subscription_url",
+        ):
+            await apply_paid_purchase(
+                account,
+                source=PurchaseSource.DIRECT_PAYMENT,
+                target_expires_at=purchased_at + timedelta(days=30),
+                gateway_factory=lambda: gateway,
+            )
+
+        self.assertIsNone(account.subscription_url)
+        self.assertIsNone(account.subscription_status)
+        self.assertFalse(account.subscription_is_trial)
+        self.assertIsNone(account.subscription_expires_at)
 
     def test_compute_paid_plan_window_extends_from_active_subscription(self) -> None:
         now = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)

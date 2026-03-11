@@ -118,6 +118,10 @@
   - используется API endpoint `POST /api/v1/webhooks/remnawave`
   - должен совпадать с секретом, настроенным в панели Remnawave
 
+- `MIN_WITHDRAWAL_AMOUNT_RUB`
+  - минимальная сумма пользовательской заявки на вывод реферальных средств
+  - если не задана, backend использует дефолт из `apps/api/app/core/config.py`
+
 - backend-каталог тарифов теперь читается из файла
   - [subscription-plans.json](/home/yoda/PycharmProjects/remnastore/apps/api/app/config/subscription-plans.json)
   - это runtime-источник истины для `GET /api/v1/payments/plans`, `POST /api/v1/payments/yookassa/plans/{plan_code}` и `POST /api/v1/payments/telegram-stars/plans/{plan_code}`
@@ -155,6 +159,7 @@
 - `ACCOUNT_RESPONSE_CACHE_TTL_SECONDS`
 - `TELEGRAM_INIT_DATA_TTL_SECONDS`
 - `TRIAL_DURATION_DAYS`
+- `MIN_WITHDRAWAL_AMOUNT_RUB`
 - `YOOKASSA_API_URL`
 - `YOOKASSA_VERIFY_TLS`
 

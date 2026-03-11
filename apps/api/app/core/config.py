@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     remnawave_api_token: str = ""
     remnawave_webhook_secret: str = ""
     trial_duration_days: int = 3
+    default_referral_reward_rate: float = 20.0
+    min_withdrawal_amount_rub: int = 300
     yookassa_shop_id: str = Field(default="", validation_alias="YOOKASSA_SHOP_ID")
     yookassa_secret_key: str = Field(default="", validation_alias="YOOKASSA_SECRET_KEY")
     yookassa_api_url: str = Field(

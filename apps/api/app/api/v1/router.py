@@ -5,8 +5,10 @@ from app.api.v1.endpoints.accounts import router as accounts_router
 from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.ledger import router as ledger_router
 from app.api.v1.endpoints.payments import router as payments_router
+from app.api.v1.endpoints.referrals import router as referrals_router
 from app.api.v1.endpoints.subscriptions import router as subscriptions_router
 from app.api.v1.endpoints.users import router as users_router
+from app.api.v1.endpoints.withdrawals import router as withdrawals_router
 from app.api.v1.endpoints.webapp import router as webapp_router
 from app.api.v1.endpoints.webhooks import router as webhooks_router
 from app.api.v1.endpoints.auth import router as auth_router
@@ -23,8 +25,10 @@ protected_router = APIRouter(dependencies=[Depends(get_current_account)])
 protected_router.include_router(bootstrap_router, tags=["bootstrap"])
 protected_router.include_router(ledger_router, prefix="/ledger", tags=["ledger"])
 protected_router.include_router(payments_router, prefix="/payments", tags=["payments"])
+protected_router.include_router(referrals_router, prefix="/referrals", tags=["referrals"])
 protected_router.include_router(users_router, prefix="/users", tags=["users"])
 protected_router.include_router(subscriptions_router, prefix="/subscriptions", tags=["subscriptions"])
+protected_router.include_router(withdrawals_router, prefix="/withdrawals", tags=["withdrawals"])
 protected_router.include_router(webapp_router, prefix="/webapp", tags=["webapp"])
 protected_router.include_router(accounts_router, tags=["accounts"])
 

@@ -13,8 +13,8 @@
 - Фаза 0: `Завершена`
 - Фаза 1: `В работе`
 - Фаза 2: `Завершена`
-- Фаза 3: `Не начато`
-- Фаза 4: `Не начато`
+- Фаза 3: `Завершена`
+- Фаза 4: `В работе`
 - Фаза 5: `Не начато`
 - Фаза 6: `Не начато`
 - Фаза 7: `Не начато`
@@ -200,13 +200,13 @@
 - frontend checkout flow теперь использует реальные endpoints `GET /api/v1/payments/plans`, `POST /api/v1/payments/yookassa/topup`, `POST /api/v1/payments/yookassa/plans/{plan_code}` и `POST /api/v1/payments/telegram-stars/plans/{plan_code}` вместо заглушек
 
 ## Фаза 3. Единый purchase flow и Remnawave
-Статус: `В работе`
+Статус: `Завершена`
 
 - [x] Спроектировать единый `purchase service`
 - [x] Объединить trial, wallet purchase и direct purchase в один flow
 - [x] Определить правила продления действующей подписки
 - [x] Реализовать rollback-safe обработку ошибок покупки
-- [ ] Проверить стабильную выдачу `subscription_url`
+- [x] Проверить стабильную выдачу `subscription_url`
 - [x] Проверить сценарии продления и повторной покупки
 
 Утверждено 2026-03-11:
@@ -259,6 +259,11 @@
 - стабильная выдача `subscription_url` после каждого успешного purchase flow
 - возможность безопасно ретраить незавершенную покупку без двойного продления и двойного списания
 
+Закрыто 2026-03-11:
+- `purchase service` теперь считает ответ Remnawave невалидным, если после provisioning пришел пустой `subscription_url`; такой кейс поднимается как `RemnawaveSyncError` до записи локального subscription snapshot
+- добавлены тесты на отказ и повторный ретрай для `trial` и `wallet purchase`, а также unit-тесты общего paid/trial purchase path
+- успешный wallet flow теперь явно проверяется на наличие непустого `subscription_url` в response и в локальном snapshot
+
 Сделано 2026-03-11:
 - добавлен единый backend-сервис `apps/api/app/services/purchases.py`
 - `activate_trial` в `apps/api/app/services/subscriptions.py` больше не провижинит подписку напрямую и вызывает `purchase service`
@@ -271,18 +276,42 @@
 - сценарии повторной покупки и продления теперь покрыты тестами `tests.test_subscriptions` и `tests.test_payments`
 
 ## Фаза 4. Рефералка и выводы
-Статус: `Не начато`
+Статус: `В работе`
 
-- [ ] Вынести referral logic в отдельные backend services
-- [ ] Реализовать атрибуцию реферала один раз на пользователя
-- [ ] Поддержать индивидуальную ставку для партнеров и блогеров
-- [ ] Реализовать reward только на первую успешную оплату
-- [ ] Завести ledger entries для referral rewards
-- [ ] Реализовать модель `withdrawals`
-- [ ] Реализовать user flow подачи заявки на вывод
+- [x] Вынести referral logic в отдельные backend services
+- [x] Реализовать атрибуцию реферала один раз на пользователя
+- [x] Поддержать индивидуальную ставку для партнеров и блогеров
+- [x] Реализовать reward только на первую успешную оплату
+- [x] Завести ledger entries для referral rewards
+- [x] Реализовать модель `withdrawals`
+- [x] Реализовать user flow подачи заявки на вывод
 - [ ] Реализовать admin flow обработки выводов
-- [ ] Поддержать статусы `new`, `in_progress`, `paid`, `rejected`, `cancelled`
-- [ ] Добавить минимальную сумму вывода как настройку
+- [x] Поддержать статусы `new`, `in_progress`, `paid`, `rejected`, `cancelled`
+- [x] Добавить минимальную сумму вывода как настройку
+
+Сделано 2026-03-11:
+- добавлены модели `ReferralAttribution` и `ReferralReward`, а также миграция `20260311_add_referrals.py`
+- вынесен отдельный доменный сервис `apps/api/app/services/referrals.py`
+- атрибуция теперь идет через `POST /api/v1/referrals/claim` и допускается только один раз на аккаунт, с запретом self-referral и блокировкой после первой успешной платной покупки
+- реферальная награда начисляется только на первую успешную paid purchase, независимо от того, была это `wallet purchase` или `direct purchase`
+- награда пишет отдельный `ledger entry` типа `referral_reward`, а агрегаты `accounts.referral_earnings` и `accounts.referrals_count` обновляются только через доменный flow
+- effective referral rate теперь берется как `account.referral_reward_rate` override или `settings.default_referral_reward_rate`
+- добавлен `GET /api/v1/referrals/summary` для списка рефералов и текущих агрегатов
+- frontend теперь захватывает `?ref=...`, выполняет deferred claim после авторизации и подгружает реальный referral summary во вкладке рефералов
+- добавлена модель `Withdrawal`, миграция `20260311_add_withdrawals.py` и доменный сервис `apps/api/app/services/withdrawals.py`
+- добавлены пользовательские endpoint'ы `POST /api/v1/withdrawals` и `GET /api/v1/withdrawals`
+- при создании заявки сумма сразу резервируется через `ledger entry` типа `withdrawal_reserve`, чтобы ее нельзя было потратить повторно до ручной обработки
+- `available_for_withdraw` больше не равен просто `referral_earnings`; теперь он считается как реально доступный остаток с учетом текущего баланса, уже выплаченных сумм и pending/in_progress заявок
+- минимальная сумма вывода вынесена в `settings.min_withdrawal_amount_rub`
+
+Проверено 2026-03-11:
+- `tests.test_referrals`
+- `tests.test_withdrawals`
+- `tests.test_subscriptions`
+- `tests.test_payments`
+- `tests.test_account_linking`
+- `tests.test_purchases`
+- `apps/web: npm run build`
 
 ## Фаза 5. Уведомления, поддержка и FAQ
 Статус: `Не начато`

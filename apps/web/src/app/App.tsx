@@ -36,6 +36,7 @@ const TELEGRAM_BOT_URL = (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim().re
 const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
 const TELEGRAM_AUTH_STORAGE_KEY = 'remnastore.telegram_auth';
 const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';
+const PENDING_REFERRAL_CODE_STORAGE_KEY = 'remnastore.pending_referral_code';
 const THEME_STORAGE_KEY = 'remnastore.theme';
 type AuthView = 'default' | 'recovery' | 'recovery-expired';
 
@@ -99,6 +100,7 @@ interface BackendAccount {
   referral_earnings?: number;
   referral_earnings_cents?: number;
   referrals_count: number;
+  referred_by_account_id?: string | null;
   has_used_trial?: boolean;
   subscription_status?: string | null;
   subscription_url?: string | null;
@@ -159,6 +161,23 @@ interface BackendPaymentIntent {
   confirmation_url?: string | null;
 }
 
+interface BackendReferralSummaryItem {
+  referred_account_id: string;
+  display_name: string;
+  created_at: string;
+  reward_amount: number;
+  status: 'active' | 'pending';
+}
+
+interface BackendReferralSummary {
+  referral_code: string;
+  referrals_count: number;
+  referral_earnings: number;
+  available_for_withdraw: number;
+  effective_reward_rate: number;
+  items: BackendReferralSummaryItem[];
+}
+
 interface StoredTelegramAuth {
   accessToken: string;
   telegramUserId: number;
@@ -173,6 +192,7 @@ interface User {
   referralCode: string;
   referralsCount: number;
   referralEarnings: number;
+  referredByAccountId?: string | null;
   hasUsedTrial: boolean;
   avatar?: string;
 }
@@ -287,6 +307,7 @@ function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User
     referralCode: account.referral_code || '',
     referralsCount: account.referrals_count || 0,
     referralEarnings: getReferralEarnings(account),
+    referredByAccountId: account.referred_by_account_id ?? null,
     hasUsedTrial: account.has_used_trial ?? Boolean(account.trial_used_at),
     avatar,
   };
@@ -557,6 +578,43 @@ function clearStoredTelegramAuth() {
   window.localStorage.removeItem(TELEGRAM_AUTH_STORAGE_KEY);
 }
 
+function capturePendingReferralCodeFromUrl() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  const referralCode = url.searchParams.get('ref');
+  if (!referralCode || !referralCode.trim()) {
+    return;
+  }
+
+  window.localStorage.setItem(PENDING_REFERRAL_CODE_STORAGE_KEY, referralCode.trim());
+  url.searchParams.delete('ref');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function readPendingReferralCode() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const value = window.localStorage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
+  if (!value || !value.trim()) {
+    return null;
+  }
+
+  return value.trim();
+}
+
+function clearPendingReferralCode() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
+}
+
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -574,6 +632,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [referralCopied, setReferralCopied] = useState(false);
+  const [referralSummary, setReferralSummary] = useState<BackendReferralSummary | null>(null);
+  const [isLoadingReferralSummary, setIsLoadingReferralSummary] = useState(false);
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false);
   const [isDesktopBrowser, setIsDesktopBrowser] = useState(
     () => typeof window !== 'undefined' && window.innerWidth >= 1200
@@ -584,6 +644,7 @@ export default function App() {
   const inFlightLinkTokenRef = useRef<string | null>(null);
   const pendingTelegramLinkRefreshRef = useRef(false);
   const pendingPaymentRefreshRef = useRef(false);
+  const pendingReferralClaimRef = useRef(false);
   const attemptedPlansTokenRef = useRef<string | null>(null);
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
@@ -619,6 +680,20 @@ export default function App() {
     }
 
     return await response.json() as BackendPlan[];
+  };
+
+  const loadReferralSummarySnapshot = async (token: string) => {
+    const response = await fetch(`${BACKEND_API}/api/v1/referrals/summary`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load referral summary from backend');
+    }
+
+    return await response.json() as BackendReferralSummary;
   };
 
   const isPasswordRecoveryRequested = () => {
@@ -708,6 +783,8 @@ export default function App() {
 
   // Check if running in Telegram WebApp
   useEffect(() => {
+    capturePendingReferralCodeFromUrl();
+
     const initApp = async () => {
       // Load Telegram script first
       await loadTelegramScript();
@@ -1100,9 +1177,11 @@ export default function App() {
     setUser(null);
     setAccessToken(null);
     setPlans([]);
+    setReferralSummary(null);
     attemptedPlansTokenRef.current = null;
     pendingTelegramLinkRefreshRef.current = false;
     pendingPaymentRefreshRef.current = false;
+    pendingReferralClaimRef.current = false;
     currentBrowserTokenRef.current = null;
     lastLoadedBrowserTokenRef.current = null;
     inFlightBrowserTokenRef.current = null;
@@ -1184,6 +1263,79 @@ export default function App() {
     }
   };
 
+  const loadReferralSummary = async (token: string) => {
+    setIsLoadingReferralSummary(true);
+
+    try {
+      const summary = await loadReferralSummarySnapshot(token);
+      setReferralSummary(summary);
+      return true;
+    } catch (err) {
+      console.error('Error loading referral summary:', err);
+      return false;
+    } finally {
+      setIsLoadingReferralSummary(false);
+    }
+  };
+
+  const claimPendingReferralCode = async (token: string) => {
+    const referralCode = readPendingReferralCode();
+    if (!referralCode) {
+      return false;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/referrals/claim`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ referral_code: referralCode }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const detail =
+          errorData && typeof errorData.detail === 'string'
+            ? errorData.detail
+            : 'Не удалось привязать реферальную ссылку';
+
+        if (
+          detail === 'referral already claimed' ||
+          detail === 'referral attribution is closed after the first paid purchase'
+        ) {
+          clearPendingReferralCode();
+          return false;
+        }
+
+        if (detail === 'self referral is not allowed') {
+          clearPendingReferralCode();
+          toast.error('Нельзя использовать собственную реферальную ссылку');
+          return false;
+        }
+
+        if (detail === 'referral code not found') {
+          clearPendingReferralCode();
+          toast.error('Реферальная ссылка недействительна');
+          return false;
+        }
+
+        throw new Error(detail);
+      }
+
+      const payload = (await response.json()) as { created: boolean };
+      clearPendingReferralCode();
+      if (payload.created) {
+        toast.success('Реферальная ссылка успешно привязана');
+      }
+      return payload.created;
+    } catch (err) {
+      console.error('Referral claim error:', err);
+      return false;
+    }
+  };
+
   const openCheckoutConfirmation = (
     confirmationUrl: string,
     options: {
@@ -1232,6 +1384,70 @@ export default function App() {
 
     void loadPlans(accessToken);
   }, [isAuthenticated, accessToken, activeTab, isDesktopBrowser, plans.length, isLoadingPlans]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken || !user) {
+      return;
+    }
+
+    const pendingReferralCode = readPendingReferralCode();
+    if (!pendingReferralCode) {
+      return;
+    }
+
+    if (user.referredByAccountId) {
+      clearPendingReferralCode();
+      return;
+    }
+
+    if (pendingReferralClaimRef.current) {
+      return;
+    }
+
+    pendingReferralClaimRef.current = true;
+    void (async () => {
+      const claimed = await claimPendingReferralCode(accessToken);
+      if (claimed) {
+        await loadUserData(accessToken, user.avatar);
+      }
+    })().finally(() => {
+      pendingReferralClaimRef.current = false;
+    });
+  }, [isAuthenticated, accessToken, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken || !user) {
+      return;
+    }
+
+    if (!isDesktopBrowser && activeTab !== 'referral') {
+      return;
+    }
+
+    if (isLoadingReferralSummary) {
+      return;
+    }
+
+    const shouldReload =
+      !referralSummary ||
+      referralSummary.referral_code !== (user.referralCode || '') ||
+      referralSummary.referrals_count !== (user.referralsCount || 0) ||
+      referralSummary.referral_earnings !== (user.referralEarnings || 0);
+
+    if (!shouldReload) {
+      return;
+    }
+
+    void loadReferralSummary(accessToken);
+  }, [
+    isAuthenticated,
+    accessToken,
+    user,
+    activeTab,
+    isDesktopBrowser,
+    referralSummary,
+    isLoadingReferralSummary,
+  ]);
 
   const handleTopUp = async () => {
     setIsTopUpModalOpen(true);
@@ -1764,9 +1980,17 @@ export default function App() {
       case 'referral':
         return (
           <ReferralPage
-            referrals={[]}
-            totalEarnings={user.referralEarnings || 0}
-            availableForWithdraw={user.referralEarnings || 0}
+            referrals={(referralSummary?.items || []).map((item) => ({
+              id: item.referred_account_id,
+              name: item.display_name,
+              date: new Date(item.created_at).toLocaleDateString('ru-RU'),
+              earned: item.reward_amount,
+              status: item.status,
+            }))}
+            totalEarnings={referralSummary?.referral_earnings ?? (user.referralEarnings || 0)}
+            availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+            rewardRate={referralSummary?.effective_reward_rate ?? 20}
+            isLoading={isLoadingReferralSummary}
             onWithdraw={handleWithdraw}
           />
         );
@@ -2213,8 +2437,9 @@ export default function App() {
                       <div className="mt-3 text-3xl font-semibold">{formatRubles(user.referralEarnings)} ₽</div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
-                      Детальный список рефералов появится автоматически, когда переведем
-                      оставшийся referral backend на новый API.
+                      {isLoadingReferralSummary
+                        ? 'Загружаем детали реферальной активности.'
+                        : 'Полный список рефералов и статусы начислений доступны во вкладке «Рефералы».'}
                     </div>
                   </div>
                 </div>

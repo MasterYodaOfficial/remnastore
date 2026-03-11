@@ -693,6 +693,82 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             assert stored_account is not None
             self.assertEqual(stored_account.subscription_expires_at, first_expires_at)
 
+    async def test_plan_purchase_webhook_applies_first_referral_reward(self) -> None:
+        referrer = await self._create_account(
+            balance=0,
+            email="referrer@example.com",
+            referral_code="ref-direct",
+        )
+        account = await self._create_account(
+            balance=0,
+            email="paid-ref@example.com",
+            referral_code="ref-direct-user",
+        )
+        self._current_account_id = account.id
+
+        claim_response = await self.client.post(
+            "/api/v1/referrals/claim",
+            json={"referral_code": "ref-direct"},
+        )
+        self.assertEqual(claim_response.status_code, 200)
+
+        async def fake_apply_paid_purchase(
+            account_obj: Account,
+            *,
+            source,
+            target_expires_at: datetime,
+        ):
+            self.assertEqual(source.value, "direct_payment")
+            account_obj.remnawave_user_uuid = account_obj.id
+            account_obj.subscription_status = "ACTIVE"
+            account_obj.subscription_expires_at = target_expires_at
+            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_is_trial = False
+            return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
+
+        with patch(
+            "app.services.payments.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
+        ):
+            await self._create_direct_plan_payment(account)
+
+            self._fake_gateway.put_event(
+                "plan-event-referral",
+                PaymentWebhookEvent(
+                    provider=PaymentProvider.YOOKASSA,
+                    provider_event_id="payment.succeeded:yoopay-plan-1m",
+                    provider_payment_id="yoopay-plan-1m",
+                    status=PaymentStatus.SUCCEEDED,
+                    amount=299,
+                    currency="RUB",
+                    flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    account_id=account.id,
+                    external_reference="plan-1m",
+                    raw_payload={"status": "succeeded"},
+                ),
+            )
+
+            response = await self.client.post(
+                "/api/v1/webhooks/payments/yookassa",
+                content=json.dumps({"event_id": "plan-event-referral"}),
+                headers={"content-type": "application/json"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["subscription_applied"], True)
+
+        stored_referrer = await self._get_account(referrer.id)
+        self.assertIsNotNone(stored_referrer)
+        assert stored_referrer is not None
+        self.assertEqual(stored_referrer.referrals_count, 1)
+        self.assertEqual(stored_referrer.referral_earnings, 59)
+
+        ledger_entries = await self._get_ledger_entries(referrer.id)
+        self.assertEqual(len(ledger_entries), 1)
+        self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD)
+        self.assertEqual(ledger_entries[0].amount, 59)
+
     async def test_duplicate_event_can_resume_pending_plan_finalization(self) -> None:
         account = await self._create_account(balance=0, email="resume@example.com")
         self._current_account_id = account.id

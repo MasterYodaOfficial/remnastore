@@ -11,7 +11,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api.dependencies import get_current_account
 from app.core.config import settings
 from app.db.base import Base
-from app.db.models import Account, AuthAccount, AuthLinkToken, AuthProvider, LinkType
+from app.db.models import (
+    Account,
+    AuthAccount,
+    AuthLinkToken,
+    AuthProvider,
+    LinkType,
+    Withdrawal,
+    WithdrawalDestinationType,
+    WithdrawalStatus,
+)
 from app.db.session import get_session
 from app.main import create_app
 from app.services import account_linking
@@ -159,6 +168,31 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _create_withdrawal(
+        self,
+        *,
+        account_id: uuid.UUID,
+        amount: int,
+        destination_type: WithdrawalDestinationType = WithdrawalDestinationType.CARD,
+        destination_value: str = "2200123412341234",
+    ) -> Withdrawal:
+        async with self._session_factory() as session:
+            withdrawal = Withdrawal(
+                account_id=account_id,
+                amount=amount,
+                destination_type=destination_type,
+                destination_value=destination_value,
+                status=WithdrawalStatus.NEW,
+            )
+            session.add(withdrawal)
+            await session.commit()
+            await session.refresh(withdrawal)
+            return withdrawal
+
+    async def _get_withdrawal(self, withdrawal_id: int) -> Withdrawal | None:
+        async with self._session_factory() as session:
+            return await session.get(Withdrawal, withdrawal_id)
+
     async def test_browser_to_telegram_flow_and_token_reuse(self) -> None:
         browser_account = await self._create_account(
             email="browser@example.com",
@@ -237,6 +271,7 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             provider=AuthProvider.SUPABASE,
             provider_uid="telegram-existing",
         )
+        pending_withdrawal = await self._create_withdrawal(account_id=telegram_account.id, amount=5)
 
         self._current_account_id = browser_account.id
         token_response = await self.client.post("/api/v1/accounts/link-telegram")
@@ -273,6 +308,11 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         auth_accounts = await self._get_auth_accounts(browser_account.id)
         self.assertEqual(len(auth_accounts), 1)
         self.assertEqual(auth_accounts[0].provider_uid, "telegram-existing")
+
+        moved_withdrawal = await self._get_withdrawal(pending_withdrawal.id)
+        self.assertIsNotNone(moved_withdrawal)
+        assert moved_withdrawal is not None
+        self.assertEqual(moved_withdrawal.account_id, browser_account.id)
 
     async def test_telegram_to_browser_flow_and_token_reuse(self) -> None:
         telegram_account = await self._create_account(

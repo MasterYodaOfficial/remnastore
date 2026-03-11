@@ -20,6 +20,7 @@ from app.integrations.remnawave import (
 )
 from app.services.ledger import InsufficientFundsError, apply_debit_in_transaction, clear_account_cache
 from app.services.plans import SubscriptionPlan, get_subscription_plan
+from app.services.referrals import apply_first_referral_reward_for_grant
 
 
 class PurchaseSource(str, Enum):
@@ -127,6 +128,17 @@ def _resolve_gateway(
         raise RemnawaveSyncError(str(exc)) from exc
 
 
+def _require_subscription_url(remote_user: RemnawaveUser) -> str:
+    subscription_url = getattr(remote_user, "subscription_url", None)
+    if isinstance(subscription_url, str):
+        subscription_url = subscription_url.strip()
+
+    if not subscription_url:
+        raise RemnawaveSyncError("Remnawave did not return subscription_url")
+
+    return subscription_url
+
+
 async def _apply_subscription_purchase(
     account: Account,
     *,
@@ -149,6 +161,7 @@ async def _apply_subscription_purchase(
     except RemnawaveRequestError as exc:
         raise RemnawaveSyncError(str(exc)) from exc
 
+    remote_user.subscription_url = _require_subscription_url(remote_user)
     apply_remote_subscription_snapshot(account, remote_user)
     account.subscription_is_trial = is_trial
 
@@ -360,6 +373,10 @@ async def finalize_wallet_plan_purchase(
             source=PurchaseSource.WALLET,
             target_expires_at=grant.target_expires_at,
             gateway_factory=gateway_factory,
+        )
+        await apply_first_referral_reward_for_grant(
+            session,
+            grant=grant,
         )
     except RemnawaveSyncError:
         await session.rollback()

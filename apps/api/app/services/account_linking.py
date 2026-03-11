@@ -15,6 +15,9 @@ from app.db.models import (
     AuthProvider,
     LoginSource,
     LinkType,
+    ReferralAttribution,
+    ReferralReward,
+    Withdrawal,
 )
 from app.services.cache import get_cache
 from app.services.ledger import transfer_balance_for_merge
@@ -243,6 +246,74 @@ async def _clear_account_cache(*account_ids: uuid.UUID) -> None:
     await cache.delete(*cache_keys)
 
 
+async def _merge_referral_records(
+    session: AsyncSession,
+    *,
+    source_account: Account,
+    target_account: Account,
+) -> None:
+    source_attribution = await session.scalar(
+        select(ReferralAttribution)
+        .where(ReferralAttribution.referred_account_id == source_account.id)
+        .with_for_update()
+    )
+    target_attribution = await session.scalar(
+        select(ReferralAttribution)
+        .where(ReferralAttribution.referred_account_id == target_account.id)
+        .with_for_update()
+    )
+    if source_attribution is not None:
+        if target_attribution is None:
+            source_attribution.referred_account_id = target_account.id
+        else:
+            await session.delete(source_attribution)
+
+    result = await session.execute(
+        select(ReferralAttribution)
+        .where(ReferralAttribution.referrer_account_id == source_account.id)
+        .with_for_update()
+    )
+    for attribution in result.scalars().all():
+        attribution.referrer_account_id = target_account.id
+
+    source_reward = await session.scalar(
+        select(ReferralReward)
+        .where(ReferralReward.referred_account_id == source_account.id)
+        .with_for_update()
+    )
+    target_reward = await session.scalar(
+        select(ReferralReward)
+        .where(ReferralReward.referred_account_id == target_account.id)
+        .with_for_update()
+    )
+    if source_reward is not None:
+        if target_reward is None:
+            source_reward.referred_account_id = target_account.id
+        else:
+            await session.delete(source_reward)
+
+    result = await session.execute(
+        select(ReferralReward)
+        .where(ReferralReward.referrer_account_id == source_account.id)
+        .with_for_update()
+    )
+    for reward in result.scalars().all():
+        reward.referrer_account_id = target_account.id
+
+
+async def _move_withdrawals(
+    session: AsyncSession,
+    *,
+    source_account_id: uuid.UUID,
+    target_account_id: uuid.UUID,
+) -> None:
+    result = await session.execute(
+        select(Withdrawal).where(Withdrawal.account_id == source_account_id).with_for_update()
+    )
+    for withdrawal in result.scalars().all():
+        withdrawal.account_id = target_account_id
+
+
 async def merge_accounts(
     session: AsyncSession,
     *,
@@ -318,6 +389,16 @@ async def merge_accounts(
     target_account.last_seen_at = _utcnow()
 
     await _move_auth_accounts(
+        session,
+        source_account_id=source_account.id,
+        target_account_id=target_account.id,
+    )
+    await _merge_referral_records(
+        session,
+        source_account=source_account,
+        target_account=target_account,
+    )
+    await _move_withdrawals(
         session,
         source_account_id=source_account.id,
         target_account_id=target_account.id,

@@ -42,6 +42,7 @@ from app.services.purchases import (
     apply_paid_purchase,
     compute_paid_plan_window,
 )
+from app.services.referrals import apply_first_referral_reward_for_grant
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -1042,6 +1043,10 @@ async def _finalize_direct_plan_purchase(
             account,
             source=PurchaseSource.DIRECT_PAYMENT,
             target_expires_at=grant.target_expires_at,
+        )
+        await apply_first_referral_reward_for_grant(
+            session,
+            grant=grant,
         )
     except RemnawaveSyncError as exc:
         await session.rollback()

@@ -14,6 +14,8 @@ interface ReferralPageProps {
   referrals: Referral[];
   totalEarnings: number;
   availableForWithdraw: number;
+  rewardRate: number;
+  isLoading?: boolean;
   onWithdraw: () => void;
 }
 
@@ -21,6 +23,8 @@ export function ReferralPage({
   referrals,
   totalEarnings,
   availableForWithdraw,
+  rewardRate,
+  isLoading = false,
   onWithdraw,
 }: ReferralPageProps) {
   return (
@@ -30,7 +34,7 @@ export function ReferralPage({
           Реферальная программа
         </h1>
         <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-          Зарабатывайте 20% с каждой покупки ваших рефералов
+          Зарабатывайте {rewardRate}% с первой успешной покупки ваших рефералов
         </p>
       </div>
 
@@ -65,8 +69,12 @@ export function ReferralPage({
         <h2 className="text-lg font-semibold text-[var(--tg-theme-text-color,#000000)]">
           Ваши рефералы ({referrals.length})
         </h2>
-        
-        {referrals.length > 0 ? (
+
+        {isLoading ? (
+          <div className="rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] p-4 text-sm text-[var(--tg-theme-hint-color,#999999)]">
+            Загружаем реферальную статистику...
+          </div>
+        ) : referrals.length > 0 ? (
           <div className="space-y-2">
             {referrals.map((referral) => (
               <div
