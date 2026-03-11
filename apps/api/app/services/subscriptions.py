@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -18,6 +18,16 @@ from app.integrations.remnawave import (
 )
 from app.schemas.subscription import SubscriptionStateResponse, TrialEligibilityResponse
 from app.services.cache import get_cache
+from app.services.purchases import (
+    RemnawaveSyncError,
+    apply_remote_subscription_snapshot,
+    apply_trial_purchase,
+    clear_remote_subscription_snapshot,
+    purchase_plan_with_wallet,
+    normalize_datetime,
+    target_remnawave_user_uuid,
+    utcnow,
+)
 
 
 class SubscriptionServiceError(Exception):
@@ -31,44 +41,10 @@ class TrialEligibilityError(SubscriptionServiceError):
         self.status_code = status_code
 
 
-class RemnawaveSyncError(SubscriptionServiceError):
-    pass
-
-
 @dataclass(slots=True)
 class TrialEligibility:
     eligible: bool
     reason: Optional[str] = None
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _target_remnawave_user_uuid(account: Account) -> UUID:
-    return account.remnawave_user_uuid or account.id
-
-
-def _normalize_datetime(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
-
-
-def compute_paid_plan_window(
-    account: Account,
-    *,
-    duration_days: int,
-    now: datetime | None = None,
-) -> tuple[datetime, datetime]:
-    effective_now = now or _utcnow()
-    current_expires_at = _normalize_datetime(account.subscription_expires_at)
-    base_expires_at = effective_now
-    if current_expires_at is not None and current_expires_at > effective_now:
-        base_expires_at = current_expires_at
-    return base_expires_at, base_expires_at + timedelta(days=duration_days)
 
 
 async def _clear_account_cache(account_id: UUID) -> None:
@@ -103,61 +79,15 @@ async def _load_account_by_remnawave_user_uuid(
     return result.scalar_one_or_none()
 
 
-def _apply_remote_user(account: Account, remote_user: RemnawaveUser) -> None:
-    account.remnawave_user_uuid = remote_user.uuid
-    account.subscription_url = remote_user.subscription_url
-    account.subscription_status = remote_user.status
-    account.subscription_expires_at = _normalize_datetime(remote_user.expire_at)
-    account.subscription_last_synced_at = _utcnow()
-    account.subscription_is_trial = remote_user.tag == "TRIAL"
-    account.email = account.email or remote_user.email
-    account.telegram_id = account.telegram_id or remote_user.telegram_id
-
-
-def _clear_remote_subscription_snapshot(account: Account) -> None:
-    account.remnawave_user_uuid = None
-    account.subscription_url = None
-    account.subscription_status = None
-    account.subscription_expires_at = None
-    account.subscription_last_synced_at = _utcnow()
-    account.subscription_is_trial = False
-
-
 async def get_current_subscription(account: Account) -> SubscriptionStateResponse:
     return SubscriptionStateResponse.from_account(account)
-
-
-async def provision_paid_subscription(
-    account: Account,
-    *,
-    target_expires_at: datetime,
-) -> RemnawaveUser:
-    try:
-        gateway = get_remnawave_gateway()
-    except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
-
-    try:
-        remote_user = await gateway.provision_user(
-            user_uuid=_target_remnawave_user_uuid(account),
-            expire_at=target_expires_at,
-            email=account.email,
-            telegram_id=account.telegram_id,
-            is_trial=False,
-        )
-    except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
-
-    _apply_remote_user(account, remote_user)
-    account.subscription_is_trial = False
-    return remote_user
 
 
 async def _find_remnawave_identity_conflict(
     account: Account,
     gateway,
 ) -> RemnawaveUser | None:
-    target_uuid = _target_remnawave_user_uuid(account)
+    target_uuid = target_remnawave_user_uuid(account)
 
     if account.email:
         users_with_email = await gateway.get_users_by_email(account.email)
@@ -187,14 +117,14 @@ async def sync_current_subscription(
         raise RemnawaveSyncError(str(exc)) from exc
 
     try:
-        remote_user = await gateway.get_user_by_uuid(_target_remnawave_user_uuid(account))
+        remote_user = await gateway.get_user_by_uuid(target_remnawave_user_uuid(account))
     except RemnawaveRequestError as exc:
         raise RemnawaveSyncError(str(exc)) from exc
 
     if remote_user is None:
-        _clear_remote_subscription_snapshot(account)
+        clear_remote_subscription_snapshot(account)
     else:
-        _apply_remote_user(account, remote_user)
+        apply_remote_subscription_snapshot(account, remote_user)
 
     await session.commit()
     await session.refresh(account)
@@ -220,12 +150,12 @@ async def get_trial_eligibility(
             eligibility = TrialEligibility(eligible=False, reason="remnawave_not_configured")
         else:
             try:
-                remote_user = await gateway.get_user_by_uuid(_target_remnawave_user_uuid(account))
+                remote_user = await gateway.get_user_by_uuid(target_remnawave_user_uuid(account))
             except RemnawaveRequestError:
                 eligibility = TrialEligibility(eligible=False, reason="remnawave_unavailable")
             else:
                 if remote_user is not None:
-                    _apply_remote_user(account, remote_user)
+                    apply_remote_subscription_snapshot(account, remote_user)
                     await session.commit()
                     await session.refresh(account)
                     await _clear_account_cache(account.id)
@@ -279,29 +209,11 @@ async def activate_trial(
             status_code = 503
         raise TrialEligibilityError(eligibility.reason or "trial_not_eligible", status_code=status_code)
 
-    try:
-        gateway = get_remnawave_gateway()
-    except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
-
-    now = _utcnow()
-    trial_ends_at = now + timedelta(days=settings.trial_duration_days)
-
-    try:
-        remote_user = await gateway.provision_user(
-            user_uuid=_target_remnawave_user_uuid(account),
-            expire_at=trial_ends_at,
-            email=account.email,
-            telegram_id=account.telegram_id,
-            is_trial=True,
-        )
-    except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
-
-    _apply_remote_user(account, remote_user)
-    account.subscription_is_trial = True
-    account.trial_used_at = now
-    account.trial_ends_at = trial_ends_at
+    await apply_trial_purchase(
+        account,
+        trial_duration_days=settings.trial_duration_days,
+        gateway_factory=get_remnawave_gateway,
+    )
 
     await session.commit()
     await session.refresh(account)
@@ -329,11 +241,29 @@ async def sync_subscription_by_remnawave_user_uuid(
         raise RemnawaveSyncError(str(exc)) from exc
 
     if remote_user is None:
-        _clear_remote_subscription_snapshot(account)
+        clear_remote_subscription_snapshot(account)
     else:
-        _apply_remote_user(account, remote_user)
+        apply_remote_subscription_snapshot(account, remote_user)
 
     await session.commit()
     await session.refresh(account)
     await _clear_account_cache(account.id)
     return account
+
+
+async def purchase_subscription_with_wallet(
+    session: AsyncSession,
+    *,
+    account: Account,
+    plan_code: str,
+    idempotency_key: str,
+) -> SubscriptionStateResponse:
+    account = await purchase_plan_with_wallet(
+        session,
+        account_id=account.id,
+        plan_code=plan_code,
+        idempotency_key=idempotency_key,
+        gateway_factory=get_remnawave_gateway,
+    )
+
+    return SubscriptionStateResponse.from_account(account)

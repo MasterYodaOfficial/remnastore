@@ -1,7 +1,7 @@
 import React from 'react';
-import { CreditCard, ExternalLink, Sparkles, X } from 'lucide-react';
+import { CreditCard, ExternalLink, Sparkles, Wallet, X } from 'lucide-react';
 
-export type PaymentMethodProvider = 'yookassa' | 'telegram_stars';
+export type PaymentMethodProvider = 'yookassa' | 'telegram_stars' | 'wallet';
 
 export interface PaymentMethodOption {
   provider: PaymentMethodProvider;
@@ -24,6 +24,9 @@ interface PaymentMethodSheetProps {
 function PaymentMethodIcon({ provider }: { provider: PaymentMethodProvider }) {
   if (provider === 'telegram_stars') {
     return <Sparkles className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />;
+  }
+  if (provider === 'wallet') {
+    return <Wallet className="h-5 w-5 text-[var(--app-success-color,#16a34a)]" />;
   }
 
   return <CreditCard className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />;

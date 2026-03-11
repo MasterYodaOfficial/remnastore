@@ -609,7 +609,13 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         account = await self._create_account(balance=0, email="paid@example.com")
         self._current_account_id = account.id
 
-        async def fake_provision_paid_subscription(account_obj: Account, *, target_expires_at: datetime):
+        async def fake_apply_paid_purchase(
+            account_obj: Account,
+            *,
+            source,
+            target_expires_at: datetime,
+        ):
+            self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
@@ -618,8 +624,8 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
         with patch(
-            "app.services.payments.provision_paid_subscription",
-            side_effect=fake_provision_paid_subscription,
+            "app.services.payments.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
         ):
             await self._create_direct_plan_payment(account)
 
@@ -691,7 +697,13 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         account = await self._create_account(balance=0, email="resume@example.com")
         self._current_account_id = account.id
 
-        async def fake_provision_paid_subscription(account_obj: Account, *, target_expires_at: datetime):
+        async def fake_apply_paid_purchase(
+            account_obj: Account,
+            *,
+            source,
+            target_expires_at: datetime,
+        ):
+            self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
@@ -755,8 +767,8 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.payments.provision_paid_subscription",
-            side_effect=fake_provision_paid_subscription,
+            "app.services.payments.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
         ):
             response = await self.client.post(
                 "/api/v1/webhooks/payments/yookassa",
@@ -824,7 +836,13 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self._current_account_id = account.id
 
-        async def fake_provision_paid_subscription(account_obj: Account, *, target_expires_at: datetime):
+        async def fake_apply_paid_purchase(
+            account_obj: Account,
+            *,
+            source,
+            target_expires_at: datetime,
+        ):
+            self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
@@ -891,8 +909,8 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "app.services.payments.provision_paid_subscription",
-            side_effect=fake_provision_paid_subscription,
+            "app.services.payments.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
         ):
             response = await self.client.post(
                 "/api/v1/webhooks/payments/telegram-stars",

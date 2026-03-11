@@ -36,10 +36,11 @@ from app.domain.payments import (
 )
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
-from app.services.subscriptions import (
+from app.services.purchases import (
+    PurchaseSource,
     RemnawaveSyncError,
+    apply_paid_purchase,
     compute_paid_plan_window,
-    provision_paid_subscription,
 )
 
 
@@ -973,6 +974,9 @@ async def _stage_plan_purchase_grant(
         SubscriptionGrant(
             account_id=payment.account_id,
             payment_id=payment.id,
+            purchase_source=PurchaseSource.DIRECT_PAYMENT.value,
+            reference_type="payment",
+            reference_id=str(payment.id),
             plan_code=payment.plan_code,
             amount=payment.amount,
             currency=payment.currency,
@@ -1034,7 +1038,11 @@ async def _finalize_direct_plan_purchase(
 
     account = await _load_account_for_update(session, account_id=payment.account_id)
     try:
-        await provision_paid_subscription(account, target_expires_at=grant.target_expires_at)
+        await apply_paid_purchase(
+            account,
+            source=PurchaseSource.DIRECT_PAYMENT,
+            target_expires_at=grant.target_expires_at,
+        )
     except RemnawaveSyncError as exc:
         await session.rollback()
         raise PaymentGatewayError(str(exc)) from exc

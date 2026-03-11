@@ -12,14 +12,23 @@ class SubscriptionGrant(Base):
     __table_args__ = (
         Index("ix_subscription_grants_account_created", "account_id", "created_at"),
         Index("ix_subscription_grants_payment_id", "payment_id", unique=True),
+        Index(
+            "ix_subscription_grants_source_reference",
+            "purchase_source",
+            "reference_type",
+            "reference_id",
+            unique=True,
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
-    payment_id: Mapped[int] = mapped_column(
+    payment_id: Mapped[int | None] = mapped_column(
         ForeignKey("payments.id", ondelete="RESTRICT"),
-        nullable=False,
     )
+    purchase_source: Mapped[str] = mapped_column(String(32), nullable=False, default="direct_payment")
+    reference_type: Mapped[str | None] = mapped_column(String(64))
+    reference_id: Mapped[str | None] = mapped_column(String(128))
     plan_code: Mapped[str] = mapped_column(String(64), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")

@@ -9,12 +9,13 @@ import uuid
 from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.dependencies import get_current_account
 from app.core.config import settings
 from app.db.base import Base
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, LedgerEntry, LedgerEntryType, SubscriptionGrant
 from app.db.session import get_session
 from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
 from app.main import create_app
@@ -189,6 +190,24 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             return await session.get(Account, account_id)
 
+    async def _get_ledger_entries(self, account_id: uuid.UUID) -> list[LedgerEntry]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(LedgerEntry)
+                .where(LedgerEntry.account_id == account_id)
+                .order_by(LedgerEntry.id.asc())
+            )
+            return list(result.scalars().all())
+
+    async def _get_subscription_grants(self, account_id: uuid.UUID) -> list[SubscriptionGrant]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(SubscriptionGrant)
+                .where(SubscriptionGrant.account_id == account_id)
+                .order_by(SubscriptionGrant.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def test_activate_trial_creates_remote_user_and_marks_snapshot(self) -> None:
         account = await self._create_account(email="trial@example.com")
         self._current_account_id = account.id
@@ -307,6 +326,156 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             activation_response.json()["detail"],
             "remnawave_unavailable",
         )
+
+    async def test_wallet_plan_purchase_debits_balance_and_applies_subscription(self) -> None:
+        account = await self._create_account(email="wallet@example.com", balance=1000)
+        self._current_account_id = account.id
+
+        response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-plan-1m"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(body["status"], "ACTIVE")
+        self.assertFalse(body["is_trial"])
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].entry_type, LedgerEntryType.SUBSCRIPTION_DEBIT)
+        self.assertEqual(entries[0].amount, -299)
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertEqual(grants[0].purchase_source, "wallet")
+        self.assertEqual(grants[0].reference_type, "wallet_purchase")
+        self.assertEqual(grants[0].reference_id, "wallet-plan-1m")
+        self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_wallet_plan_purchase_same_idempotency_key_is_safe_to_repeat(self) -> None:
+        account = await self._create_account(email="wallet-repeat@example.com", balance=1000)
+        self._current_account_id = account.id
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-repeat"},
+        )
+        self.assertEqual(first_response.status_code, 200)
+        first_expires_at = first_response.json()["expires_at"]
+
+        second_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-repeat"},
+        )
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.json()["expires_at"], first_expires_at)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 1)
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+
+    async def test_wallet_plan_purchase_rejects_insufficient_funds(self) -> None:
+        account = await self._create_account(email="wallet-low@example.com", balance=100)
+        self._current_account_id = account.id
+
+        response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-low"},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "insufficient funds")
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(entries, [])
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(grants, [])
+
+    async def test_wallet_plan_purchase_can_resume_after_remnawave_failure(self) -> None:
+        account = await self._create_account(email="wallet-resume@example.com", balance=1000)
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: UnavailableRemnawaveGateway()
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-resume"},
+        )
+        self.assertEqual(first_response.status_code, 502)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertIsNone(stored_account.subscription_status)
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 1)
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNone(grants[0].applied_at)
+
+        subscriptions_service.get_remnawave_gateway = lambda: self._fake_gateway
+        second_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-resume"},
+        )
+        self.assertEqual(second_response.status_code, 200)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 1)
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_wallet_plan_repeat_purchase_extends_active_subscription(self) -> None:
+        account = await self._create_account(email="wallet-extend@example.com", balance=2000)
+        self._current_account_id = account.id
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-extend-1"},
+        )
+        self.assertEqual(first_response.status_code, 200)
+        first_expires_at = datetime.fromisoformat(
+            first_response.json()["expires_at"].replace("Z", "+00:00")
+        )
+
+        second_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-extend-2"},
+        )
+        self.assertEqual(second_response.status_code, 200)
+        second_expires_at = datetime.fromisoformat(
+            second_response.json()["expires_at"].replace("Z", "+00:00")
+        )
+
+        self.assertGreater(second_expires_at, first_expires_at + timedelta(days=29))
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 1402)
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 2)
 
     async def test_sync_subscription_updates_local_snapshot(self) -> None:
         account = await self._create_account(

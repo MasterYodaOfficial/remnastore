@@ -200,14 +200,75 @@
 - frontend checkout flow теперь использует реальные endpoints `GET /api/v1/payments/plans`, `POST /api/v1/payments/yookassa/topup`, `POST /api/v1/payments/yookassa/plans/{plan_code}` и `POST /api/v1/payments/telegram-stars/plans/{plan_code}` вместо заглушек
 
 ## Фаза 3. Единый purchase flow и Remnawave
-Статус: `Не начато`
+Статус: `В работе`
 
-- [ ] Спроектировать единый `purchase service`
-- [ ] Объединить trial, wallet purchase и direct purchase в один flow
-- [ ] Определить правила продления действующей подписки
-- [ ] Реализовать rollback-safe обработку ошибок покупки
+- [x] Спроектировать единый `purchase service`
+- [x] Объединить trial, wallet purchase и direct purchase в один flow
+- [x] Определить правила продления действующей подписки
+- [x] Реализовать rollback-safe обработку ошибок покупки
 - [ ] Проверить стабильную выдачу `subscription_url`
-- [ ] Проверить сценарии продления и повторной покупки
+- [x] Проверить сценарии продления и повторной покупки
+
+Утверждено 2026-03-11:
+- вводим один доменный `purchase service` как единственную точку финализации подписки независимо от источника покупки
+- `purchase service` не создает платежи и не валидирует provider callbacks; он работает только с уже подтвержденным основанием покупки
+- источники покупки в Фазе 3:
+  - `trial`
+  - `wallet`
+  - `direct_payment`
+- `wallet_topup` остается отдельным billing flow и не идет через `purchase service`, потому что не выдает подписку сам по себе
+- trial, покупка с баланса и прямая покупка обязаны сходиться в один путь расчета `target_expires_at`, провижининга в Remnawave и обновления локального snapshot
+
+Целевой контракт `purchase service`:
+- вход:
+  - `account_id`
+  - `purchase_source`
+  - `plan_code` или `duration_days`
+  - `reference_type`
+  - `reference_id`
+  - `idempotency_key`
+- выход:
+  - обновленный локальный subscription snapshot
+  - рабочий `subscription_url`
+- `target_expires_at`
+- признак, был ли применен денежный side effect (`ledger debit`)
+
+Инварианты Фазы 3:
+- ни один flow выдачи платной подписки не должен обновлять `subscription_expires_at` и `subscription_url` мимо `purchase service`
+- `trial` не трогает `ledger`, но обязан проходить тот же путь расчета окна действия и sync локального snapshot
+- `wallet purchase` обязан сначала идемпотентно списать деньги через `ledger`, затем вызвать тот же путь выдачи подписки
+- `direct purchase` обязан приходить в `purchase service` только после подтвержденного платежа и не иметь второго параллельного write path в Remnawave
+- если провижининг в Remnawave не завершился, billing state не должен остаться в полупримененном состоянии без возможности безопасного повтора
+- все сценарии продления должны использовать одну формулу расчета целевого окна подписки
+
+Правила продления:
+- если у пользователя есть активная подписка и `subscription_expires_at > now`, продление считается от `subscription_expires_at`
+- если подписка истекла или отсутствует, продление считается от `now`
+- целевая формула: `target_expires_at = max(now, current_expires_at) + duration`
+- повторная покупка того же тарифа до истечения должна продлевать существующее окно, а не обнулять его
+- trial нельзя запускать после уже использованного trial или после наличия платной истории
+
+Точки объединения текущих flow:
+- текущий `activate_trial` в `apps/api/app/services/subscriptions.py` должен стать thin-wrapper над `purchase service`
+- финализация `direct_plan_purchase` из `apps/api/app/services/payments.py` должна перестать напрямую вызывать paid provisioning и перейти на `purchase service`
+- новый `wallet purchase` должен строиться не как отдельная ветка подписки, а как `ledger debit + purchase service`
+
+Ожидаемый итог Фазы 3:
+- один code path для `trial`, `wallet purchase`, `direct purchase`
+- единое правило продления и повторной покупки
+- стабильная выдача `subscription_url` после каждого успешного purchase flow
+- возможность безопасно ретраить незавершенную покупку без двойного продления и двойного списания
+
+Сделано 2026-03-11:
+- добавлен единый backend-сервис `apps/api/app/services/purchases.py`
+- `activate_trial` в `apps/api/app/services/subscriptions.py` больше не провижинит подписку напрямую и вызывает `purchase service`
+- финализация `direct_plan_purchase` в `apps/api/app/services/payments.py` больше не вызывает paid provisioning напрямую и тоже идет через `purchase service`
+- правило продления `max(now, current_expires_at) + duration` теперь живет в одном месте и покрыто тестами `tests.test_purchases`
+- `wallet purchase` теперь идет через staged `subscription_grant` + idempotent `ledger debit` + тот же `purchase service`
+- добавлен endpoint `POST /api/v1/subscriptions/wallet/plans/{plan_code}` для покупки тарифа с баланса
+- повтор с тем же `idempotency_key` больше не списывает баланс и не продлевает подписку второй раз
+- если Remnawave недоступен после списания, повтор с тем же `idempotency_key` безопасно завершает незакрытую покупку
+- сценарии повторной покупки и продления теперь покрыты тестами `tests.test_subscriptions` и `tests.test_payments`
 
 ## Фаза 4. Рефералка и выводы
 Статус: `Не начато`

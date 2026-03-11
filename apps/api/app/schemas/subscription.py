@@ -4,6 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel
+from pydantic import Field
 
 from app.db.models import Account
 
@@ -15,6 +16,10 @@ class TrialEligibilityResponse(BaseModel):
     subscription_status: Optional[str] = None
     subscription_expires_at: Optional[datetime] = None
     remnawave_user_uuid: Optional[UUID] = None
+
+
+class WalletPlanPurchaseRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1)
 
 
 class SubscriptionStateResponse(BaseModel):

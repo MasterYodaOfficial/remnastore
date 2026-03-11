@@ -32,8 +32,16 @@ export function PlansPage({
   isTelegramWebApp = false,
 }: PlansPageProps) {
   const getPlanButtonLabel = (plan: Plan): string => {
+    const canPayFromBalance = balance >= plan.price;
+
     if (!isTelegramWebApp) {
-      return 'Оплатить тариф';
+      return canPayFromBalance ? 'Выбрать способ оплаты' : 'Оплатить тариф';
+    }
+    if (canPayFromBalance && plan.priceStars) {
+      return 'Выбрать способ оплаты';
+    }
+    if (canPayFromBalance) {
+      return 'Выбрать способ оплаты';
     }
     if (plan.priceStars) {
       return 'Выбрать способ оплаты';

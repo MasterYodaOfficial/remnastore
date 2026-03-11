@@ -32,6 +32,7 @@ const BACKEND_API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000
   /\/+$/,
   ""
 );
+const TELEGRAM_BOT_URL = (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim().replace(/\/+$/, '');
 const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
 const TELEGRAM_AUTH_STORAGE_KEY = 'remnastore.telegram_auth';
 const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';
@@ -394,6 +395,8 @@ function getPaymentErrorMessage(detail: string): string {
       return 'Telegram Stars пока не настроены.';
     case 'API_TOKEN is required for Telegram Stars callbacks':
       return 'Внутренний callback для Telegram Stars пока не настроен.';
+    case 'insufficient funds':
+      return 'На балансе недостаточно средств для покупки тарифа.';
     default:
       if (detail.startsWith('Telegram Stars price is not configured for plan ')) {
         return 'Для этого тарифа пока не настроена цена в Telegram Stars.';
@@ -422,9 +425,13 @@ function createClientIdempotencyKey(prefix: string): string {
   return `${prefix}-${randomPart}`;
 }
 
-function getPaymentReturnUrl(): string {
+function getPaymentReturnUrl(options: { preferTelegramBot?: boolean } = {}): string {
   if (typeof window === 'undefined') {
     return '';
+  }
+
+  if (options.preferTelegramBot && TELEGRAM_BOT_URL) {
+    return TELEGRAM_BOT_URL;
   }
 
   const { origin, pathname } = window.location;
@@ -442,12 +449,29 @@ function buildYooKassaMethod(isTelegramWebApp: boolean): PaymentMethodOption {
   };
 }
 
+function buildWalletMethod(plan: Plan): PaymentMethodOption {
+  return {
+    provider: 'wallet',
+    label: 'С баланса',
+    description: 'Мгновенная активация без внешнего перехода.',
+    note: `Списание ${formatRubles(plan.price)} ₽ с внутреннего баланса.`,
+  };
+}
+
 function getAvailableTopUpPaymentMethods(isTelegramWebApp: boolean): PaymentMethodOption[] {
   return [buildYooKassaMethod(isTelegramWebApp)];
 }
 
-function getAvailablePlanPaymentMethods(plan: Plan, isTelegramWebApp: boolean): PaymentMethodOption[] {
+function getAvailablePlanPaymentMethods(
+  plan: Plan,
+  isTelegramWebApp: boolean,
+  balance: number
+): PaymentMethodOption[] {
   const methods: PaymentMethodOption[] = [];
+
+  if (balance >= plan.price) {
+    methods.push(buildWalletMethod(plan));
+  }
 
   if (isTelegramWebApp && plan.priceStars) {
     methods.push({
@@ -1190,10 +1214,7 @@ export default function App() {
       }
     }
 
-    const openedWindow = window.open(confirmationUrl, '_blank', 'noopener,noreferrer');
-    if (!openedWindow) {
-      window.location.href = confirmationUrl;
-    }
+    window.location.assign(confirmationUrl);
   };
 
   useEffect(() => {
@@ -1233,7 +1254,7 @@ export default function App() {
         },
         body: JSON.stringify({
           amount_rub: amount,
-          success_url: getPaymentReturnUrl(),
+          success_url: getPaymentReturnUrl({ preferTelegramBot: isTelegramWebApp }),
           description: `Пополнение баланса на ${formatRubles(amount)} ₽`,
           idempotency_key: createClientIdempotencyKey('topup'),
         }),
@@ -1325,6 +1346,39 @@ export default function App() {
     setCheckoutPlanId(planId);
 
     try {
+      if (provider === 'wallet') {
+        const response = await fetch(
+          `${BACKEND_API}/api/v1/subscriptions/wallet/plans/${encodeURIComponent(planId)}`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              idempotency_key: createClientIdempotencyKey(`wallet-plan-${planId}`),
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          const detail =
+            errorData && typeof errorData.detail === 'string'
+              ? getPaymentErrorMessage(errorData.detail)
+              : 'Не удалось купить тариф с баланса';
+          throw new Error(detail);
+        }
+
+        const reloaded = await loadUserData(accessToken, user?.avatar);
+        if (!reloaded) {
+          throw new Error('Тариф активирован, но не удалось обновить профиль');
+        }
+
+        toast.success('Тариф активирован с баланса');
+        return;
+      }
+
       if (provider === 'telegram_stars' && !selectedPlan.priceStars) {
         throw new Error('Для этого тарифа пока не настроена цена в Telegram Stars.');
       }
@@ -1342,7 +1396,9 @@ export default function App() {
         body: JSON.stringify({
           description: selectedPlan ? `Оплата тарифа ${selectedPlan.name}` : `Оплата тарифа ${planId}`,
           idempotency_key: createClientIdempotencyKey(`plan-${planId}`),
-          ...(useTelegramStars ? {} : { success_url: getPaymentReturnUrl() }),
+          ...(useTelegramStars
+            ? {}
+            : { success_url: getPaymentReturnUrl({ preferTelegramBot: isTelegramWebApp }) }),
         }),
       });
 
@@ -1382,7 +1438,7 @@ export default function App() {
       return;
     }
 
-    const methods = getAvailablePlanPaymentMethods(selectedPlan, isTelegramWebApp);
+    const methods = getAvailablePlanPaymentMethods(selectedPlan, isTelegramWebApp, user?.balance ?? 0);
 
     if (!methods.length) {
       toast.error('Для этого тарифа пока не настроен ни один способ оплаты.');

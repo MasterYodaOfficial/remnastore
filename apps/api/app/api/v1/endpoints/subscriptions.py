@@ -4,13 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_account
 from app.db.models import Account
 from app.db.session import get_session
-from app.schemas.subscription import SubscriptionStateResponse, TrialEligibilityResponse
+from app.schemas.subscription import (
+    SubscriptionStateResponse,
+    TrialEligibilityResponse,
+    WalletPlanPurchaseRequest,
+)
+from app.services.ledger import InsufficientFundsError
+from app.services.plans import SubscriptionPlanError
+from app.services.purchases import PurchaseConflictError
 from app.services.subscriptions import (
     RemnawaveSyncError,
     TrialEligibilityError,
     activate_trial,
     get_current_subscription,
     get_trial_eligibility,
+    purchase_subscription_with_wallet,
     sync_current_subscription,
 )
 
@@ -55,6 +63,42 @@ async def sync_subscription(
 ) -> SubscriptionStateResponse:
     try:
         return await sync_current_subscription(session, account=current_account)
+    except RemnawaveSyncError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/wallet/plans/{plan_code}", response_model=SubscriptionStateResponse)
+async def purchase_with_wallet(
+    plan_code: str,
+    payload: WalletPlanPurchaseRequest,
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
+) -> SubscriptionStateResponse:
+    try:
+        return await purchase_subscription_with_wallet(
+            session,
+            account=current_account,
+            plan_code=plan_code,
+            idempotency_key=payload.idempotency_key,
+        )
+    except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except InsufficientFundsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except PurchaseConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except RemnawaveSyncError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
