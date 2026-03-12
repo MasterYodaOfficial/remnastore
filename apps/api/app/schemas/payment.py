@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 
@@ -60,6 +60,31 @@ class PaymentStatusResponse(BaseModel):
     confirmation_url: str | None = None
     expires_at: datetime | None = None
     finalized_at: datetime | None = None
+
+
+class PaymentListItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider: PaymentProvider
+    flow_type: PaymentFlowType
+    status: PaymentStatus
+    amount: int
+    currency: str
+    provider_payment_id: str
+    plan_code: str | None = None
+    description: str | None = None
+    confirmation_url: str | None = None
+    expires_at: datetime | None = None
+    finalized_at: datetime | None = None
+    created_at: datetime
+
+
+class PaymentListResponse(BaseModel):
+    items: list[PaymentListItemResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class TelegramStarsPreCheckoutRequest(BaseModel):

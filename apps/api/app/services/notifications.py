@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import logging
 import uuid
 
 import httpx
@@ -22,6 +23,8 @@ from app.db.models import (
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.core.config import settings
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationServiceError(Exception):
@@ -276,12 +279,22 @@ async def create_notification(
     dedupe_key: str | None = None,
     channels: tuple[NotificationChannel, ...] = (NotificationChannel.IN_APP,),
     deliver_to_telegram: bool = True,
-) -> Notification:
+) -> Notification | None:
     normalized_title = _normalize_required_text(title, field_name="title")
     normalized_body = _normalize_required_text(body, field_name="body")
     normalized_action_label = _normalize_optional_text(action_label)
     normalized_action_url = _normalize_optional_text(action_url)
     normalized_dedupe_key = _normalize_optional_text(dedupe_key)
+
+    account_exists = await session.scalar(select(Account.id).where(Account.id == account_id))
+    if account_exists is None:
+        logger.warning(
+            "Skipping notification for missing account_id=%s type=%s dedupe_key=%s",
+            account_id,
+            type.value,
+            normalized_dedupe_key,
+        )
+        return None
 
     if normalized_dedupe_key:
         result = await session.execute(

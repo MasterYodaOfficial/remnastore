@@ -93,9 +93,6 @@ class Settings(BaseSettings):
     account_response_cache_ttl_seconds: int = Field(
         default=60, validation_alias="ACCOUNT_RESPONSE_CACHE_TTL_SECONDS"
     )
-    subscription_access_cache_ttl_seconds: int = Field(
-        default=60, validation_alias="SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS"
-    )
 
     # Telegram
     telegram_bot_token: str = Field(

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   AlertCircle,
+  ArrowLeft,
   Bell,
   CheckCheck,
   ChevronRight,
@@ -42,6 +43,7 @@ interface NotificationsPageProps {
   isLoadingMore?: boolean;
   isUpdatingReadState?: boolean;
   embedded?: boolean;
+  onBack?: () => void;
   onMarkRead: (notificationId: number) => void;
   onMarkAllRead: () => void;
   onLoadMore?: () => void;
@@ -117,6 +119,7 @@ export function NotificationsPage({
   isLoadingMore = false,
   isUpdatingReadState = false,
   embedded = false,
+  onBack,
   onMarkRead,
   onMarkAllRead,
   onLoadMore,
@@ -127,17 +130,28 @@ export function NotificationsPage({
   return (
     <div className={embedded ? 'space-y-4' : 'px-4 pb-20 pt-4 space-y-4'}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className={`${embedded ? 'text-xl' : 'text-2xl'} font-bold text-[var(--tg-theme-text-color,#000000)]`}>
-            Уведомления
-          </h1>
-          <p className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-            {unreadCount > 0
-              ? `${unreadCount} непрочитанных из ${total}`
-              : total > 0
-                ? `Все уведомления прочитаны (${total})`
-                : 'Здесь будут события по подписке, оплатам и начислениям'}
-          </p>
+        <div className="flex items-start gap-3">
+          {!embedded && onBack ? (
+            <button
+              onClick={onBack}
+              className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+              aria-label="Назад"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+          ) : null}
+          <div>
+            <h1 className={`${embedded ? 'text-xl' : 'text-2xl'} font-bold text-[var(--tg-theme-text-color,#000000)]`}>
+              Уведомления
+            </h1>
+            <p className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
+              {unreadCount > 0
+                ? `${unreadCount} непрочитанных из ${total}`
+                : total > 0
+                  ? `Все уведомления прочитаны (${total})`
+                  : 'Здесь будут события по подписке, оплатам и начислениям'}
+            </p>
+          </div>
         </div>
         <button
           onClick={onMarkAllRead}

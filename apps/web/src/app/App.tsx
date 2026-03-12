@@ -20,11 +20,11 @@ import { PaymentMethodSheet, type PaymentMethodOption, type PaymentMethodProvide
 import { TopUpModal } from './components/TopUpModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { NotificationsPage, type NotificationItemView } from './components/NotificationsPage';
+import { PendingPaymentsPage, type PendingPaymentView } from './components/PendingPaymentsPage';
 import { FaqPage } from './components/FaqPage';
 import { LegalDocumentPage } from './components/LegalDocumentPage';
-import { SubscriptionAccessPage } from './components/SubscriptionAccessPage';
+import { BalanceHistoryPage, type BalanceHistoryItemView } from './components/BalanceHistoryPage';
 import { formatRubles } from '../lib/currency';
-import { type SubscriptionAccessSnapshot } from './lib/subscription-access';
 import { toast, Toaster } from 'sonner';
 import {
   buildBrowserReferralLink,
@@ -76,13 +76,15 @@ type AuthView = 'default' | 'recovery' | 'recovery-expired';
 type AppTab =
   | 'home'
   | 'plans'
-  | 'access'
   | 'notifications'
+  | 'payments'
+  | 'balance-history'
   | 'referral'
   | 'settings'
   | 'faq'
   | 'privacy'
   | 'terms';
+type PrimaryAppTab = 'home' | 'plans' | 'referral' | 'settings';
 
 const APP_THEME_TOKENS = {
   light: {
@@ -218,7 +220,48 @@ interface BackendPaymentStatusResponse {
   finalized_at?: string | null;
 }
 
-type BackendSubscriptionAccess = SubscriptionAccessSnapshot;
+interface BackendPaymentListItem {
+  id: number;
+  provider: 'yookassa' | 'telegram_stars';
+  flow_type: 'wallet_topup' | 'direct_plan_purchase';
+  status: 'created' | 'pending' | 'requires_action' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
+  amount: number;
+  currency: string;
+  provider_payment_id: string;
+  plan_code?: string | null;
+  description?: string | null;
+  confirmation_url?: string | null;
+  expires_at?: string | null;
+  finalized_at?: string | null;
+  created_at: string;
+}
+
+interface BackendPaymentListResponse {
+  items: BackendPaymentListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface BackendLedgerEntry {
+  id: number;
+  entry_type: string;
+  amount: number;
+  currency: string;
+  balance_before: number;
+  balance_after: number;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  comment?: string | null;
+  created_at: string;
+}
+
+interface BackendLedgerHistoryResponse {
+  items: BackendLedgerEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
 
 interface BackendReferralSummaryItem {
   referred_account_id: string;
@@ -551,6 +594,96 @@ function mapBackendNotificationToView(
   };
 }
 
+function resolvePlanName(planCode: string | null | undefined, plans: Plan[]): string | null {
+  if (!planCode) {
+    return null;
+  }
+
+  return plans.find((plan) => plan.id === planCode)?.name ?? null;
+}
+
+function mapBackendPaymentItemToView(
+  payment: BackendPaymentListItem,
+  plans: Plan[]
+): PendingPaymentView {
+  return {
+    provider: payment.provider,
+    kind: payment.flow_type === 'wallet_topup' ? 'topup' : 'plan',
+    amount: payment.amount,
+    currency: payment.currency,
+    providerPaymentId: payment.provider_payment_id,
+    confirmationUrl: payment.confirmation_url ?? null,
+    status: payment.status as PendingPaymentView['status'],
+    expiresAt: payment.expires_at ?? null,
+    createdAt: payment.created_at,
+    planCode: payment.plan_code ?? null,
+    planName: resolvePlanName(payment.plan_code, plans),
+    description: payment.description ?? null,
+  };
+}
+
+function mapStoredAttemptToPendingPaymentView(
+  attempt: StoredPaymentAttempt,
+  plans: Plan[]
+): PendingPaymentView {
+  return {
+    provider: attempt.provider,
+    kind: attempt.kind,
+    amount: attempt.amount,
+    currency: attempt.currency,
+    providerPaymentId: attempt.providerPaymentId,
+    confirmationUrl: attempt.confirmationUrl,
+    status: attempt.status as PendingPaymentView['status'],
+    expiresAt: attempt.expiresAt,
+    createdAt: attempt.createdAt,
+    planCode: attempt.planId ?? null,
+    planName: attempt.planName ?? resolvePlanName(attempt.planId, plans),
+    description:
+      attempt.kind === 'topup'
+        ? `Пополнение на ${formatRubles(attempt.amount)} ₽`
+        : resolvePlanName(attempt.planId, plans),
+  };
+}
+
+function mergePendingPayments(
+  backendPayments: PendingPaymentView[],
+  storedAttempts: StoredPaymentAttempt[],
+  plans: Plan[]
+): PendingPaymentView[] {
+  const merged = new Map<string, PendingPaymentView>();
+
+  for (const payment of backendPayments) {
+    merged.set(`${payment.provider}:${payment.providerPaymentId}`, payment);
+  }
+
+  for (const attempt of storedAttempts) {
+    const localView = mapStoredAttemptToPendingPaymentView(attempt, plans);
+    const key = `${localView.provider}:${localView.providerPaymentId}`;
+    const existing = merged.get(key);
+    merged.set(key, {
+      ...(existing ?? localView),
+      ...localView,
+      planName: localView.planName || existing?.planName || null,
+      description: localView.description || existing?.description || null,
+    });
+  }
+
+  return Array.from(merged.values()).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function mapBackendLedgerEntryToView(entry: BackendLedgerEntry): BalanceHistoryItemView {
+  return {
+    id: entry.id,
+    entryType: entry.entry_type,
+    amount: entry.amount,
+    balanceAfter: entry.balance_after,
+    comment: entry.comment ?? null,
+    referenceType: entry.reference_type ?? null,
+    referenceId: entry.reference_id ?? null,
+    createdAt: entry.created_at,
+  };
+}
+
 function createClientIdempotencyKey(prefix: string): string {
   const randomPart =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -717,8 +850,12 @@ export default function App() {
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [isLoadingMoreNotifications, setIsLoadingMoreNotifications] = useState(false);
   const [isUpdatingNotificationReadState, setIsUpdatingNotificationReadState] = useState(false);
-  const [subscriptionAccess, setSubscriptionAccess] = useState<BackendSubscriptionAccess | null>(null);
-  const [isLoadingSubscriptionAccess, setIsLoadingSubscriptionAccess] = useState(false);
+  const [activePayments, setActivePayments] = useState<PendingPaymentView[]>([]);
+  const [isLoadingActivePayments, setIsLoadingActivePayments] = useState(false);
+  const [ledgerEntries, setLedgerEntries] = useState<BalanceHistoryItemView[]>([]);
+  const [ledgerEntriesTotal, setLedgerEntriesTotal] = useState(0);
+  const [isLoadingLedgerEntries, setIsLoadingLedgerEntries] = useState(false);
+  const [isLoadingMoreLedgerEntries, setIsLoadingMoreLedgerEntries] = useState(false);
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false);
   const [isDesktopBrowser, setIsDesktopBrowser] = useState(
     () => typeof window !== 'undefined' && window.innerWidth >= 1200
@@ -732,6 +869,9 @@ export default function App() {
   const pendingReferralClaimRef = useRef(false);
   const attemptedPlansTokenRef = useRef<string | null>(null);
   const attemptedNotificationsTokenRef = useRef<string | null>(null);
+  const attemptedActivePaymentsTokenRef = useRef<string | null>(null);
+  const attemptedLedgerEntriesTokenRef = useRef<string | null>(null);
+  const lastPrimaryTabRef = useRef<PrimaryAppTab>('home');
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
 
@@ -766,20 +906,6 @@ export default function App() {
     }
 
     return await response.json() as BackendPlan[];
-  };
-
-  const loadSubscriptionAccessSnapshot = async (token: string) => {
-    const response = await fetch(`${BACKEND_API}/api/v1/subscriptions/access`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to load subscription access from backend');
-    }
-
-    return (await response.json()) as BackendSubscriptionAccess;
   };
 
   const loadNotificationsSnapshot = async (
@@ -818,6 +944,49 @@ export default function App() {
     }
 
     return (await response.json()) as BackendNotificationUnreadCountResponse;
+  };
+
+  const loadActivePaymentsSnapshot = async (
+    token: string,
+    options: { limit?: number; offset?: number } = {}
+  ) => {
+    const params = new URLSearchParams();
+    params.set('active_only', 'true');
+    params.set('limit', String(options.limit ?? 20));
+    params.set('offset', String(options.offset ?? 0));
+
+    const response = await fetch(`${BACKEND_API}/api/v1/payments?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load active payments from backend');
+    }
+
+    return (await response.json()) as BackendPaymentListResponse;
+  };
+
+  const loadLedgerEntriesSnapshot = async (
+    token: string,
+    options: { limit?: number; offset?: number } = {}
+  ) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(options.limit ?? 20));
+    params.set('offset', String(options.offset ?? 0));
+
+    const response = await fetch(`${BACKEND_API}/api/v1/ledger/entries?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load ledger history from backend');
+    }
+
+    return (await response.json()) as BackendLedgerHistoryResponse;
   };
 
   const loadReferralSummarySnapshot = async (token: string) => {
@@ -1042,6 +1211,9 @@ export default function App() {
     if (user?.id === paymentIntent.account_id) {
       setVisibleStoredPaymentAttempts(paymentIntent.account_id);
     }
+    if (accessToken) {
+      void loadActivePayments(accessToken, { silent: true });
+    }
   };
 
   const describeClosedPaymentAttempt = (
@@ -1080,6 +1252,9 @@ export default function App() {
       });
     }
     setVisibleStoredPaymentAttempts(attempt.accountId);
+    if (accessToken) {
+      void loadActivePayments(accessToken, { silent: true });
+    }
   };
 
   const isPasswordRecoveryRequested = () => {
@@ -1251,6 +1426,12 @@ export default function App() {
   }, [isTelegramWebApp]);
 
   useEffect(() => {
+    if (activeTab === 'home' || activeTab === 'plans' || activeTab === 'referral' || activeTab === 'settings') {
+      lastPrimaryTabRef.current = activeTab;
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -1401,8 +1582,13 @@ export default function App() {
         setNotifications([]);
         setNotificationsTotal(0);
         setNotificationsUnreadCount(0);
+        setActivePayments([]);
+        setLedgerEntries([]);
+        setLedgerEntriesTotal(0);
         attemptedPlansTokenRef.current = null;
         attemptedNotificationsTokenRef.current = null;
+        attemptedActivePaymentsTokenRef.current = null;
+        attemptedLedgerEntriesTokenRef.current = null;
         setAccessToken(null);
         console.error('Telegram auth error:', err);
         toast.error(
@@ -1418,8 +1604,13 @@ export default function App() {
       setNotifications([]);
       setNotificationsTotal(0);
       setNotificationsUnreadCount(0);
+      setActivePayments([]);
+      setLedgerEntries([]);
+      setLedgerEntriesTotal(0);
       attemptedPlansTokenRef.current = null;
       attemptedNotificationsTokenRef.current = null;
+      attemptedActivePaymentsTokenRef.current = null;
+      attemptedLedgerEntriesTokenRef.current = null;
       setAccessToken(null);
       console.error('Telegram auth error:', err);
     } finally {
@@ -1597,9 +1788,14 @@ export default function App() {
     setNotifications([]);
     setNotificationsTotal(0);
     setNotificationsUnreadCount(0);
+    setActivePayments([]);
+    setLedgerEntries([]);
+    setLedgerEntriesTotal(0);
     setCheckoutAttempts([]);
     attemptedPlansTokenRef.current = null;
     attemptedNotificationsTokenRef.current = null;
+    attemptedActivePaymentsTokenRef.current = null;
+    attemptedLedgerEntriesTokenRef.current = null;
     pendingTelegramLinkRefreshRef.current = false;
     pendingPaymentRefreshRef.current = false;
     pendingReferralClaimRef.current = false;
@@ -1659,10 +1855,10 @@ export default function App() {
         )
       );
       setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
-      setSubscriptionAccess(null);
       setVisibleStoredPaymentAttempts(accountData.id);
       void reconcileStoredPaymentAttempts(token, accountData.id);
       void loadNotificationsUnreadCount(token);
+      void loadActivePayments(token, { silent: true });
 
       return true;
     } catch (err) {
@@ -1700,28 +1896,6 @@ export default function App() {
       return false;
     } finally {
       setIsLoadingReferralSummary(false);
-    }
-  };
-
-  const loadSubscriptionAccess = async (token: string, options: { silent?: boolean } = {}) => {
-    if (!options.silent) {
-      setIsLoadingSubscriptionAccess(true);
-    }
-
-    try {
-      const snapshot = await loadSubscriptionAccessSnapshot(token);
-      setSubscriptionAccess(snapshot);
-      return true;
-    } catch (err) {
-      console.error('Error loading subscription access:', err);
-      if (!options.silent) {
-        toast.error('Не удалось загрузить конфиги подписки');
-      }
-      return false;
-    } finally {
-      if (!options.silent) {
-        setIsLoadingSubscriptionAccess(false);
-      }
     }
   };
 
@@ -1792,6 +1966,84 @@ export default function App() {
     }
   };
 
+  const loadActivePayments = async (
+    token: string,
+    options: { silent?: boolean } = {}
+  ) => {
+    attemptedActivePaymentsTokenRef.current = token;
+    if (!options.silent) {
+      setIsLoadingActivePayments(true);
+    }
+
+    try {
+      const snapshot = await loadActivePaymentsSnapshot(token);
+      setActivePayments(snapshot.items.map((item) => mapBackendPaymentItemToView(item, plans)));
+      return true;
+    } catch (err) {
+      console.error('Error loading active payments:', err);
+      if (!options.silent) {
+        setActivePayments([]);
+      }
+      return false;
+    } finally {
+      if (!options.silent) {
+        setIsLoadingActivePayments(false);
+      }
+    }
+  };
+
+  const loadLedgerEntries = async (
+    token: string,
+    options: { offset?: number; append?: boolean; silent?: boolean } = {}
+  ) => {
+    const offset = options.offset ?? 0;
+    const append = options.append ?? false;
+    const silent = options.silent ?? false;
+
+    attemptedLedgerEntriesTokenRef.current = token;
+    if (append) {
+      setIsLoadingMoreLedgerEntries(true);
+    } else if (!silent) {
+      setIsLoadingLedgerEntries(true);
+    }
+
+    try {
+      const snapshot = await loadLedgerEntriesSnapshot(token, { limit: 20, offset });
+      const mappedItems = snapshot.items.map(mapBackendLedgerEntryToView);
+      setLedgerEntries((current) => {
+        if (!append) {
+          return mappedItems;
+        }
+
+        const merged = [...current];
+        for (const item of mappedItems) {
+          const index = merged.findIndex((existing) => existing.id === item.id);
+          if (index >= 0) {
+            merged[index] = item;
+          } else {
+            merged.push(item);
+          }
+        }
+        return merged;
+      });
+      setLedgerEntriesTotal(snapshot.total);
+      return true;
+    } catch (err) {
+      console.error('Error loading ledger entries:', err);
+      if (!append) {
+        setLedgerEntries([]);
+        setLedgerEntriesTotal(0);
+      }
+      return false;
+    } finally {
+      if (append) {
+        setIsLoadingMoreLedgerEntries(false);
+      } else if (!silent) {
+        setIsLoadingLedgerEntries(false);
+      }
+    }
+  };
+
   const handleOpenNotificationsTab = () => {
     setActiveTab('notifications');
     if (accessToken) {
@@ -1799,10 +2051,35 @@ export default function App() {
     }
   };
 
-  const handleOpenSubscriptionAccess = () => {
-    setActiveTab('access');
+  const handleOpenPendingPayments = () => {
+    setActiveTab('payments');
     if (accessToken) {
-      void loadSubscriptionAccess(accessToken);
+      void loadActivePayments(accessToken);
+    }
+  };
+
+  const handleOpenBalanceHistory = () => {
+    setActiveTab('balance-history');
+    if (accessToken) {
+      void loadLedgerEntries(accessToken);
+    }
+  };
+
+  const handleOpenSubscriptionAccess = () => {
+    const subscriptionUrl = subscription?.subscriptionUrl?.trim();
+    if (!subscriptionUrl) {
+      toast.error('Ссылка подписки пока недоступна');
+      return;
+    }
+
+    if (isTelegramWebApp) {
+      window.location.assign(subscriptionUrl);
+      return;
+    }
+
+    const popup = window.open(subscriptionUrl, '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      window.location.assign(subscriptionUrl);
     }
   };
 
@@ -1826,12 +2103,12 @@ export default function App() {
     setActiveTab('terms');
   };
 
-  const handleBackToSettings = () => {
-    setActiveTab('settings');
+  const handleBackToPrimaryTab = () => {
+    setActiveTab(lastPrimaryTabRef.current);
   };
 
-  const handleBackFromSubscriptionAccess = () => {
-    setActiveTab('home');
+  const handleBackToSettings = () => {
+    setActiveTab('settings');
   };
 
   const handleOpenSupport = () => {
@@ -1925,8 +2202,9 @@ export default function App() {
       const internalTabByUrl: Partial<Record<string, AppTab>> = {
         '/': 'home',
         '/plans': 'plans',
-        '/access': 'access',
         '/notifications': 'notifications',
+        '/payments': 'payments',
+        '/balance-history': 'balance-history',
         '/referral': 'referral',
         '/settings': 'settings',
         '/faq': 'faq',
@@ -1961,6 +2239,50 @@ export default function App() {
     void loadNotifications(accessToken, {
       offset: notifications.length,
       append: true,
+    });
+  };
+
+  const handleLoadMoreLedgerEntries = () => {
+    if (!accessToken || ledgerEntries.length >= ledgerEntriesTotal) {
+      return;
+    }
+
+    void loadLedgerEntries(accessToken, {
+      offset: ledgerEntries.length,
+      append: true,
+    });
+  };
+
+  const handleResumePendingPayment = (payment: PendingPaymentView) => {
+    if (!payment.confirmationUrl) {
+      toast.error('Ссылка оплаты уже недоступна');
+      return;
+    }
+
+    const localAttempt = checkoutAttempts.find(
+      (attempt) =>
+        attempt.provider === payment.provider &&
+        attempt.providerPaymentId === payment.providerPaymentId
+    );
+
+    openCheckoutConfirmation(payment.confirmationUrl, {
+      provider: payment.provider,
+      onPaid: () => {
+        if (accessToken) {
+          void loadActivePayments(accessToken, { silent: true });
+        }
+      },
+      onStatusChange: (status) => {
+        if (localAttempt && (status === 'paid' || status === 'cancelled' || status === 'failed')) {
+          markCheckoutAttemptStatus(
+            localAttempt,
+            (status === 'paid' ? 'succeeded' : status) as StoredPaymentAttemptStatus
+          );
+        }
+        if (accessToken && (status === 'paid' || status === 'cancelled' || status === 'failed')) {
+          void loadActivePayments(accessToken, { silent: true });
+        }
+      },
     });
   };
 
@@ -2076,6 +2398,47 @@ export default function App() {
   }, [isAuthenticated, accessToken, activeTab, isDesktopBrowser, plans.length, isLoadingPlans]);
 
   useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      return;
+    }
+
+    if (attemptedActivePaymentsTokenRef.current === accessToken) {
+      return;
+    }
+
+    void loadActivePayments(accessToken, { silent: true });
+  }, [isAuthenticated, accessToken]);
+
+  useEffect(() => {
+    if (!plans.length) {
+      return;
+    }
+
+    setActivePayments((current) =>
+      current.map((payment) => ({
+        ...payment,
+        planName: payment.planName || resolvePlanName(payment.planCode, plans),
+      }))
+    );
+  }, [plans]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken || activeTab !== 'payments') {
+      return;
+    }
+
+    void loadActivePayments(accessToken);
+  }, [isAuthenticated, accessToken, activeTab]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken || activeTab !== 'balance-history') {
+      return;
+    }
+
+    void loadLedgerEntries(accessToken);
+  }, [isAuthenticated, accessToken, activeTab]);
+
+  useEffect(() => {
     if (!isAuthenticated || !accessToken || !user) {
       return;
     }
@@ -2137,32 +2500,6 @@ export default function App() {
     isDesktopBrowser,
     referralSummary,
     isLoadingReferralSummary,
-  ]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !accessToken) {
-      return;
-    }
-
-    if (activeTab !== 'access') {
-      return;
-    }
-
-    if (isLoadingSubscriptionAccess) {
-      return;
-    }
-
-    if (subscriptionAccess) {
-      return;
-    }
-
-    void loadSubscriptionAccess(accessToken);
-  }, [
-    isAuthenticated,
-    accessToken,
-    activeTab,
-    isLoadingSubscriptionAccess,
-    subscriptionAccess,
   ]);
 
   useEffect(() => {
@@ -2628,18 +2965,6 @@ export default function App() {
     }
   };
 
-  const handleCopySubscriptionValue = (value: string, label: string) => {
-    void navigator.clipboard
-      .writeText(value)
-      .then(() => {
-        toast.success(`Скопировано: ${label}`);
-      })
-      .catch((err) => {
-        console.error('Subscription access copy error:', err);
-        toast.error(`Не удалось скопировать: ${label.toLowerCase()}`);
-      });
-  };
-
   const handleShareReferralToTelegram = () => {
     if (!user?.referralCode) {
       return;
@@ -2785,10 +3110,10 @@ export default function App() {
         )
       );
       setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
-      setSubscriptionAccess(null);
       setVisibleStoredPaymentAttempts(accountData.id);
       void reconcileStoredPaymentAttempts(accessToken, accountData.id);
       void loadNotificationsUnreadCount(accessToken);
+      void loadActivePayments(accessToken, { silent: true });
       return true;
     } catch (err) {
       console.error('Error refreshing user data:', err);
@@ -2916,6 +3241,11 @@ export default function App() {
     checkoutAttempts
       .filter((attempt) => attempt.kind === 'topup')
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
+  const pendingPayments = mergePendingPayments(activePayments, checkoutAttempts, plans);
+  const bottomNavActiveTab: PrimaryAppTab =
+    activeTab === 'home' || activeTab === 'plans' || activeTab === 'referral' || activeTab === 'settings'
+      ? activeTab
+      : lastPrimaryTabRef.current;
 
   const renderContent = () => {
     switch (activeTab) {
@@ -2953,21 +3283,6 @@ export default function App() {
             resumablePlanIds={resumablePlanIds}
           />
         );
-      case 'access':
-        return (
-          <SubscriptionAccessPage
-            data={subscriptionAccess}
-            isLoading={isLoadingSubscriptionAccess}
-            isTelegramWebApp={isTelegramWebApp}
-            onBack={handleBackFromSubscriptionAccess}
-            onRefresh={() => {
-              if (accessToken) {
-                void loadSubscriptionAccess(accessToken);
-              }
-            }}
-            onCopy={handleCopySubscriptionValue}
-          />
-        );
       case 'notifications':
         return (
           <NotificationsPage
@@ -2977,6 +3292,7 @@ export default function App() {
             isLoading={isLoadingNotifications}
             isLoadingMore={isLoadingMoreNotifications}
             isUpdatingReadState={isUpdatingNotificationReadState}
+            onBack={handleBackToPrimaryTab}
             onMarkRead={(notificationId) => {
               void markNotificationRead(notificationId);
             }}
@@ -2985,6 +3301,26 @@ export default function App() {
             }}
             onLoadMore={handleLoadMoreNotifications}
             onOpenAction={handleNotificationAction}
+          />
+        );
+      case 'payments':
+        return (
+          <PendingPaymentsPage
+            items={pendingPayments}
+            isLoading={isLoadingActivePayments}
+            onBack={handleBackToSettings}
+            onResume={handleResumePendingPayment}
+          />
+        );
+      case 'balance-history':
+        return (
+          <BalanceHistoryPage
+            items={ledgerEntries}
+            total={ledgerEntriesTotal}
+            isLoading={isLoadingLedgerEntries}
+            isLoadingMore={isLoadingMoreLedgerEntries}
+            onBack={handleBackToSettings}
+            onLoadMore={handleLoadMoreLedgerEntries}
           />
         );
       case 'faq':
@@ -3000,7 +3336,7 @@ export default function App() {
             referrals={(referralSummary?.items || []).map((item) => ({
               id: item.referred_account_id,
               name: item.display_name,
-              date: new Date(item.created_at).toLocaleDateString('ru-RU'),
+              date: item.created_at,
               earned: item.reward_amount,
               status: item.status,
             }))}
@@ -3026,7 +3362,10 @@ export default function App() {
             onLinkBrowser={handleLinkBrowser}
             isTelegramWebApp={isTelegramWebApp}
             notificationUnreadCount={notificationsUnreadCount}
+            activePaymentsCount={pendingPayments.length}
             onOpenNotificationsCenter={handleOpenNotificationsTab}
+            onOpenPendingPayments={handleOpenPendingPayments}
+            onOpenBalanceHistory={handleOpenBalanceHistory}
             onOpenFaq={handleOpenFaq}
             onOpenPrivacy={handleOpenPrivacy}
             onOpenTerms={handleOpenTerms}
@@ -3043,7 +3382,9 @@ export default function App() {
   };
 
   const isStandaloneInfoTab =
-    activeTab === 'access' ||
+    activeTab === 'notifications' ||
+    activeTab === 'payments' ||
+    activeTab === 'balance-history' ||
     activeTab === 'faq' ||
     activeTab === 'privacy' ||
     activeTab === 'terms';
@@ -3534,6 +3875,40 @@ export default function App() {
 
                 <div className="grid gap-3">
                   <button
+                    onClick={handleOpenPendingPayments}
+                    className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-slate-100">
+                        <CreditCard className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Незавершенные оплаты</div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">Живые ссылки оплаты, которые еще можно продолжить</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      {pendingPayments.length > 0 ? pendingPayments.length : 'Открыть'}
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={handleOpenBalanceHistory}
+                    className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-slate-100">
+                        <Wallet className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">История баланса</div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">Все начисления и списания по внутреннему счету</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                  </button>
+
+                  <button
                     onClick={handleOpenSupport}
                     className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
                   >
@@ -3742,10 +4117,9 @@ export default function App() {
           {renderContent()}
         </main>
         <BottomNav
-          activeTab={activeTab}
+          activeTab={bottomNavActiveTab}
           onTabChange={handleTabChange}
           compact={isCompactBrowserLayout}
-          unreadNotificationsCount={notificationsUnreadCount}
         />
       </div>
     </div>

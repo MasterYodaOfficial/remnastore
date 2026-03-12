@@ -571,6 +571,59 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(body["expires_at"])
         self.assertIsNone(body["finalized_at"])
 
+    async def test_list_payments_can_return_only_active_items_for_current_account(self) -> None:
+        account = await self._create_account(balance=0, email="list@example.com")
+        other_account = await self._create_account(balance=0, email="other@example.com")
+        self._current_account_id = account.id
+
+        async with self._session_factory() as session:
+            session.add_all(
+                [
+                    Payment(
+                        account_id=account.id,
+                        provider=PaymentProvider.YOOKASSA,
+                        flow_type=PaymentFlowType.WALLET_TOPUP,
+                        status=PaymentStatus.PENDING,
+                        amount=500,
+                        currency="RUB",
+                        provider_payment_id="yoopay-active-500",
+                        confirmation_url="https://pay.example/1",
+                    ),
+                    Payment(
+                        account_id=account.id,
+                        provider=PaymentProvider.YOOKASSA,
+                        flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                        status=PaymentStatus.SUCCEEDED,
+                        amount=299,
+                        currency="RUB",
+                        provider_payment_id="yoopay-done-299",
+                    ),
+                    Payment(
+                        account_id=other_account.id,
+                        provider=PaymentProvider.YOOKASSA,
+                        flow_type=PaymentFlowType.WALLET_TOPUP,
+                        status=PaymentStatus.PENDING,
+                        amount=900,
+                        currency="RUB",
+                        provider_payment_id="yoopay-foreign-900",
+                        confirmation_url="https://pay.example/2",
+                    ),
+                ]
+            )
+            await session.commit()
+
+        response = await self.client.get(
+            "/api/v1/payments",
+            params={"active_only": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(len(body["items"]), 1)
+        self.assertEqual(body["items"][0]["provider_payment_id"], "yoopay-active-500")
+        self.assertEqual(body["items"][0]["status"], "pending")
+
     async def test_yookassa_webhook_succeeded_credits_balance_once(self) -> None:
         account = await self._create_account(balance=100, email="payer@example.com")
         self._current_account_id = account.id
@@ -699,6 +752,61 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0].type, NotificationType.PAYMENT_FAILED)
         self.assertEqual(notifications[0].payload["status"], "cancelled")
+
+    async def test_yookassa_webhook_cancelled_orphan_payment_does_not_fail(self) -> None:
+        account = await self._create_account(balance=100, email="payer-orphan@example.com")
+        self._current_account_id = account.id
+
+        create_response = await self.client.post(
+            "/api/v1/payments/yookassa/topup",
+            json={
+                "amount_rub": 1000,
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "topup-orphan-1000",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        async with self._session_factory() as session:
+            stored_account = await session.get(Account, account.id)
+            self.assertIsNotNone(stored_account)
+            assert stored_account is not None
+            await session.delete(stored_account)
+            await session.commit()
+
+        self._fake_gateway.put_event(
+            "event-cancelled-orphan-1",
+            PaymentWebhookEvent(
+                provider=PaymentProvider.YOOKASSA,
+                provider_event_id="payment.canceled:yoopay-topup-orphan-1000",
+                provider_payment_id="yoopay-topup-orphan-1000",
+                status=PaymentStatus.CANCELLED,
+                amount=1000,
+                currency="RUB",
+                flow_type=PaymentFlowType.WALLET_TOPUP,
+                account_id=account.id,
+                external_reference="topup-orphan-1000",
+                raw_payload={"status": "canceled"},
+            ),
+        )
+
+        response = await self.client.post(
+            "/api/v1/webhooks/payments/yookassa",
+            content=json.dumps({"event_id": "event-cancelled-orphan-1"}),
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cancelled")
+
+        stored_payment = await self._get_payment("yoopay-topup-orphan-1000")
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.status, PaymentStatus.CANCELLED)
+        self.assertIsNotNone(stored_payment.finalized_at)
+
+        async with self._session_factory() as session:
+            result = await session.execute(select(Notification).order_by(Notification.id.asc()))
+            self.assertEqual(list(result.scalars().all()), [])
 
     async def test_expire_stale_payments_marks_unpaid_stars_payment_as_expired(self) -> None:
         account = await self._create_account(

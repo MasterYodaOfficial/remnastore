@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import httpx
 import requests
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from yookassa import Configuration as YooKassaConfiguration
@@ -683,6 +683,38 @@ async def get_payment_for_account(
     if payment is None:
         raise PaymentNotFoundError("payment not found")
     return payment
+
+
+async def list_account_payments(
+    session: AsyncSession,
+    *,
+    account: Account,
+    limit: int = 20,
+    offset: int = 0,
+    active_only: bool = False,
+) -> tuple[list[Payment], int]:
+    filters = [Payment.account_id == account.id]
+    if active_only:
+        filters.append(
+            Payment.status.in_(
+                (
+                    PaymentStatus.CREATED,
+                    PaymentStatus.PENDING,
+                    PaymentStatus.REQUIRES_ACTION,
+                )
+            )
+        )
+
+    result = await session.execute(
+        select(Payment)
+        .where(*filters)
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    items = list(result.scalars().all())
+    total = await session.scalar(select(func.count()).select_from(Payment).where(*filters))
+    return items, int(total or 0)
 
 
 async def _get_payment_event_by_provider_event_id(

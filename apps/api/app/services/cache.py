@@ -73,9 +73,6 @@ class RedisCache:
     def account_response_key(self, account_id: str) -> str:
         return f"cache:account-response:{account_id}"
 
-    def subscription_access_key(self, account_id: str) -> str:
-        return f"cache:subscription-access:{account_id}"
-
     async def try_acquire_lock(self, key: str, ttl_seconds: int) -> str | None:
         client = self._client_or_none()
         if client is None:

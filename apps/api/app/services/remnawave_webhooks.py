@@ -148,15 +148,14 @@ async def _handle_subscription_expiring_event(
     user: RemnawaveWebhookUserData,
     envelope: RemnawaveWebhookEnvelope,
 ) -> list[Notification]:
-    days_left = USER_EXPIRING_EVENT_DAYS[envelope.event]
     notification = await notify_subscription_expiring(
         session,
         account=account,
-        days_left=days_left,
+        days_left=USER_EXPIRING_EVENT_DAYS[envelope.event],
         expires_at=_resolve_subscription_expires_at(account, user=user),
         remnawave_event=envelope.event,
     )
-    return [notification]
+    return [notification] if notification is not None else []
 
 
 async def _handle_subscription_expired_event(
@@ -171,7 +170,7 @@ async def _handle_subscription_expired_event(
         expires_at=_resolve_subscription_expires_at(account, user=user),
         remnawave_event=envelope.event,
     )
-    return [notification]
+    return [notification] if notification is not None else []
 
 
 USER_EVENT_HANDLERS: dict[str, UserWebhookHandler] = {

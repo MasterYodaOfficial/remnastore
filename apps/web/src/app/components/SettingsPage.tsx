@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Bell,
   CheckCircle,
+  History,
   FileText,
   Globe,
   HelpCircle,
@@ -9,6 +10,7 @@ import {
   LogOut,
   Mail,
   MessageCircle,
+  RefreshCw,
   Shield,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
@@ -26,7 +28,10 @@ interface SettingsPageProps {
   onLinkBrowser?: () => void;
   isTelegramWebApp?: boolean;
   notificationUnreadCount?: number;
+  activePaymentsCount?: number;
   onOpenNotificationsCenter?: () => void;
+  onOpenPendingPayments?: () => void;
+  onOpenBalanceHistory?: () => void;
   onOpenFaq?: () => void;
   onOpenPrivacy?: () => void;
   onOpenTerms?: () => void;
@@ -43,7 +48,10 @@ export function SettingsPage({
   onLinkBrowser,
   isTelegramWebApp = false,
   notificationUnreadCount = 0,
+  activePaymentsCount = 0,
   onOpenNotificationsCenter,
+  onOpenPendingPayments,
+  onOpenBalanceHistory,
   onOpenFaq,
   onOpenPrivacy,
   onOpenTerms,
@@ -151,6 +159,44 @@ export function SettingsPage({
                   {notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}
                 </span>
               )}
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+          ),
+        },
+      ],
+    },
+    {
+      title: 'Финансы',
+      items: [
+        {
+          icon: RefreshCw,
+          label: 'Незавершенные оплаты',
+          action: onOpenPendingPayments ? (
+            <button
+              onClick={onOpenPendingPayments}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+            >
+              Открыть
+              {activePaymentsCount > 0 ? (
+                <span className="rounded-full bg-[var(--tg-theme-button-color,#3390ec)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
+                  {activePaymentsCount}
+                </span>
+              ) : null}
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+          ),
+        },
+        {
+          icon: History,
+          label: 'История баланса',
+          action: onOpenBalanceHistory ? (
+            <button
+              onClick={onOpenBalanceHistory}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+            >
+              Открыть
             </button>
           ) : (
             <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>

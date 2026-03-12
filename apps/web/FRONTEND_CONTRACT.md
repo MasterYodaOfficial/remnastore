@@ -252,39 +252,12 @@ Query params:
 Назначение:
 - вручную подтянуть актуальное состояние подписки из Remnawave
 
-`GET /api/v1/subscriptions/access`
-
-Назначение:
-- получить полную выдачу доступа для экрана `Подключение VPN`
-- использовать как backend source of truth для:
-  - основной ссылки подписки
-  - raw keys
-  - дополнительных форматов
-  - статуса и трафика
-
-Ожидаемые поля:
-- `available`
-- `source`
-- `remnawave_user_uuid`
-- `short_uuid`
-- `username`
-- `status`
-- `expires_at`
-- `is_active`
-- `days_left`
-- `subscription_url`
-- `links[]`
-- `ssconf_links{}`
-- `traffic_used_bytes`
-- `traffic_limit_bytes`
-- `lifetime_traffic_used_bytes`
-- `refreshed_at`
-
-Семантика:
-- `source=remote` означает свежий snapshot из Remnawave
-- `source=cache` означает, что Remnawave временно недоступен и backend вернул последнюю сохраненную копию
-- `source=local_fallback` означает, что backend смог вернуть только локально сохраненную `subscription_url`
-- `source=none` означает, что у пользователя пока нет доступной выдачи конфигов
+Кнопка `Получить конфиг`:
+- frontend больше не рендерит собственный экран выдачи конфигов
+- нужно использовать уже доступный `subscription_url` из bootstrap/subscription state
+- в обычном браузере кнопка должна открывать `subscription_url` в новом окне
+- в Telegram Mini App кнопка должна делать переход в этом же окне через `window.location.assign(subscription_url)`
+- если `subscription_url` пустой, кнопка должна быть disabled или показывать понятную ошибку
 
 ### Рефералы
 

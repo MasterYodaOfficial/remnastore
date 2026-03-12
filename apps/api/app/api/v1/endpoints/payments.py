@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_account
@@ -9,6 +9,8 @@ from app.schemas.payment import (
     CreateYooKassaPlanPurchaseRequest,
     CreateYooKassaTopupRequest,
     PaymentIntentResponse,
+    PaymentListItemResponse,
+    PaymentListResponse,
     PaymentStatusResponse,
     SubscriptionPlanResponse,
 )
@@ -23,6 +25,7 @@ from app.services.payments import (
     create_yookassa_plan_purchase_payment,
     create_yookassa_topup_payment,
     get_payment_for_account,
+    list_account_payments,
 )
 
 router = APIRouter()
@@ -50,6 +53,29 @@ async def list_subscription_plans() -> list[SubscriptionPlanResponse]:
         )
         for plan in plans
     ]
+
+
+@router.get("", response_model=PaymentListResponse)
+async def list_payments(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    active_only: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
+) -> PaymentListResponse:
+    payments, total = await list_account_payments(
+        session,
+        account=current_account,
+        limit=limit,
+        offset=offset,
+        active_only=active_only,
+    )
+    return PaymentListResponse(
+        items=[PaymentListItemResponse.model_validate(item, from_attributes=True) for item in payments],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/status", response_model=PaymentStatusResponse)

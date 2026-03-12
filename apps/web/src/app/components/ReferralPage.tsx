@@ -23,6 +23,51 @@ interface ReferralPageProps {
   onWithdraw: () => void;
 }
 
+function maskWord(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 1) {
+    return 'Участник';
+  }
+  if (trimmed.length <= 3) {
+    return `${trimmed.charAt(0)}••`;
+  }
+  return `${trimmed.charAt(0)}${'•'.repeat(Math.max(2, trimmed.length - 2))}${trimmed.charAt(trimmed.length - 1)}`;
+}
+
+function maskReferralIdentity(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return 'Анонимный участник';
+  }
+
+  if (trimmed.includes('@')) {
+    const [localPart, domain] = trimmed.split('@');
+    if (!domain) {
+      return maskWord(trimmed);
+    }
+    return `${maskWord(localPart)}@${domain}`;
+  }
+
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (!parts.length) {
+    return 'Анонимный участник';
+  }
+
+  return parts.slice(0, 2).map(maskWord).join(' ');
+}
+
+function formatReferralDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'long',
+  }).format(date);
+}
+
 export function ReferralPage({
   referralCode,
   referrals,
@@ -115,21 +160,27 @@ export function ReferralPage({
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
-                      {referral.name.charAt(0)}
+                      {maskReferralIdentity(referral.name).charAt(0)}
                     </div>
                     <div>
                       <div className="font-medium text-[var(--tg-theme-text-color,#000000)]">
-                        {referral.name}
+                        {maskReferralIdentity(referral.name)}
                       </div>
                       <div className="text-xs text-[var(--tg-theme-hint-color,#999999)]">
-                        {referral.date}
+                        Подключился {formatReferralDate(referral.date)}
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="font-semibold text-[var(--app-success-color,#16a34a)]">
-                      +{formatRubles(referral.earned)} ₽
-                    </div>
+                    {referral.earned > 0 ? (
+                      <div className="font-semibold text-[var(--app-success-color,#16a34a)]">
+                        +{formatRubles(referral.earned)} ₽
+                      </div>
+                    ) : (
+                      <div className="font-semibold text-[var(--tg-theme-hint-color,#999999)]">
+                        Награда ожидается
+                      </div>
+                    )}
                     <div
                       className={`text-xs ${
                         referral.status === 'active'
@@ -137,7 +188,7 @@ export function ReferralPage({
                           : 'text-[var(--app-warning-color,#ca8a04)]'
                       }`}
                     >
-                      {referral.status === 'active' ? 'Активен' : 'Ожидание'}
+                      {referral.status === 'active' ? 'Первая покупка подтверждена' : 'Ждет первую оплату'}
                     </div>
                   </div>
                 </div>

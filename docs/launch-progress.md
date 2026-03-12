@@ -386,42 +386,23 @@
   - `Settings` больше не показывает фальшивый toggle уведомлений и ведет в существующий центр
 
 ## Фаза 6. Выдача подписки и конфигов
-Статус: `В работе`
+Статус: `Отложено`
 
-- [x] Спроектировать backend contract выдачи подписки
-- [x] Добавить endpoint `GET /api/v1/subscriptions/access`
-- [x] Добавить Redis cache для snapshot выдачи
-- [x] Сделать страницу `Подключение VPN` во frontend
-- [x] Добавить copy/QR flow для основной ссылки подписки
-- [x] Добавить блок `raw keys`
-- [x] Добавить базовые гайды по клиентам
-- [ ] Проверить реальные сценарии `Browser` и `Telegram Mini App` на устройствах
-- [ ] Решить, нужен ли позже dynamic subpage config из Remnawave
+- [x] Оставить минимальный flow `Получить конфиг`
+- [x] Открывать `subscription_url` напрямую из интерфейса
+- [x] В обычном браузере открывать выдачу в новом окне
+- [x] В Telegram Mini App открывать выдачу в этом же окне
+- [ ] Вернуться позже к собственной странице выдачи конфигов, если это снова понадобится
 
 Сделано 2026-03-12:
-- Remnawave gateway расширен вызовом `GET /api/subscriptions/by-uuid/{uuid}` для получения полной выдачи подписки, а не только локального snapshot статуса
-- добавлены backend schema и service:
-  - `apps/api/app/schemas/subscription_access.py`
-  - `apps/api/app/services/subscription_access.py`
-- добавлен endpoint `GET /api/v1/subscriptions/access`
-- выдача кешируется в Redis по `account_id` с коротким TTL, чтобы не дергать Remnawave на каждый повторный вход в экран конфигов
-- при недоступности Remnawave backend умеет возвращать:
-  - кэшированный snapshot
-  - локальный fallback со `subscription_url`, если он уже сохранен в аккаунте
-- добавлены backend тесты `tests.test_subscription_access`
-- во frontend добавлена новая страница `Подключение VPN`
-- в интерфейсе теперь доступны:
-  - основная ссылка подписки
-  - copy action
-  - QR для основной ссылки
-  - raw keys с copy/QR
-  - дополнительные `ssconf_links`, если их вернула панель
-  - базовые client guides для iOS, Android и desktop
-- `SubscriptionCard` теперь ведет в экран выдачи конфигов через действие `Получить конфиг`
+- удален custom backend/frontend flow для собственной страницы выдачи конфигов
+- убран endpoint `GET /api/v1/subscriptions/access`
+- кнопка `Получить конфиг` теперь использует уже существующий `subscription_url`
+- в browser flow переход идет в новое окно
+- в Telegram Mini App переход идет в том же окне через `window.location.assign(subscription_url)`
 
 Проверено 2026-03-12:
-- `tests.test_subscription_access`
-- `tests.test_subscriptions`
+- `apps/api: tests.test_subscriptions`
 - `apps/web: npm run build`
 
 ## Фаза 7. Отдельная админка
