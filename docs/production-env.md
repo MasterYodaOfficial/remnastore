@@ -13,6 +13,7 @@
 - `apps/api`
 - `apps/bot`
 - `apps/web`
+- `apps/admin`
 - локального запуска через `ops/docker/compose.yml`
 
 Если добавляется новая обязательная env-переменная, нужно обновлять:
@@ -104,6 +105,24 @@
 - `JWT_SECRET`
   - секрет для backend JWT
   - обязательный секрет
+
+- `ADMIN_JWT_ACCESS_TOKEN_EXPIRES_SECONDS`
+  - TTL admin access token в секундах
+  - используется только admin auth контуром
+
+- `ADMIN_BOOTSTRAP_USERNAME`
+  - логин первого администратора
+  - используется только если таблица `admins` еще пуста
+
+- `ADMIN_BOOTSTRAP_PASSWORD`
+  - пароль первого администратора
+  - обязателен вместе с `ADMIN_BOOTSTRAP_USERNAME`, если нужен bootstrap
+
+- `ADMIN_BOOTSTRAP_EMAIL`
+  - опциональный email bootstrap-админа
+
+- `ADMIN_BOOTSTRAP_FULL_NAME`
+  - опциональное отображаемое имя bootstrap-админа
 
 - `SUPABASE_URL`
   - URL проекта Supabase
@@ -211,10 +230,17 @@
   - рекомендуется задать явно
   - если переменная не задана, frontend не сможет открыть Telegram-support из настроек и FAQ
 
+### Admin
+
+- отдельный frontend `apps/admin` использует тот же `VITE_API_BASE_URL`, что и пользовательский `apps/web`
+- отдельная публичная env-переменная для admin API сейчас не нужна, потому что backend-контур общий
+- локальный Docker Compose поднимает admin frontend на `http://localhost:5174`
+
 ## Переменные с рабочими дефолтами
 
 - `LOG_LEVEL`
 - `JWT_ACCESS_TOKEN_EXPIRES_SECONDS`
+- `ADMIN_JWT_ACCESS_TOKEN_EXPIRES_SECONDS`
 - `SUPABASE_USER_CACHE_TTL_SECONDS`
 - `AUTH_TOKEN_CACHE_TTL_SECONDS`
 - `ACCOUNT_RESPONSE_CACHE_TTL_SECONDS`

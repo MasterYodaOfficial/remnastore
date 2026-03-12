@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import decode_access_token, TokenError
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, Admin
 from app.db.session import get_session
 from app.integrations.supabase import (
     SupabaseAuthClient,
@@ -17,6 +17,7 @@ from app.services.accounts import (
     get_account_by_id,
     upsert_supabase_account,
 )
+from app.services.admin_auth import get_admin_by_id
 from app.services.cache import get_cache
 
 
@@ -104,3 +105,30 @@ async def get_current_account(
     )
 
     return account
+
+
+async def get_current_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> Admin:
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing credentials")
+
+    try:
+        claims = decode_access_token(credentials.credentials, secret=settings.jwt_secret)
+    except TokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token") from exc
+
+    if claims.get("scope") != "admin":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid admin token")
+
+    admin_id = claims.get("sub")
+    if not admin_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token missing subject")
+
+    admin = await get_admin_by_id(session, admin_id)
+    if admin is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="admin not found")
+    if not admin.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin disabled")
+    return admin

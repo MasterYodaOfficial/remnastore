@@ -82,6 +82,14 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret: str = "change-me"
     jwt_access_token_expires_seconds: int = 3600
+    admin_jwt_access_token_expires_seconds: int = Field(
+        default=43200,
+        validation_alias="ADMIN_JWT_ACCESS_TOKEN_EXPIRES_SECONDS",
+    )
+    admin_bootstrap_username: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_USERNAME")
+    admin_bootstrap_password: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_PASSWORD")
+    admin_bootstrap_email: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_EMAIL")
+    admin_bootstrap_full_name: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_FULL_NAME")
     supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
     supabase_anon_key: str = Field(default="", validation_alias="SUPABASE_ANON_KEY")
     supabase_user_cache_ttl_seconds: int = Field(

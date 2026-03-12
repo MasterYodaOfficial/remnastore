@@ -7,6 +7,8 @@ from app.api.v1.endpoints.webhooks import router as public_webhooks_router
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
+from app.db.session import SessionLocal
+from app.services.admin_auth import ensure_bootstrap_admin
 from app.services.cache import get_cache
 
 
@@ -15,6 +17,8 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI):
         cache = get_cache()
         await cache.ping()
+        async with SessionLocal() as session:
+            await ensure_bootstrap_admin(session)
         yield
         await cache.close()
 
