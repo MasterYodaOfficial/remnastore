@@ -8,6 +8,7 @@ from bot.keyboards.main import main_menu
 from bot.core.config import settings
 
 router = Router()
+REFERRAL_START_PREFIX = "ref_"
 
 
 def build_api_headers() -> dict[str, str]:
@@ -21,21 +22,26 @@ def build_api_headers() -> dict[str, str]:
 async def start_handler(message: Message) -> None:
     """Handle /start command with optional linking token parameter."""
     args = message.text.split(maxsplit=1)
-    
+
     # Check if there's a linking token parameter
     if len(args) > 1:
-        link_token = args[1]
-        
+        start_param = args[1].strip()
+
         # Handle browser linking token (from OAuth to Telegram)
-        if link_token.startswith("link_") and "_BROWSER" in link_token:
-            await handle_browser_link(message, link_token)
+        if start_param.startswith("link_") and "_BROWSER" in start_param:
+            await handle_browser_link(message, start_param)
             return
-        
+
         # Handle Telegram linking token (from Telegram to OAuth)
-        elif link_token.startswith("link_"):
-            await handle_telegram_link(message, link_token)
+        if start_param.startswith("link_"):
+            await handle_telegram_link(message, start_param)
             return
-    
+
+        if start_param.startswith(REFERRAL_START_PREFIX):
+            referral_code = start_param.removeprefix(REFERRAL_START_PREFIX).strip()
+            await handle_referral_start(message, referral_code)
+            return
+
     # Regular start without parameters
     try:
         await message.answer(
@@ -124,4 +130,42 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
     except Exception as e:
         await message.answer(
             f"❌ Ошибка при привязке: {str(e)}"
+        )
+
+
+async def handle_referral_start(message: Message, referral_code: str) -> None:
+    """Handle referral deep link and preserve the code in the WebApp URL."""
+    if not referral_code:
+        await message.answer(
+            "Ссылка приглашения повреждена. Откройте приложение через кнопку ниже.",
+            reply_markup=main_menu(),
+        )
+        return
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{settings.api_url}/api/v1/webhooks/referrals/telegram-start",
+                json={
+                    "telegram_id": message.from_user.id,
+                    "referral_code": referral_code,
+                },
+                headers=build_api_headers(),
+                timeout=10.0,
+            )
+
+        if response.status_code == 400:
+            await message.answer("Реферальная ссылка недействительна. Попросите отправить новую.")
+            return
+    except Exception:
+        pass
+
+    try:
+        await message.answer(
+            "Вы открыли приглашение. Нажмите кнопку ниже, чтобы открыть витрину и завершить вход с сохранением реферальной ссылки.",
+            reply_markup=main_menu(referral_code=referral_code),
+        )
+    except TelegramBadRequest:
+        await message.answer(
+            "Не удалось показать кнопку открытия приложения. Проверьте настройку WebApp URL."
         )

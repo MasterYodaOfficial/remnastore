@@ -4,6 +4,7 @@ from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.accounts import router as accounts_router
 from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.ledger import router as ledger_router
+from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.payments import router as payments_router
 from app.api.v1.endpoints.referrals import router as referrals_router
 from app.api.v1.endpoints.subscriptions import router as subscriptions_router
@@ -24,6 +25,7 @@ api_router.include_router(linking_router, prefix="/accounts", tags=["linking"])
 protected_router = APIRouter(dependencies=[Depends(get_current_account)])
 protected_router.include_router(bootstrap_router, tags=["bootstrap"])
 protected_router.include_router(ledger_router, prefix="/ledger", tags=["ledger"])
+protected_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
 protected_router.include_router(payments_router, prefix="/payments", tags=["payments"])
 protected_router.include_router(referrals_router, prefix="/referrals", tags=["referrals"])
 protected_router.include_router(users_router, prefix="/users", tags=["users"])

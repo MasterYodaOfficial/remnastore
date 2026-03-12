@@ -2,6 +2,7 @@ import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, Lock, Mail, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../../utils/supabase/client';
+import { getActiveReferralCode, buildTelegramReferralBotUrl } from '../lib/referrals';
 
 type LoginFormMode = 'signin' | 'signup' | 'forgot';
 
@@ -38,7 +39,7 @@ export function LoginPage({
     null
   );
   const telegramBotUrl = useMemo(
-    () => (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim(),
+    () => buildTelegramReferralBotUrl(getActiveReferralCode()),
     []
   );
 

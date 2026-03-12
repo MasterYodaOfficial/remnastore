@@ -13,6 +13,15 @@ class ReferralClaimResponse(BaseModel):
     referred_by_account_id: UUID
 
 
+class TelegramReferralIntentRequest(BaseModel):
+    telegram_id: int
+    referral_code: str
+
+
+class TelegramReferralIntentResponse(BaseModel):
+    ok: bool = True
+
+
 class ReferralSummaryItemResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import uuid
 from typing import Any
 
 from redis.asyncio import Redis
@@ -71,6 +72,49 @@ class RedisCache:
 
     def account_response_key(self, account_id: str) -> str:
         return f"cache:account-response:{account_id}"
+
+    def subscription_access_key(self, account_id: str) -> str:
+        return f"cache:subscription-access:{account_id}"
+
+    async def try_acquire_lock(self, key: str, ttl_seconds: int) -> str | None:
+        client = self._client_or_none()
+        if client is None:
+            return "local-lock"
+
+        lock_token = uuid.uuid4().hex
+        try:
+            acquired = await client.set(key, lock_token, ex=max(1, ttl_seconds), nx=True)
+        except RedisError:
+            logger.exception("redis try_acquire_lock failed for key=%s", key)
+            return None
+
+        if not acquired:
+            return None
+
+        return lock_token
+
+    async def release_lock(self, key: str, lock_token: str) -> None:
+        if lock_token == "local-lock":
+            return
+
+        client = self._client_or_none()
+        if client is None:
+            return
+
+        try:
+            await client.eval(
+                """
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                end
+                return 0
+                """,
+                1,
+                key,
+                lock_token,
+            )
+        except RedisError:
+            logger.exception("redis release_lock failed for key=%s", key)
 
     async def get_json(self, key: str) -> dict[str, Any] | list[Any] | None:
         client = self._client_or_none()

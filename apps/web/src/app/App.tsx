@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase/client';
-import { loadTelegramScript, getTelegramWebApp, openTelegramInvoice } from '../../utils/telegram';
+import {
+  loadTelegramScript,
+  getTelegramWebApp,
+  openTelegramInvoice,
+  openTelegramLink,
+} from '../../utils/telegram';
 import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
 import { HomePage } from './components/HomePage';
@@ -14,15 +19,44 @@ import { BottomNav } from './components/BottomNav';
 import { PaymentMethodSheet, type PaymentMethodOption, type PaymentMethodProvider } from './components/PaymentMethodSheet';
 import { TopUpModal } from './components/TopUpModal';
 import { LoadingScreen } from './components/LoadingScreen';
+import { NotificationsPage, type NotificationItemView } from './components/NotificationsPage';
+import { FaqPage } from './components/FaqPage';
+import { LegalDocumentPage } from './components/LegalDocumentPage';
+import { SubscriptionAccessPage } from './components/SubscriptionAccessPage';
 import { formatRubles } from '../lib/currency';
+import { type SubscriptionAccessSnapshot } from './lib/subscription-access';
 import { toast, Toaster } from 'sonner';
 import {
+  buildBrowserReferralLink,
+  buildTelegramShareReferralUrl,
+  capturePendingReferralCodeFromUrl,
+  readPendingReferralCode,
+  clearPendingReferralCode,
+} from './lib/referrals';
+import {
+  getEffectiveStoredPaymentAttemptStatus,
+  getStoredPaymentAttempt,
+  isStoredPaymentAttemptActive,
+  listStoredPaymentAttemptsForAccount,
+  removeStoredPaymentAttempt,
+  replaceStoredPaymentAttemptsForAccount,
+  upsertStoredPaymentAttempt,
+  type StoredPaymentAttempt,
+  type StoredPaymentAttemptProvider,
+  type StoredPaymentAttemptStatus,
+} from './lib/payments';
+import {
+  Bell,
   CreditCard,
+  FileText,
   Gift,
+  HelpCircle,
   LayoutDashboard,
   LogOut,
+  MessageCircle,
   Moon,
   Settings as SettingsIcon,
+  Shield,
   Sparkles,
   Sun,
   Wallet,
@@ -33,12 +67,22 @@ const BACKEND_API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000
   ""
 );
 const TELEGRAM_BOT_URL = (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim().replace(/\/+$/, '');
+const SUPPORT_TELEGRAM_URL = (import.meta.env.VITE_SUPPORT_TELEGRAM_URL || '').trim();
 const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
 const TELEGRAM_AUTH_STORAGE_KEY = 'remnastore.telegram_auth';
 const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';
-const PENDING_REFERRAL_CODE_STORAGE_KEY = 'remnastore.pending_referral_code';
 const THEME_STORAGE_KEY = 'remnastore.theme';
 type AuthView = 'default' | 'recovery' | 'recovery-expired';
+type AppTab =
+  | 'home'
+  | 'plans'
+  | 'access'
+  | 'notifications'
+  | 'referral'
+  | 'settings'
+  | 'faq'
+  | 'privacy'
+  | 'terms';
 
 const APP_THEME_TOKENS = {
   light: {
@@ -159,7 +203,22 @@ interface BackendPaymentIntent {
   provider_payment_id: string;
   external_reference?: string | null;
   confirmation_url?: string | null;
+  expires_at?: string | null;
 }
+
+interface BackendPaymentStatusResponse {
+  provider: string;
+  flow_type: string;
+  status: string;
+  amount: number;
+  currency: string;
+  provider_payment_id: string;
+  confirmation_url?: string | null;
+  expires_at?: string | null;
+  finalized_at?: string | null;
+}
+
+type BackendSubscriptionAccess = SubscriptionAccessSnapshot;
 
 interface BackendReferralSummaryItem {
   referred_account_id: string;
@@ -178,9 +237,47 @@ interface BackendReferralSummary {
   items: BackendReferralSummaryItem[];
 }
 
+interface BackendNotificationItem {
+  id: number;
+  type:
+    | 'payment_succeeded'
+    | 'payment_failed'
+    | 'subscription_expiring'
+    | 'subscription_expired'
+    | 'referral_reward_received'
+    | 'withdrawal_created'
+    | 'withdrawal_paid'
+    | 'withdrawal_rejected';
+  title: string;
+  body: string;
+  priority: 'info' | 'success' | 'warning' | 'error';
+  payload?: Record<string, unknown> | null;
+  action_label?: string | null;
+  action_url?: string | null;
+  read_at?: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+interface BackendNotificationListResponse {
+  items: BackendNotificationItem[];
+  total: number;
+  unread_count: number;
+}
+
+interface BackendNotificationUnreadCountResponse {
+  unread_count: number;
+}
+
 interface StoredTelegramAuth {
   accessToken: string;
   telegramUserId: number;
+}
+
+interface BackendTelegramReferralResult {
+  applied: boolean;
+  created: boolean;
+  reason?: string | null;
 }
 
 interface User {
@@ -438,6 +535,22 @@ function mapBackendPlanToView(plan: BackendPlan): Plan {
   };
 }
 
+function mapBackendNotificationToView(
+  notification: BackendNotificationItem
+): NotificationItemView {
+  return {
+    id: notification.id,
+    type: notification.type,
+    title: notification.title,
+    body: notification.body,
+    priority: notification.priority,
+    actionLabel: notification.action_label ?? null,
+    actionUrl: notification.action_url ?? null,
+    isRead: notification.is_read,
+    createdAt: notification.created_at,
+  };
+}
+
 function createClientIdempotencyKey(prefix: string): string {
   const randomPart =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -578,43 +691,6 @@ function clearStoredTelegramAuth() {
   window.localStorage.removeItem(TELEGRAM_AUTH_STORAGE_KEY);
 }
 
-function capturePendingReferralCodeFromUrl() {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  const url = new URL(window.location.href);
-  const referralCode = url.searchParams.get('ref');
-  if (!referralCode || !referralCode.trim()) {
-    return;
-  }
-
-  window.localStorage.setItem(PENDING_REFERRAL_CODE_STORAGE_KEY, referralCode.trim());
-  url.searchParams.delete('ref');
-  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-}
-
-function readPendingReferralCode() {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const value = window.localStorage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
-  if (!value || !value.trim()) {
-    return null;
-  }
-
-  return value.trim();
-}
-
-function clearPendingReferralCode() {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
-}
-
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -629,11 +705,20 @@ export default function App() {
   const [checkoutPlanId, setCheckoutPlanId] = useState<string | null>(null);
   const [paymentMethodSelection, setPaymentMethodSelection] = useState<PaymentSelectionState | null>(null);
   const [paymentMethodSubmitting, setPaymentMethodSubmitting] = useState<PaymentMethodProvider | null>(null);
-  const [activeTab, setActiveTab] = useState('home');
+  const [checkoutAttempts, setCheckoutAttempts] = useState<StoredPaymentAttempt[]>([]);
+  const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [referralCopied, setReferralCopied] = useState(false);
   const [referralSummary, setReferralSummary] = useState<BackendReferralSummary | null>(null);
   const [isLoadingReferralSummary, setIsLoadingReferralSummary] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItemView[]>([]);
+  const [notificationsTotal, setNotificationsTotal] = useState(0);
+  const [notificationsUnreadCount, setNotificationsUnreadCount] = useState(0);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
+  const [isLoadingMoreNotifications, setIsLoadingMoreNotifications] = useState(false);
+  const [isUpdatingNotificationReadState, setIsUpdatingNotificationReadState] = useState(false);
+  const [subscriptionAccess, setSubscriptionAccess] = useState<BackendSubscriptionAccess | null>(null);
+  const [isLoadingSubscriptionAccess, setIsLoadingSubscriptionAccess] = useState(false);
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false);
   const [isDesktopBrowser, setIsDesktopBrowser] = useState(
     () => typeof window !== 'undefined' && window.innerWidth >= 1200
@@ -646,6 +731,7 @@ export default function App() {
   const pendingPaymentRefreshRef = useRef(false);
   const pendingReferralClaimRef = useRef(false);
   const attemptedPlansTokenRef = useRef<string | null>(null);
+  const attemptedNotificationsTokenRef = useRef<string | null>(null);
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
 
@@ -682,6 +768,58 @@ export default function App() {
     return await response.json() as BackendPlan[];
   };
 
+  const loadSubscriptionAccessSnapshot = async (token: string) => {
+    const response = await fetch(`${BACKEND_API}/api/v1/subscriptions/access`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load subscription access from backend');
+    }
+
+    return (await response.json()) as BackendSubscriptionAccess;
+  };
+
+  const loadNotificationsSnapshot = async (
+    token: string,
+    options: { limit?: number; offset?: number; unreadOnly?: boolean } = {}
+  ) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(options.limit ?? 20));
+    params.set('offset', String(options.offset ?? 0));
+    if (options.unreadOnly) {
+      params.set('unread_only', 'true');
+    }
+
+    const response = await fetch(`${BACKEND_API}/api/v1/notifications?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load notifications from backend');
+    }
+
+    return (await response.json()) as BackendNotificationListResponse;
+  };
+
+  const loadNotificationsUnreadCountSnapshot = async (token: string) => {
+    const response = await fetch(`${BACKEND_API}/api/v1/notifications/unread-count`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load notifications unread count from backend');
+    }
+
+    return (await response.json()) as BackendNotificationUnreadCountResponse;
+  };
+
   const loadReferralSummarySnapshot = async (token: string) => {
     const response = await fetch(`${BACKEND_API}/api/v1/referrals/summary`, {
       headers: {
@@ -694,6 +832,254 @@ export default function App() {
     }
 
     return await response.json() as BackendReferralSummary;
+  };
+
+  const loadPaymentStatusSnapshot = async (
+    token: string,
+    provider: StoredPaymentAttemptProvider,
+    providerPaymentId: string
+  ) => {
+    const params = new URLSearchParams({
+      provider,
+      provider_payment_id: providerPaymentId,
+    });
+    const response = await fetch(`${BACKEND_API}/api/v1/payments/status?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error('Failed to load payment status from backend');
+    }
+
+    return (await response.json()) as BackendPaymentStatusResponse;
+  };
+
+  const getStoredPaymentAttemptMatch = (attempt: StoredPaymentAttempt) =>
+    attempt.kind === 'plan'
+      ? {
+          accountId: attempt.accountId,
+          kind: attempt.kind,
+          provider: attempt.provider,
+          planId: attempt.planId,
+        }
+      : {
+          accountId: attempt.accountId,
+          kind: attempt.kind,
+          provider: attempt.provider,
+          amount: attempt.amount,
+        };
+
+  const setVisibleStoredPaymentAttempts = (accountId: string) => {
+    const visibleAttempts = listStoredPaymentAttemptsForAccount(accountId).filter((attempt) =>
+      isStoredPaymentAttemptActive(attempt)
+    );
+    setCheckoutAttempts(visibleAttempts);
+    return visibleAttempts;
+  };
+
+  const reconcileStoredPaymentAttempt = async (
+    token: string,
+    attempt: StoredPaymentAttempt
+  ): Promise<{
+    activeAttempt: StoredPaymentAttempt | null;
+    finalStatus: StoredPaymentAttemptStatus | null;
+  }> => {
+    const nowIso = new Date().toISOString();
+    let nextAttempt = attempt;
+
+    try {
+      const snapshot = await loadPaymentStatusSnapshot(token, attempt.provider, attempt.providerPaymentId);
+      if (snapshot === null) {
+        removeStoredPaymentAttempt(getStoredPaymentAttemptMatch(attempt));
+        return {
+          activeAttempt: null,
+          finalStatus: isStoredPaymentAttemptActive(attempt) ? 'failed' : getEffectiveStoredPaymentAttemptStatus(attempt),
+        };
+      }
+
+      nextAttempt = {
+        ...attempt,
+        status: snapshot.status as StoredPaymentAttemptStatus,
+        confirmationUrl: snapshot.confirmation_url || attempt.confirmationUrl,
+        expiresAt: snapshot.expires_at || attempt.expiresAt,
+        updatedAt: nowIso,
+      };
+    } catch (err) {
+      console.error('Payment status sync error:', err);
+      const fallbackStatus = getEffectiveStoredPaymentAttemptStatus(attempt);
+      if (!isStoredPaymentAttemptActive({ ...attempt, status: fallbackStatus })) {
+        removeStoredPaymentAttempt(getStoredPaymentAttemptMatch(attempt));
+        return {
+          activeAttempt: null,
+          finalStatus: fallbackStatus,
+        };
+      }
+      upsertStoredPaymentAttempt(attempt);
+      return {
+        activeAttempt: attempt,
+        finalStatus: null,
+      };
+    }
+
+    const effectiveStatus = getEffectiveStoredPaymentAttemptStatus(nextAttempt);
+    if (effectiveStatus !== nextAttempt.status) {
+      nextAttempt = {
+        ...nextAttempt,
+        status: effectiveStatus,
+        updatedAt: nowIso,
+      };
+    }
+
+    if (isStoredPaymentAttemptActive(nextAttempt) && nextAttempt.confirmationUrl) {
+      upsertStoredPaymentAttempt(nextAttempt);
+      return {
+        activeAttempt: nextAttempt,
+        finalStatus: null,
+      };
+    }
+
+    removeStoredPaymentAttempt(getStoredPaymentAttemptMatch(nextAttempt));
+    return {
+      activeAttempt: null,
+      finalStatus: nextAttempt.confirmationUrl ? nextAttempt.status : 'failed',
+    };
+  };
+
+  const reconcileStoredPaymentAttempts = async (token: string, accountId: string) => {
+    const attempts = listStoredPaymentAttemptsForAccount(accountId);
+    if (!attempts.length) {
+      setCheckoutAttempts([]);
+      return [];
+    }
+
+    const activeAttempts: StoredPaymentAttempt[] = [];
+    for (const attempt of attempts) {
+      const result = await reconcileStoredPaymentAttempt(token, attempt);
+      if (result.activeAttempt) {
+        activeAttempts.push(result.activeAttempt);
+      }
+    }
+
+    replaceStoredPaymentAttemptsForAccount(accountId, activeAttempts);
+    setCheckoutAttempts(activeAttempts);
+    return activeAttempts;
+  };
+
+  const resolveStoredCheckoutAttempt = async (
+    token: string,
+    match:
+      | {
+          accountId: string;
+          kind: 'plan';
+          provider: StoredPaymentAttemptProvider;
+          planId: string;
+        }
+      | {
+          accountId: string;
+          kind: 'topup';
+          provider: StoredPaymentAttemptProvider;
+          amount: number;
+        }
+  ) => {
+    const storedAttempt = getStoredPaymentAttempt(match);
+    if (!storedAttempt) {
+      return {
+        activeAttempt: null,
+        finalStatus: null,
+      };
+    }
+
+    return reconcileStoredPaymentAttempt(token, storedAttempt);
+  };
+
+  const persistCheckoutAttempt = (
+    paymentIntent: BackendPaymentIntent,
+    checkout:
+      | {
+          kind: 'plan';
+          planId: string;
+          planName: string;
+        }
+      | {
+          kind: 'topup';
+        }
+  ) => {
+    if (
+      (paymentIntent.provider !== 'yookassa' && paymentIntent.provider !== 'telegram_stars') ||
+      !paymentIntent.confirmation_url
+    ) {
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextAttempt: StoredPaymentAttempt = {
+      accountId: paymentIntent.account_id,
+      kind: checkout.kind,
+      provider: paymentIntent.provider,
+      amount: paymentIntent.amount,
+      currency: paymentIntent.currency,
+      providerPaymentId: paymentIntent.provider_payment_id,
+      confirmationUrl: paymentIntent.confirmation_url,
+      status: paymentIntent.status as StoredPaymentAttemptStatus,
+      expiresAt: paymentIntent.expires_at ?? null,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      ...(checkout.kind === 'plan'
+        ? {
+            planId: checkout.planId,
+            planName: checkout.planName,
+          }
+        : {}),
+    };
+
+    upsertStoredPaymentAttempt(nextAttempt);
+    if (user?.id === paymentIntent.account_id) {
+      setVisibleStoredPaymentAttempts(paymentIntent.account_id);
+    }
+  };
+
+  const describeClosedPaymentAttempt = (
+    status: StoredPaymentAttemptStatus,
+    options: {
+      successMessage: string;
+      retryMessage: string;
+    }
+  ) => {
+    if (status === 'succeeded') {
+      return options.successMessage;
+    }
+    if (status === 'cancelled') {
+      return 'Предыдущая попытка оплаты была отменена. Создаем новую.';
+    }
+    if (status === 'expired') {
+      return 'Предыдущая ссылка на оплату уже истекла. Создаем новую.';
+    }
+    if (status === 'failed') {
+      return 'Предыдущая попытка оплаты завершилась ошибкой. Создаем новую.';
+    }
+    return options.retryMessage;
+  };
+
+  const markCheckoutAttemptStatus = (
+    attempt: StoredPaymentAttempt,
+    status: StoredPaymentAttemptStatus
+  ) => {
+    if (status === 'cancelled' || status === 'failed' || status === 'succeeded' || status === 'expired') {
+      removeStoredPaymentAttempt(getStoredPaymentAttemptMatch(attempt));
+    } else {
+      upsertStoredPaymentAttempt({
+        ...attempt,
+        status,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    setVisibleStoredPaymentAttempts(attempt.accountId);
   };
 
   const isPasswordRecoveryRequested = () => {
@@ -929,6 +1315,19 @@ export default function App() {
     };
   }, [isAuthenticated, accessToken]);
 
+  useEffect(() => {
+    if (!user?.id) {
+      setCheckoutAttempts([]);
+      return;
+    }
+
+    setVisibleStoredPaymentAttempts(user.id);
+
+    if (accessToken) {
+      void reconcileStoredPaymentAttempts(accessToken, user.id);
+    }
+  }, [user?.id, accessToken]);
+
   const handleTelegramAuth = async (tg: any) => {
     try {
       const telegramUser = tg.initDataUnsafe?.user;
@@ -969,11 +1368,20 @@ export default function App() {
 
         const authData = await authResponse.json();
         const backendAccount = authData.account as BackendAccount;
+        const referralResult = authData.referral_result as BackendTelegramReferralResult | null;
         setAccessToken(authData.access_token);
         writeStoredTelegramAuth({
           accessToken: authData.access_token,
           telegramUserId: telegramUser.id,
         });
+
+        if (referralResult?.created) {
+          toast.success('Реферальная ссылка успешно привязана');
+        } else if (referralResult?.reason === 'self_referral') {
+          toast.error('Нельзя использовать собственную реферальную ссылку');
+        } else if (referralResult?.reason === 'referral_code_not_found') {
+          toast.error('Реферальная ссылка недействительна');
+        }
 
         const loaded = await loadUserData(authData.access_token, telegramUser.photo_url);
         if (loaded) {
@@ -990,7 +1398,11 @@ export default function App() {
         setUser(null);
         setSubscription(null);
         setPlans([]);
+        setNotifications([]);
+        setNotificationsTotal(0);
+        setNotificationsUnreadCount(0);
         attemptedPlansTokenRef.current = null;
+        attemptedNotificationsTokenRef.current = null;
         setAccessToken(null);
         console.error('Telegram auth error:', err);
         toast.error(
@@ -1003,7 +1415,11 @@ export default function App() {
       setUser(null);
       setSubscription(null);
       setPlans([]);
+      setNotifications([]);
+      setNotificationsTotal(0);
+      setNotificationsUnreadCount(0);
       attemptedPlansTokenRef.current = null;
+      attemptedNotificationsTokenRef.current = null;
       setAccessToken(null);
       console.error('Telegram auth error:', err);
     } finally {
@@ -1178,7 +1594,12 @@ export default function App() {
     setAccessToken(null);
     setPlans([]);
     setReferralSummary(null);
+    setNotifications([]);
+    setNotificationsTotal(0);
+    setNotificationsUnreadCount(0);
+    setCheckoutAttempts([]);
     attemptedPlansTokenRef.current = null;
+    attemptedNotificationsTokenRef.current = null;
     pendingTelegramLinkRefreshRef.current = false;
     pendingPaymentRefreshRef.current = false;
     pendingReferralClaimRef.current = false;
@@ -1238,6 +1659,10 @@ export default function App() {
         )
       );
       setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
+      setSubscriptionAccess(null);
+      setVisibleStoredPaymentAttempts(accountData.id);
+      void reconcileStoredPaymentAttempts(token, accountData.id);
+      void loadNotificationsUnreadCount(token);
 
       return true;
     } catch (err) {
@@ -1276,6 +1701,267 @@ export default function App() {
     } finally {
       setIsLoadingReferralSummary(false);
     }
+  };
+
+  const loadSubscriptionAccess = async (token: string, options: { silent?: boolean } = {}) => {
+    if (!options.silent) {
+      setIsLoadingSubscriptionAccess(true);
+    }
+
+    try {
+      const snapshot = await loadSubscriptionAccessSnapshot(token);
+      setSubscriptionAccess(snapshot);
+      return true;
+    } catch (err) {
+      console.error('Error loading subscription access:', err);
+      if (!options.silent) {
+        toast.error('Не удалось загрузить конфиги подписки');
+      }
+      return false;
+    } finally {
+      if (!options.silent) {
+        setIsLoadingSubscriptionAccess(false);
+      }
+    }
+  };
+
+  const loadNotifications = async (
+    token: string,
+    options: { offset?: number; append?: boolean; silent?: boolean } = {}
+  ) => {
+    const offset = options.offset ?? 0;
+    const append = options.append ?? false;
+    const silent = options.silent ?? false;
+
+    if (append) {
+      setIsLoadingMoreNotifications(true);
+    } else if (!silent) {
+      setIsLoadingNotifications(true);
+    }
+
+    if (!append) {
+      attemptedNotificationsTokenRef.current = token;
+    }
+
+    try {
+      const snapshot = await loadNotificationsSnapshot(token, { limit: 20, offset });
+      const mappedItems = snapshot.items.map(mapBackendNotificationToView);
+      setNotifications((current) => {
+        if (!append) {
+          return mappedItems;
+        }
+
+        const merged = [...current];
+        for (const item of mappedItems) {
+          const index = merged.findIndex((existing) => existing.id === item.id);
+          if (index >= 0) {
+            merged[index] = item;
+          } else {
+            merged.push(item);
+          }
+        }
+        return merged;
+      });
+      setNotificationsTotal(snapshot.total);
+      setNotificationsUnreadCount(snapshot.unread_count);
+      return true;
+    } catch (err) {
+      console.error('Error loading notifications:', err);
+      if (!append) {
+        setNotifications([]);
+        setNotificationsTotal(0);
+      }
+      return false;
+    } finally {
+      if (append) {
+        setIsLoadingMoreNotifications(false);
+      } else if (!silent) {
+        setIsLoadingNotifications(false);
+      }
+    }
+  };
+
+  const loadNotificationsUnreadCount = async (token: string) => {
+    try {
+      const snapshot = await loadNotificationsUnreadCountSnapshot(token);
+      setNotificationsUnreadCount(snapshot.unread_count);
+      return snapshot.unread_count;
+    } catch (err) {
+      console.error('Error loading notifications unread count:', err);
+      return null;
+    }
+  };
+
+  const handleOpenNotificationsTab = () => {
+    setActiveTab('notifications');
+    if (accessToken) {
+      void loadNotifications(accessToken);
+    }
+  };
+
+  const handleOpenSubscriptionAccess = () => {
+    setActiveTab('access');
+    if (accessToken) {
+      void loadSubscriptionAccess(accessToken);
+    }
+  };
+
+  const handleTabChange = (tab: string) => {
+    const resolvedTab = tab as AppTab;
+    setActiveTab(resolvedTab);
+    if (resolvedTab === 'notifications' && accessToken) {
+      void loadNotifications(accessToken);
+    }
+  };
+
+  const handleOpenFaq = () => {
+    setActiveTab('faq');
+  };
+
+  const handleOpenPrivacy = () => {
+    setActiveTab('privacy');
+  };
+
+  const handleOpenTerms = () => {
+    setActiveTab('terms');
+  };
+
+  const handleBackToSettings = () => {
+    setActiveTab('settings');
+  };
+
+  const handleBackFromSubscriptionAccess = () => {
+    setActiveTab('home');
+  };
+
+  const handleOpenSupport = () => {
+    if (!SUPPORT_TELEGRAM_URL) {
+      toast.error('Не настроена ссылка на Telegram-поддержку');
+      return;
+    }
+
+    if (
+      (SUPPORT_TELEGRAM_URL.startsWith('https://t.me/') || SUPPORT_TELEGRAM_URL.startsWith('tg://')) &&
+      openTelegramLink(SUPPORT_TELEGRAM_URL)
+    ) {
+      return;
+    }
+
+    const popup = window.open(SUPPORT_TELEGRAM_URL, '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      window.location.assign(SUPPORT_TELEGRAM_URL);
+    }
+  };
+
+  const markNotificationRead = async (notificationId: number) => {
+    if (!accessToken) {
+      return;
+    }
+
+    const target = notifications.find((notification) => notification.id === notificationId);
+    if (!target || target.isRead) {
+      return;
+    }
+
+    setIsUpdatingNotificationReadState(true);
+    setNotifications((current) =>
+      current.map((notification) =>
+        notification.id === notificationId ? { ...notification, isRead: true } : notification
+      )
+    );
+    setNotificationsUnreadCount((current) => Math.max(0, current - 1));
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/notifications/${notificationId}/read`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Не удалось отметить уведомление как прочитанное');
+      }
+    } catch (err) {
+      console.error('Mark notification read error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось обновить уведомление');
+      await loadNotifications(accessToken, { silent: true });
+    } finally {
+      setIsUpdatingNotificationReadState(false);
+    }
+  };
+
+  const markAllNotificationsRead = async () => {
+    if (!accessToken || notificationsUnreadCount === 0) {
+      return;
+    }
+
+    setIsUpdatingNotificationReadState(true);
+    setNotifications((current) => current.map((notification) => ({ ...notification, isRead: true })));
+    setNotificationsUnreadCount(0);
+
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/notifications/read-all`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Не удалось отметить все уведомления как прочитанные');
+      }
+    } catch (err) {
+      console.error('Mark all notifications read error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось обновить уведомления');
+      await loadNotifications(accessToken, { silent: true });
+    } finally {
+      setIsUpdatingNotificationReadState(false);
+    }
+  };
+
+  const handleNotificationAction = (notification: NotificationItemView) => {
+    if (notification.actionUrl) {
+      const internalTabByUrl: Partial<Record<string, AppTab>> = {
+        '/': 'home',
+        '/plans': 'plans',
+        '/access': 'access',
+        '/notifications': 'notifications',
+        '/referral': 'referral',
+        '/settings': 'settings',
+        '/faq': 'faq',
+        '/privacy': 'privacy',
+        '/terms': 'terms',
+      };
+      const internalTab = internalTabByUrl[notification.actionUrl];
+      if (internalTab) {
+        setActiveTab(internalTab);
+      } else if (
+        notification.actionUrl.startsWith('https://t.me/') ||
+        notification.actionUrl.startsWith('tg://')
+      ) {
+        if (!openTelegramLink(notification.actionUrl)) {
+          window.open(notification.actionUrl, '_blank', 'noopener,noreferrer');
+        }
+      } else {
+        window.open(notification.actionUrl, '_blank', 'noopener,noreferrer');
+      }
+    }
+
+    if (!notification.isRead) {
+      void markNotificationRead(notification.id);
+    }
+  };
+
+  const handleLoadMoreNotifications = () => {
+    if (!accessToken || notifications.length >= notificationsTotal) {
+      return;
+    }
+
+    void loadNotifications(accessToken, {
+      offset: notifications.length,
+      append: true,
+    });
   };
 
   const claimPendingReferralCode = async (token: string) => {
@@ -1341,16 +2027,20 @@ export default function App() {
     options: {
       provider?: string;
       onPaid?: () => void;
+      onStatusChange?: (status: string) => void;
     } = {}
   ) => {
     pendingPaymentRefreshRef.current = true;
 
     if (options.provider === 'telegram_stars' && isTelegramWebApp) {
       const opened = openTelegramInvoice(confirmationUrl, (status) => {
+        options.onStatusChange?.(status);
         if (status === 'paid') {
           pendingPaymentRefreshRef.current = false;
           void refreshUserData();
           options.onPaid?.();
+        } else if (status === 'cancelled' || status === 'failed') {
+          pendingPaymentRefreshRef.current = false;
         }
       });
       if (opened) {
@@ -1449,14 +2139,151 @@ export default function App() {
     isLoadingReferralSummary,
   ]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      return;
+    }
+
+    if (activeTab !== 'access') {
+      return;
+    }
+
+    if (isLoadingSubscriptionAccess) {
+      return;
+    }
+
+    if (subscriptionAccess) {
+      return;
+    }
+
+    void loadSubscriptionAccess(accessToken);
+  }, [
+    isAuthenticated,
+    accessToken,
+    activeTab,
+    isLoadingSubscriptionAccess,
+    subscriptionAccess,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      return;
+    }
+
+    if (attemptedNotificationsTokenRef.current === accessToken) {
+      return;
+    }
+
+    if (isDesktopBrowser || activeTab === 'notifications') {
+      void loadNotifications(accessToken, { silent: isDesktopBrowser });
+      return;
+    }
+
+    void loadNotificationsUnreadCount(accessToken);
+  }, [
+    isAuthenticated,
+    accessToken,
+    activeTab,
+    isDesktopBrowser,
+  ]);
+
   const handleTopUp = async () => {
     setIsTopUpModalOpen(true);
   };
 
+  const attachPaymentAttemptNotes = (
+    selection:
+      | {
+          kind: 'plan';
+          planId: string;
+        }
+      | {
+          kind: 'topup';
+          amount: number;
+        },
+    methods: PaymentMethodOption[]
+  ) =>
+    methods.map((method) => {
+      if (method.provider !== 'yookassa' && method.provider !== 'telegram_stars') {
+        return method;
+      }
+
+      const matchingAttempt =
+        selection.kind === 'plan'
+          ? checkoutAttempts.find(
+              (attempt) =>
+                attempt.kind === 'plan' &&
+                attempt.planId === selection.planId &&
+                attempt.provider === method.provider
+            )
+          : checkoutAttempts.find(
+              (attempt) =>
+                attempt.kind === 'topup' &&
+                attempt.amount === selection.amount &&
+                attempt.provider === method.provider
+            );
+
+      if (!matchingAttempt) {
+        return method;
+      }
+
+      const continuationNote =
+        selection.kind === 'plan'
+          ? 'Есть незавершенная оплата. Откроем текущую попытку, пока срок не истек.'
+          : `Есть незавершенное пополнение на ${formatRubles(matchingAttempt.amount)} ₽. Откроем его повторно, пока срок не истек.`;
+
+      return {
+        ...method,
+        note: method.note ? `${method.note} ${continuationNote}` : continuationNote,
+      };
+    });
+
   const createTopUpPayment = async (amount: number, provider: PaymentMethodProvider) => {
-    if (!accessToken) return;
+    if (!accessToken || !user) return;
     if (provider !== 'yookassa') {
       throw new Error('Этот способ пополнения пока не поддерживается.');
+    }
+
+    const resumableAttempt = await resolveStoredCheckoutAttempt(accessToken, {
+      accountId: user.id,
+      kind: 'topup',
+      provider,
+      amount,
+    });
+
+    if (resumableAttempt.activeAttempt) {
+      setIsTopUpModalOpen(false);
+      toast.success('Открываем незавершенное пополнение');
+      openCheckoutConfirmation(resumableAttempt.activeAttempt.confirmationUrl, {
+        provider: resumableAttempt.activeAttempt.provider,
+        onStatusChange: (status) => {
+          if (status === 'paid') {
+            markCheckoutAttemptStatus(resumableAttempt.activeAttempt, 'succeeded');
+            return;
+          }
+          if (status === 'cancelled' || status === 'failed') {
+            markCheckoutAttemptStatus(
+              resumableAttempt.activeAttempt,
+              status as StoredPaymentAttemptStatus
+            );
+            toast.error(status === 'cancelled' ? 'Оплата была отменена.' : 'Оплата завершилась ошибкой.');
+          }
+        },
+      });
+      return;
+    }
+
+    if (resumableAttempt.finalStatus) {
+      const message = describeClosedPaymentAttempt(resumableAttempt.finalStatus, {
+        successMessage: 'Предыдущее пополнение уже завершено. Обновляем баланс.',
+        retryMessage: 'Создаем новую попытку оплаты.',
+      });
+      if (resumableAttempt.finalStatus === 'succeeded') {
+        toast.success(message);
+        await refreshUserData();
+        return;
+      }
+      toast.error(message);
     }
 
     setIsTopUpSubmitting(true);
@@ -1490,6 +2317,7 @@ export default function App() {
         throw new Error('Платёж создан без ссылки на подтверждение');
       }
 
+      persistCheckoutAttempt(paymentIntent, { kind: 'topup' });
       setIsTopUpModalOpen(false);
       toast.success('Открываем YooKassa для пополнения');
       openCheckoutConfirmation(paymentIntent.confirmation_url, {
@@ -1504,7 +2332,10 @@ export default function App() {
   };
 
   const handleTopUpAmount = async (amount: number) => {
-    const methods = getAvailableTopUpPaymentMethods(isTelegramWebApp);
+    const methods = attachPaymentAttemptNotes(
+      { kind: 'topup', amount },
+      getAvailableTopUpPaymentMethods(isTelegramWebApp)
+    );
 
     if (methods.length === 1) {
       await createTopUpPayment(amount, methods[0].provider);
@@ -1552,7 +2383,7 @@ export default function App() {
   };
 
   const createPlanPayment = async (planId: string, provider: PaymentMethodProvider) => {
-    if (!accessToken) return;
+    if (!accessToken || !user) return;
 
     const selectedPlan = plans.find((plan) => plan.id === planId);
     if (!selectedPlan) {
@@ -1599,6 +2430,52 @@ export default function App() {
         throw new Error('Для этого тарифа пока не настроена цена в Telegram Stars.');
       }
 
+      if (provider === 'yookassa' || provider === 'telegram_stars') {
+        const resumableAttempt = await resolveStoredCheckoutAttempt(accessToken, {
+          accountId: user.id,
+          kind: 'plan',
+          provider,
+          planId,
+        });
+
+        if (resumableAttempt.activeAttempt) {
+          toast.success('Открываем незавершенную оплату тарифа');
+          openCheckoutConfirmation(resumableAttempt.activeAttempt.confirmationUrl, {
+            provider: resumableAttempt.activeAttempt.provider,
+            onPaid: () => toast.success('Платёж подтверждён. Обновляем подписку.'),
+            onStatusChange: (status) => {
+              if (status === 'paid') {
+                markCheckoutAttemptStatus(resumableAttempt.activeAttempt, 'succeeded');
+                return;
+              }
+              if (status === 'cancelled' || status === 'failed') {
+                markCheckoutAttemptStatus(
+                  resumableAttempt.activeAttempt,
+                  status as StoredPaymentAttemptStatus
+                );
+                toast.error(
+                  status === 'cancelled' ? 'Оплата тарифа была отменена.' : 'Оплата тарифа завершилась ошибкой.'
+                );
+              }
+            },
+          });
+          return;
+        }
+
+        if (resumableAttempt.finalStatus) {
+          const message = describeClosedPaymentAttempt(resumableAttempt.finalStatus, {
+            successMessage: 'Предыдущая оплата тарифа уже завершена. Обновляем подписку.',
+            retryMessage: 'Создаем новую попытку оплаты тарифа.',
+          });
+          if (resumableAttempt.finalStatus === 'succeeded') {
+            toast.success(message);
+            await refreshUserData();
+            return;
+          }
+          toast.error(message);
+        }
+      }
+
       const useTelegramStars = provider === 'telegram_stars';
       const endpoint = useTelegramStars
         ? `${BACKEND_API}/api/v1/payments/telegram-stars/plans/${encodeURIComponent(planId)}`
@@ -1632,12 +2509,43 @@ export default function App() {
         throw new Error('Платёж создан без ссылки на подтверждение');
       }
 
+      persistCheckoutAttempt(paymentIntent, {
+        kind: 'plan',
+        planId,
+        planName: selectedPlan.name,
+      });
       toast.success(
         useTelegramStars ? 'Открываем оплату в Telegram Stars' : 'Открываем YooKassa для оплаты тарифа'
       );
       openCheckoutConfirmation(paymentIntent.confirmation_url, {
         provider: paymentIntent.provider,
         onPaid: () => toast.success('Платёж подтверждён. Обновляем подписку.'),
+        onStatusChange: (status) => {
+          if (status !== 'paid' && status !== 'cancelled' && status !== 'failed') {
+            return;
+          }
+
+          const activeAttempt = getStoredPaymentAttempt({
+            accountId: paymentIntent.account_id,
+            kind: 'plan',
+            provider: paymentIntent.provider as StoredPaymentAttemptProvider,
+            planId,
+          });
+
+          if (!activeAttempt) {
+            return;
+          }
+
+          if (status === 'paid') {
+            markCheckoutAttemptStatus(activeAttempt, 'succeeded');
+            return;
+          }
+
+          markCheckoutAttemptStatus(activeAttempt, status as StoredPaymentAttemptStatus);
+          toast.error(
+            status === 'cancelled' ? 'Оплата тарифа была отменена.' : 'Оплата тарифа завершилась ошибкой.'
+          );
+        },
       });
     } catch (err) {
       console.error('Plan payment error:', err);
@@ -1654,7 +2562,10 @@ export default function App() {
       return;
     }
 
-    const methods = getAvailablePlanPaymentMethods(selectedPlan, isTelegramWebApp, user?.balance ?? 0);
+    const methods = attachPaymentAttemptNotes(
+      { kind: 'plan', planId },
+      getAvailablePlanPaymentMethods(selectedPlan, isTelegramWebApp, user?.balance ?? 0)
+    );
 
     if (!methods.length) {
       toast.error('Для этого тарифа пока не настроен ни один способ оплаты.');
@@ -1697,11 +2608,56 @@ export default function App() {
 
   const handleCopyReferral = () => {
     if (user?.referralCode) {
-      const referralLink = `${window.location.origin}?ref=${user.referralCode}`;
-      navigator.clipboard.writeText(referralLink);
-      setReferralCopied(true);
-      toast.success('Реферальная ссылка скопирована!');
-      setTimeout(() => setReferralCopied(false), 2000);
+      const referralLink = buildBrowserReferralLink(user.referralCode);
+      if (!referralLink) {
+        toast.error('Не удалось подготовить реферальную ссылку');
+        return;
+      }
+
+      void navigator.clipboard
+        .writeText(referralLink)
+        .then(() => {
+          setReferralCopied(true);
+          toast.success('Реферальная ссылка скопирована');
+          window.setTimeout(() => setReferralCopied(false), 2000);
+        })
+        .catch((err) => {
+          console.error('Referral copy error:', err);
+          toast.error('Не удалось скопировать ссылку');
+        });
+    }
+  };
+
+  const handleCopySubscriptionValue = (value: string, label: string) => {
+    void navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        toast.success(`Скопировано: ${label}`);
+      })
+      .catch((err) => {
+        console.error('Subscription access copy error:', err);
+        toast.error(`Не удалось скопировать: ${label.toLowerCase()}`);
+      });
+  };
+
+  const handleShareReferralToTelegram = () => {
+    if (!user?.referralCode) {
+      return;
+    }
+
+    const shareUrl = buildTelegramShareReferralUrl(user.referralCode);
+    if (!shareUrl) {
+      toast.error('Не настроена ссылка на Telegram-бота');
+      return;
+    }
+
+    if (isTelegramWebApp && openTelegramLink(shareUrl)) {
+      return;
+    }
+
+    const popup = window.open(shareUrl, '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      window.location.assign(shareUrl);
     }
   };
 
@@ -1829,6 +2785,10 @@ export default function App() {
         )
       );
       setSubscription(mapSubscriptionToView(accountData, subscriptionData, trialUi));
+      setSubscriptionAccess(null);
+      setVisibleStoredPaymentAttempts(accountData.id);
+      void reconcileStoredPaymentAttempts(accessToken, accountData.id);
+      void loadNotificationsUnreadCount(accessToken);
       return true;
     } catch (err) {
       console.error('Error refreshing user data:', err);
@@ -1945,6 +2905,17 @@ export default function App() {
   }
 
   const subscriptionData = getSubscriptionData();
+  const resumablePlanIds = Array.from(
+    new Set(
+      checkoutAttempts
+        .filter((attempt) => attempt.kind === 'plan' && attempt.planId)
+        .map((attempt) => attempt.planId as string)
+    )
+  );
+  const activeTopUpAttempt =
+    checkoutAttempts
+      .filter((attempt) => attempt.kind === 'topup')
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
 
   const renderContent = () => {
     switch (activeTab) {
@@ -1956,11 +2927,15 @@ export default function App() {
               referralCode: user.referralCode || '',
               referralsCount: user.referralsCount || 0,
               referralEarnings: user.referralEarnings || 0,
+              availableForWithdraw:
+                referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0),
             }}
             onActivateTrial={handleActivateTrial}
             onRenew={() => setActiveTab('plans')}
             onBuy={() => setActiveTab('plans')}
+            onOpenAccess={handleOpenSubscriptionAccess}
             onCopyReferral={handleCopyReferral}
+            onShareReferralToTelegram={handleShareReferralToTelegram}
             onWithdraw={handleWithdraw}
             referralCopied={referralCopied}
           />
@@ -1975,11 +2950,53 @@ export default function App() {
             isLoading={isLoadingPlans}
             checkoutPlanId={checkoutPlanId}
             isTelegramWebApp={isTelegramWebApp}
+            resumablePlanIds={resumablePlanIds}
           />
         );
+      case 'access':
+        return (
+          <SubscriptionAccessPage
+            data={subscriptionAccess}
+            isLoading={isLoadingSubscriptionAccess}
+            isTelegramWebApp={isTelegramWebApp}
+            onBack={handleBackFromSubscriptionAccess}
+            onRefresh={() => {
+              if (accessToken) {
+                void loadSubscriptionAccess(accessToken);
+              }
+            }}
+            onCopy={handleCopySubscriptionValue}
+          />
+        );
+      case 'notifications':
+        return (
+          <NotificationsPage
+            items={notifications}
+            total={notificationsTotal}
+            unreadCount={notificationsUnreadCount}
+            isLoading={isLoadingNotifications}
+            isLoadingMore={isLoadingMoreNotifications}
+            isUpdatingReadState={isUpdatingNotificationReadState}
+            onMarkRead={(notificationId) => {
+              void markNotificationRead(notificationId);
+            }}
+            onMarkAllRead={() => {
+              void markAllNotificationsRead();
+            }}
+            onLoadMore={handleLoadMoreNotifications}
+            onOpenAction={handleNotificationAction}
+          />
+        );
+      case 'faq':
+        return <FaqPage onBack={handleBackToSettings} />;
+      case 'privacy':
+        return <LegalDocumentPage kind="privacy" onBack={handleBackToSettings} />;
+      case 'terms':
+        return <LegalDocumentPage kind="terms" onBack={handleBackToSettings} />;
       case 'referral':
         return (
           <ReferralPage
+            referralCode={(referralSummary?.referral_code ?? user.referralCode) || ''}
             referrals={(referralSummary?.items || []).map((item) => ({
               id: item.referred_account_id,
               name: item.display_name,
@@ -1991,6 +3008,9 @@ export default function App() {
             availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
             rewardRate={referralSummary?.effective_reward_rate ?? 20}
             isLoading={isLoadingReferralSummary}
+            copied={referralCopied}
+            onCopyLink={handleCopyReferral}
+            onShareTelegram={handleShareReferralToTelegram}
             onWithdraw={handleWithdraw}
           />
         );
@@ -2005,6 +3025,12 @@ export default function App() {
             onLinkTelegram={handleLinkTelegram}
             onLinkBrowser={handleLinkBrowser}
             isTelegramWebApp={isTelegramWebApp}
+            notificationUnreadCount={notificationsUnreadCount}
+            onOpenNotificationsCenter={handleOpenNotificationsTab}
+            onOpenFaq={handleOpenFaq}
+            onOpenPrivacy={handleOpenPrivacy}
+            onOpenTerms={handleOpenTerms}
+            onOpenSupport={handleOpenSupport}
           />
         );
       default:
@@ -2016,9 +3042,16 @@ export default function App() {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const isStandaloneInfoTab =
+    activeTab === 'access' ||
+    activeTab === 'faq' ||
+    activeTab === 'privacy' ||
+    activeTab === 'terms';
+
   const desktopSections = [
     { id: 'overview', label: 'Обзор', icon: LayoutDashboard },
     { id: 'plans', label: 'Тарифы', icon: CreditCard },
+    { id: 'notifications', label: 'Уведомления', icon: Bell },
     { id: 'referrals', label: 'Рефералы', icon: Gift },
     { id: 'settings', label: 'Настройки', icon: SettingsIcon },
   ];
@@ -2125,7 +3158,11 @@ export default function App() {
                 disabled={checkoutPlanId === plan.id}
                 className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
               >
-                {checkoutPlanId === plan.id ? 'Открываем оплату...' : 'Оплатить тариф'}
+                {checkoutPlanId === plan.id
+                  ? 'Открываем оплату...'
+                  : resumablePlanIds.includes(plan.id)
+                    ? 'Продолжить оплату'
+                    : 'Оплатить тариф'}
               </button>
             </div>
           </div>
@@ -2142,6 +3179,7 @@ export default function App() {
         onClose={() => setIsTopUpModalOpen(false)}
         onTopUp={handleTopUpAmount}
         isSubmitting={isTopUpSubmitting}
+        activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
       />
       <PaymentMethodSheet
         isOpen={Boolean(paymentMethodSelection)}
@@ -2361,6 +3399,7 @@ export default function App() {
                     onActivateTrial={handleActivateTrial}
                     onRenew={() => scrollToSection('plans')}
                     onBuy={() => scrollToSection('plans')}
+                    onOpenAccess={handleOpenSubscriptionAccess}
                   />
                 </div>
                 <div className="p-6">
@@ -2415,7 +3454,11 @@ export default function App() {
                     referralCode={user.referralCode || ''}
                     referralsCount={user.referralsCount || 0}
                     referralEarnings={user.referralEarnings || 0}
+                    availableForWithdraw={
+                      referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)
+                    }
                     onCopy={handleCopyReferral}
+                    onShareTelegram={handleShareReferralToTelegram}
                     onWithdraw={handleWithdraw}
                     copied={referralCopied}
                   />
@@ -2434,7 +3477,9 @@ export default function App() {
                       <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
                         Доступно к выводу
                       </div>
-                      <div className="mt-3 text-3xl font-semibold">{formatRubles(user.referralEarnings)} ₽</div>
+                      <div className="mt-3 text-3xl font-semibold">
+                        {formatRubles(referralSummary?.available_for_withdraw ?? user.referralEarnings)} ₽
+                      </div>
                     </div>
                     <div className="rounded-[24px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
                       {isLoadingReferralSummary
@@ -2487,9 +3532,70 @@ export default function App() {
                   <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Русский</div>
                 </div>
 
-                <div className="rounded-[24px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
-                  Следующий логичный этап здесь: настройки уведомлений, помощь и управление
-                  безопасностью аккаунта.
+                <div className="grid gap-3">
+                  <button
+                    onClick={handleOpenSupport}
+                    className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white dark:border dark:border-slate-800 dark:bg-slate-900">
+                        <MessageCircle className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Поддержка в Telegram</div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">Переход в support-группу</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Перейти</div>
+                  </button>
+
+                  <button
+                    onClick={handleOpenFaq}
+                    className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-slate-100">
+                        <HelpCircle className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">FAQ</div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">Базовые ответы по доступу и оплате</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                  </button>
+
+                  <button
+                    onClick={handleOpenPrivacy}
+                    className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-slate-100">
+                        <Shield className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Политика конфиденциальности</div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">Правила обработки данных и интеграций</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                  </button>
+
+                  <button
+                    onClick={handleOpenTerms}
+                    className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-slate-100">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Пользовательское соглашение</div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">Условия использования продукта</div>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                  </button>
                 </div>
 
                 <button
@@ -2502,10 +3608,58 @@ export default function App() {
               </div>
             </section>
           </div>
+
+          <section
+            id="notifications"
+            className="rounded-[32px] border border-white/70 bg-white/82 p-6 shadow-[0_28px_72px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_28px_72px_rgba(2,6,23,0.55)]"
+          >
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">Центр уведомлений</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
+                  События по подписке, оплатам, реферальным начислениям и заявкам на вывод.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white dark:border dark:border-slate-800 dark:bg-slate-900">
+                {notificationsUnreadCount > 0
+                  ? `${notificationsUnreadCount} непрочитанных`
+                  : 'Все уведомления прочитаны'}
+              </div>
+            </div>
+
+            <NotificationsPage
+              items={notifications}
+              total={notificationsTotal}
+              unreadCount={notificationsUnreadCount}
+              isLoading={isLoadingNotifications}
+              isLoadingMore={isLoadingMoreNotifications}
+              isUpdatingReadState={isUpdatingNotificationReadState}
+              embedded
+              onMarkRead={(notificationId) => {
+                void markNotificationRead(notificationId);
+              }}
+              onMarkAllRead={() => {
+                void markAllNotificationsRead();
+              }}
+              onLoadMore={handleLoadMoreNotifications}
+              onOpenAction={handleNotificationAction}
+            />
+          </section>
         </main>
       </div>
     </div>
   );
+
+  if (isDesktopBrowser && isStandaloneInfoTab) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dbeafe_0%,#eff6ff_24%,#f8fafc_58%,#eef2ff_100%)] px-6 py-8 dark:bg-[radial-gradient(circle_at_top_left,#0f172a_0%,#111827_28%,#020617_100%)]">
+        <Toaster position="top-center" />
+        <div className="mx-auto max-w-4xl rounded-[32px] border border-white/70 bg-white/82 shadow-[0_28px_72px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_28px_72px_rgba(2,6,23,0.55)]">
+          {renderContent()}
+        </div>
+      </div>
+    );
+  }
 
   if (isDesktopBrowser) {
     return renderDesktopBrowserLayout();
@@ -2527,6 +3681,7 @@ export default function App() {
         onClose={() => setIsTopUpModalOpen(false)}
         onTopUp={handleTopUpAmount}
         isSubmitting={isTopUpSubmitting}
+        activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
       />
       <PaymentMethodSheet
         isOpen={Boolean(paymentMethodSelection)}
@@ -2573,6 +3728,8 @@ export default function App() {
             user={{ name: user.name, avatar: user.avatar }}
             balance={user.balance}
             onTopUp={handleTopUp}
+            onOpenNotifications={handleOpenNotificationsTab}
+            unreadNotificationsCount={notificationsUnreadCount}
           />
         </div>
         <main
@@ -2584,7 +3741,12 @@ export default function App() {
         >
           {renderContent()}
         </main>
-        <BottomNav activeTab={activeTab} onTabChange={setActiveTab} compact={isCompactBrowserLayout} />
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          compact={isCompactBrowserLayout}
+          unreadNotificationsCount={notificationsUnreadCount}
+        />
       </div>
     </div>
   );

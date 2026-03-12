@@ -9,9 +9,11 @@ from app.schemas.subscription import (
     TrialEligibilityResponse,
     WalletPlanPurchaseRequest,
 )
+from app.schemas.subscription_access import SubscriptionAccessResponse
 from app.services.ledger import InsufficientFundsError
 from app.services.plans import SubscriptionPlanError
 from app.services.purchases import PurchaseConflictError
+from app.services.subscription_access import get_subscription_access
 from app.services.subscriptions import (
     RemnawaveSyncError,
     TrialEligibilityError,
@@ -30,6 +32,13 @@ async def read_current_subscription(
     current_account: Account = Depends(get_current_account),
 ) -> SubscriptionStateResponse:
     return await get_current_subscription(current_account)
+
+
+@router.get("/access", response_model=SubscriptionAccessResponse)
+async def read_subscription_access(
+    current_account: Account = Depends(get_current_account),
+) -> SubscriptionAccessResponse:
+    return await get_subscription_access(current_account)
 
 
 @router.get("/trial-eligibility", response_model=TrialEligibilityResponse)

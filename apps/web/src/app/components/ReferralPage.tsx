@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, TrendingUp, DollarSign } from 'lucide-react';
+import { Users, TrendingUp, DollarSign, Copy, Check, Send } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
 
 interface Referral {
@@ -11,20 +11,28 @@ interface Referral {
 }
 
 interface ReferralPageProps {
+  referralCode: string;
   referrals: Referral[];
   totalEarnings: number;
   availableForWithdraw: number;
   rewardRate: number;
   isLoading?: boolean;
+  copied: boolean;
+  onCopyLink: () => void;
+  onShareTelegram: () => void;
   onWithdraw: () => void;
 }
 
 export function ReferralPage({
+  referralCode,
   referrals,
   totalEarnings,
   availableForWithdraw,
   rewardRate,
   isLoading = false,
+  copied,
+  onCopyLink,
+  onShareTelegram,
   onWithdraw,
 }: ReferralPageProps) {
   return (
@@ -53,6 +61,29 @@ export function ReferralPage({
           <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
             {formatRubles(availableForWithdraw)} ₽
           </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-4">
+        <div className="mb-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">Ваш реферальный код</div>
+        <div className="rounded-xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-3 py-2 font-mono text-sm text-[var(--tg-theme-text-color,#000000)]">
+          {referralCode}
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <button
+            onClick={onCopyLink}
+            className="flex items-center justify-center gap-2 rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+          >
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? 'Скопировано' : 'Скопировать ссылку'}
+          </button>
+          <button
+            onClick={onShareTelegram}
+            className="flex items-center justify-center gap-2 rounded-xl border border-[var(--tg-theme-button-color,#3390ec)] bg-transparent px-4 py-3 text-sm font-medium text-[var(--tg-theme-button-color,#3390ec)] transition-opacity hover:opacity-90"
+          >
+            <Send className="h-4 w-4" />
+            Поделиться в Telegram
+          </button>
         </div>
       </div>
 

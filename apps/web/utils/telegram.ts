@@ -45,3 +45,18 @@ export const openTelegramInvoice = (
     return false;
   }
 };
+
+export const openTelegramLink = (url: string): boolean => {
+  const tg = getTelegramWebApp();
+  if (!tg?.openTelegramLink) {
+    return false;
+  }
+
+  try {
+    tg.openTelegramLink(url);
+    return true;
+  } catch (err) {
+    console.error('Telegram link open error:', err);
+    return false;
+  }
+};

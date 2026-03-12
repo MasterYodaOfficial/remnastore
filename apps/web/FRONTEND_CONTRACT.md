@@ -203,6 +203,27 @@ Telegram Mini App flow:
 - создать invoice link Telegram Stars для прямой покупки тарифа внутри Mini App
 - backend сам определяет цену в `XTR` и длительность по `plan_code`
 
+`GET /api/v1/payments/status`
+
+Назначение:
+- получить актуальный статус уже созданной попытки оплаты для текущего аккаунта
+- использовать перед повторным открытием сохраненной `confirmation_url`, чтобы не продолжать уже завершенную оплату
+
+Query params:
+- `provider`
+- `provider_payment_id`
+
+Ожидаемые поля ответа:
+- `provider`
+- `flow_type`
+- `status`
+- `amount`
+- `currency`
+- `provider_payment_id`
+- `confirmation_url`
+- `expires_at`
+- `finalized_at`
+
 `POST /api/v1/subscriptions/wallet/plans/{plan_code}`
 
 Назначение:
@@ -221,11 +242,49 @@ Telegram Mini App flow:
   - `YooKassa` через внешний переход в браузер
 - если `price_stars` не задан, в Mini App для тарифа остаются `С баланса` и/или `YooKassa`
 - пополнение баланса в браузере и в Mini App сейчас идет через YooKassa; в Mini App это внешний переход в браузер
+- frontend может локально сохранять активную попытку оплаты, но перед повторным открытием должен сверять ее через `GET /api/v1/payments/status`
+- `expires_at`, `cancelled`, `expired` и `failed` считаются dead-state: такую попытку нельзя продолжать, нужно создавать новую
+- если backend уже видит `succeeded`, frontend не должен создавать дублирующую оплату; сначала нужно обновить bootstrap/account state
+- для `Telegram Stars` callback `openInvoice` можно использовать как быстрый клиентский сигнал, но источником истины по финальному статусу остается backend
 
 `POST /api/v1/subscriptions/sync`
 
 Назначение:
 - вручную подтянуть актуальное состояние подписки из Remnawave
+
+`GET /api/v1/subscriptions/access`
+
+Назначение:
+- получить полную выдачу доступа для экрана `Подключение VPN`
+- использовать как backend source of truth для:
+  - основной ссылки подписки
+  - raw keys
+  - дополнительных форматов
+  - статуса и трафика
+
+Ожидаемые поля:
+- `available`
+- `source`
+- `remnawave_user_uuid`
+- `short_uuid`
+- `username`
+- `status`
+- `expires_at`
+- `is_active`
+- `days_left`
+- `subscription_url`
+- `links[]`
+- `ssconf_links{}`
+- `traffic_used_bytes`
+- `traffic_limit_bytes`
+- `lifetime_traffic_used_bytes`
+- `refreshed_at`
+
+Семантика:
+- `source=remote` означает свежий snapshot из Remnawave
+- `source=cache` означает, что Remnawave временно недоступен и backend вернул последнюю сохраненную копию
+- `source=local_fallback` означает, что backend смог вернуть только локально сохраненную `subscription_url`
+- `source=none` означает, что у пользователя пока нет доступной выдачи конфигов
 
 ### Рефералы
 
@@ -313,6 +372,107 @@ Telegram Mini App flow:
 - `created_at`
 - `updated_at`
 
+### Уведомления
+
+`GET /api/v1/notifications`
+
+Назначение:
+- получить список уведомлений для user notification center
+
+Query params:
+- `limit`
+- `offset`
+- `unread_only`
+
+Ожидаемые поля ответа:
+- `items`
+- `total`
+- `limit`
+- `offset`
+- `unread_count`
+
+Ожидаемые поля `items[*]`:
+- `id`
+- `type`
+- `title`
+- `body`
+- `priority`
+- `payload`
+- `action_label`
+- `action_url`
+- `read_at`
+- `is_read`
+- `created_at`
+
+Текущие типы уведомлений, которые уже может вернуть backend:
+- `payment_succeeded`
+- `payment_failed`
+- `subscription_expiring`
+- `subscription_expired`
+- `referral_reward_received`
+- `withdrawal_created`
+
+Текущие payload-варианты:
+- `payment_succeeded`:
+  - `payment_id`
+  - `amount`
+  - `currency`
+  - `provider`
+  - `plan_code`
+  - `flow_type`
+- `payment_failed`:
+  - `payment_id`
+  - `amount`
+  - `currency`
+  - `provider`
+  - `plan_code`
+  - `flow_type`
+  - `status`
+- `referral_reward_received`:
+  - `reward_id`
+  - `reward_amount`
+  - `currency`
+  - `referred_account_id`
+  - `subscription_grant_id`
+- `subscription_expiring`:
+  - `days_left`
+  - `expires_at`
+  - `remnawave_event`
+  - `remnawave_user_uuid`
+- `subscription_expired`:
+  - `expires_at`
+  - `remnawave_event`
+  - `remnawave_user_uuid`
+- `withdrawal_created`:
+  - `withdrawal_id`
+  - `amount`
+  - `destination_type`
+
+`GET /api/v1/notifications/unread-count`
+
+Назначение:
+- получить число непрочитанных уведомлений отдельно от полного списка
+
+Ожидаемые поля ответа:
+- `unread_count`
+
+`POST /api/v1/notifications/{id}/read`
+
+Назначение:
+- пометить одно уведомление как прочитанное
+
+Семантика:
+- повторный вызов безопасен
+- backend должен возвращать уже обновленное уведомление
+
+`POST /api/v1/notifications/read-all`
+
+Назначение:
+- пометить все непрочитанные уведомления текущего аккаунта как прочитанные
+
+Ожидаемые поля ответа:
+- `updated_count`
+
 ### Связка аккаунтов
 
 `POST /api/v1/accounts/link-telegram`
@@ -352,6 +512,7 @@ Telegram Mini App flow:
 - signup
 - password reset
 - если URL содержит `?ref=<code>`, frontend должен сохранить код локально до завершения авторизации
+- если пользователь с сохраненным `?ref=<code>` жмет `Войти через Telegram`, ссылка на бота должна строиться как `VITE_TELEGRAM_BOT_URL?start=ref_<code>`
 - после успешной авторизации frontend должен попытаться вызвать `POST /api/v1/referrals/claim`
 
 ### Telegram Mini App login
@@ -361,7 +522,18 @@ Telegram Mini App flow:
 - backend verification
 - получение backend JWT
 - загрузка локального аккаунта
+- если пользователь пришел в бота по deep-link `start=ref_<code>`, bot должен:
+  - сохранить pending referral intent на backend по `telegram_id`
+  - показать WebApp-кнопку с URL вида `WEBAPP_URL?ref=<code>`
 - если при входе был входной `?ref=<code>`, после получения токена frontend должен так же вызвать `POST /api/v1/referrals/claim`
+- backend `POST /api/v1/auth/telegram/webapp` должен также пытаться автоприменить pending referral intent, если он был сохранен ранее
+
+### Referral sharing UI
+
+- в интерфейсе должны быть две отдельные user action:
+  - `Скопировать ссылку` -> копирует browser link вида `https://app...?ref=<code>`
+  - `Поделиться в Telegram` -> открывает Telegram share flow c bot deep-link `t.me/<bot>?start=ref_<code>`
+- frontend не должен смешивать эти два transport в одну кнопку
 
 ### Browser -> Telegram
 
@@ -484,8 +656,9 @@ npm run build
 - [ ] Реальный вывод средств через новый API
 - [ ] Детальный список рефералов из backend
 - [ ] Экран истории операций и ledger UI
-- [ ] Центр уведомлений
-- [ ] FAQ и policy pages с реальным контентом
+- [x] Центр уведомлений
+- [x] FAQ и policy pages с реальным контентом
+- [x] Экран выдачи подписки и конфигов
 - [ ] Отдельный frontend smoke-suite или web e2e tests
 
 ## Атрибуция и внешние материалы

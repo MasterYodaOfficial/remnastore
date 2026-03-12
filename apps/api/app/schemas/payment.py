@@ -50,6 +50,18 @@ class PaymentIntentResponse(BaseModel):
     raw_payload: dict | None = None
 
 
+class PaymentStatusResponse(BaseModel):
+    provider: PaymentProvider
+    flow_type: PaymentFlowType
+    status: PaymentStatus
+    amount: int
+    currency: str
+    provider_payment_id: str
+    confirmation_url: str | None = None
+    expires_at: datetime | None = None
+    finalized_at: datetime | None = None
+
+
 class TelegramStarsPreCheckoutRequest(BaseModel):
     telegram_id: int
     invoice_payload: str

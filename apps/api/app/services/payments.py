@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass
 from typing import Mapping
@@ -35,6 +36,11 @@ from app.domain.payments import (
     PaymentWebhookEvent,
 )
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
+from app.services.notifications import (
+    FINAL_FAILED_PAYMENT_STATUSES,
+    notify_payment_failed,
+    notify_payment_succeeded,
+)
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
 from app.services.purchases import (
     PurchaseSource,
@@ -43,6 +49,9 @@ from app.services.purchases import (
     compute_paid_plan_window,
 )
 from app.services.referrals import apply_first_referral_reward_for_grant
+
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -120,6 +129,41 @@ def _extract_confirmation_url(response: object) -> str | None:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _normalize_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _as_db_naive_utc(value: datetime) -> datetime:
+    normalized = _normalize_datetime(value)
+    assert normalized is not None
+    return normalized.replace(tzinfo=None)
+
+
+def _get_pending_ttl_seconds(provider: PaymentProvider) -> int:
+    if provider == PaymentProvider.YOOKASSA:
+        return max(60, int(settings.payment_pending_ttl_seconds_yookassa))
+    if provider == PaymentProvider.TELEGRAM_STARS:
+        return max(60, int(settings.payment_pending_ttl_seconds_telegram_stars))
+    return 3600
+
+
+def _resolve_pending_payment_expires_at(
+    *,
+    provider: PaymentProvider,
+    snapshot_expires_at: datetime | None,
+    existing_expires_at: datetime | None = None,
+) -> datetime | None:
+    if snapshot_expires_at is not None:
+        return snapshot_expires_at
+    if existing_expires_at is not None:
+        return existing_expires_at
+    return _utcnow() + timedelta(seconds=_get_pending_ttl_seconds(provider))
 
 
 class YooKassaGateway:
@@ -231,6 +275,43 @@ class YooKassaGateway:
     ) -> PaymentIntentSnapshot:
         idempotency_key = command.idempotency_key or str(uuid4())
         return await asyncio.to_thread(self._create_payment_intent_sync, command, idempotency_key)
+
+    def _snapshot_from_payment_response(self, response: object) -> PaymentIntentSnapshot:
+        metadata = getattr(response, "metadata", None) or {}
+        raw_account_id = metadata.get("rm_account_id")
+        raw_flow_type = metadata.get("rm_flow_type")
+        if not isinstance(raw_account_id, str) or not raw_account_id:
+            raise PaymentGatewayError("YooKassa payment metadata is missing rm_account_id")
+        if not isinstance(raw_flow_type, str) or not raw_flow_type:
+            raise PaymentGatewayError("YooKassa payment metadata is missing rm_flow_type")
+
+        try:
+            account_id = UUID(raw_account_id)
+        except ValueError as exc:
+            raise PaymentGatewayError("YooKassa payment metadata contains invalid rm_account_id") from exc
+
+        try:
+            flow_type = PaymentFlowType(raw_flow_type)
+        except ValueError as exc:
+            raise PaymentGatewayError("YooKassa payment metadata contains invalid rm_flow_type") from exc
+
+        return PaymentIntentSnapshot(
+            provider=self.provider,
+            flow_type=flow_type,
+            account_id=account_id,
+            status=_map_yookassa_status(response.status),
+            amount=_require_integer_amount(response.amount.value, currency=response.amount.currency),
+            currency=response.amount.currency,
+            provider_payment_id=response.id,
+            external_reference=metadata.get("rm_external_reference"),
+            confirmation_url=_extract_confirmation_url(response),
+            expires_at=_parse_iso_datetime(getattr(response, "expires_at", None)),
+            raw_payload=_normalize_json_payload(response.json(), field_name="yookassa payment response"),
+        )
+
+    async def fetch_payment_snapshot(self, provider_payment_id: str) -> PaymentIntentSnapshot:
+        response = await asyncio.to_thread(self._fetch_payment_sync, provider_payment_id)
+        return self._snapshot_from_payment_response(response)
 
     async def parse_webhook(
         self,
@@ -506,6 +587,10 @@ class PaymentConflictError(PaymentServiceError):
     pass
 
 
+class PaymentNotFoundError(PaymentServiceError):
+    pass
+
+
 @dataclass(slots=True)
 class PaymentWebhookProcessResult:
     payment_id: int
@@ -514,6 +599,22 @@ class PaymentWebhookProcessResult:
     duplicate: bool
     ledger_applied: bool
     subscription_applied: bool = False
+
+
+@dataclass(slots=True)
+class PaymentMaintenanceResult:
+    processed: int = 0
+    expired: int = 0
+    succeeded: int = 0
+    cancelled: int = 0
+    failed: int = 0
+
+
+STALE_PENDING_PAYMENT_STATUSES = {
+    PaymentStatus.CREATED,
+    PaymentStatus.PENDING,
+    PaymentStatus.REQUIRES_ACTION,
+}
 
 
 def _payment_to_snapshot(payment: Payment) -> PaymentIntentSnapshot:
@@ -562,6 +663,26 @@ async def _get_payment_by_idempotency_key(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def get_payment_for_account(
+    session: AsyncSession,
+    *,
+    account: Account,
+    provider: PaymentProvider,
+    provider_payment_id: str,
+) -> Payment:
+    result = await session.execute(
+        select(Payment).where(
+            Payment.account_id == account.id,
+            Payment.provider == provider,
+            Payment.provider_payment_id == provider_payment_id,
+        )
+    )
+    payment = result.scalar_one_or_none()
+    if payment is None:
+        raise PaymentNotFoundError("payment not found")
+    return payment
 
 
 async def _get_payment_event_by_provider_event_id(
@@ -666,7 +787,11 @@ def _apply_payment_intent_snapshot(
     payment.success_url = command.success_url
     payment.cancel_url = command.cancel_url
     payment.confirmation_url = snapshot.confirmation_url
-    payment.expires_at = snapshot.expires_at
+    payment.expires_at = _resolve_pending_payment_expires_at(
+        provider=snapshot.provider,
+        snapshot_expires_at=snapshot.expires_at,
+        existing_expires_at=payment.expires_at,
+    )
     payment.raw_payload = snapshot.raw_payload
     payment.request_metadata = dict(command.metadata)
     payment.finalized_at = (
@@ -706,6 +831,188 @@ def _validate_existing_idempotent_payment(
         raise PaymentConflictError("idempotency key already used for another amount")
     if payment.plan_code != plan_code:
         raise PaymentConflictError("idempotency key already used for another plan")
+
+
+def _is_stale_pending_payment(payment: Payment, *, now: datetime) -> bool:
+    expires_at = _normalize_datetime(payment.expires_at)
+    return (
+        payment.status in STALE_PENDING_PAYMENT_STATUSES
+        and payment.finalized_at is None
+        and expires_at is not None
+        and expires_at <= now
+    )
+
+
+def _should_reconcile_pending_yookassa_payment(
+    payment: Payment,
+    *,
+    now: datetime,
+    min_age_seconds: int,
+) -> bool:
+    created_at = _normalize_datetime(payment.created_at)
+    expires_at = _normalize_datetime(payment.expires_at)
+    if payment.provider != PaymentProvider.YOOKASSA:
+        return False
+    if payment.status not in STALE_PENDING_PAYMENT_STATUSES:
+        return False
+    if payment.finalized_at is not None:
+        return False
+    if created_at is not None and created_at > now - timedelta(seconds=max(1, min_age_seconds)):
+        return False
+    if expires_at is not None and expires_at <= now:
+        return False
+    return True
+
+
+async def expire_stale_payments(
+    session: AsyncSession,
+    *,
+    limit: int,
+) -> PaymentMaintenanceResult:
+    now = _utcnow()
+    result = await session.execute(
+        select(Payment.id)
+        .where(
+            Payment.status.in_(tuple(STALE_PENDING_PAYMENT_STATUSES)),
+            Payment.finalized_at.is_(None),
+            Payment.expires_at.is_not(None),
+            Payment.expires_at <= now,
+        )
+        .order_by(Payment.expires_at.asc(), Payment.id.asc())
+        .limit(limit)
+    )
+    payment_ids = list(result.scalars().all())
+
+    summary = PaymentMaintenanceResult()
+    for payment_id in payment_ids:
+        payment = await _get_payment_by_id(session, payment_id=payment_id, for_update=True)
+        if payment is None or not _is_stale_pending_payment(payment, now=now):
+            continue
+
+        payment.status = PaymentStatus.EXPIRED
+        payment.finalized_at = _utcnow()
+        await notify_payment_failed(session, payment=payment, status=PaymentStatus.EXPIRED)
+        summary.processed += 1
+        summary.expired += 1
+
+    if summary.processed > 0:
+        await session.commit()
+    else:
+        await session.rollback()
+
+    return summary
+
+
+async def reconcile_pending_yookassa_payments(
+    session: AsyncSession,
+    *,
+    limit: int,
+    min_age_seconds: int | None = None,
+) -> PaymentMaintenanceResult:
+    now = _utcnow()
+    created_before = _as_db_naive_utc(now)
+    reconcile_min_age_seconds = (
+        max(1, int(min_age_seconds))
+        if min_age_seconds is not None
+        else max(1, int(settings.payment_reconcile_yookassa_min_age_seconds))
+    )
+    result = await session.execute(
+        select(Payment.id)
+        .where(
+            Payment.provider == PaymentProvider.YOOKASSA,
+            Payment.status.in_(tuple(STALE_PENDING_PAYMENT_STATUSES)),
+            Payment.finalized_at.is_(None),
+            Payment.created_at <= created_before - timedelta(seconds=reconcile_min_age_seconds),
+        )
+        .order_by(Payment.created_at.asc(), Payment.id.asc())
+        .limit(limit)
+    )
+    payment_ids = list(result.scalars().all())
+
+    gateway = get_yookassa_gateway()
+    summary = PaymentMaintenanceResult()
+    for payment_id in payment_ids:
+        payment = await _get_payment_by_id(session, payment_id=payment_id, for_update=True)
+        if payment is None or not _should_reconcile_pending_yookassa_payment(
+            payment,
+            now=now,
+            min_age_seconds=reconcile_min_age_seconds,
+        ):
+            continue
+
+        try:
+            snapshot = await gateway.fetch_payment_snapshot(payment.provider_payment_id)
+        except PaymentGatewayError:
+            await session.rollback()
+            logger.exception(
+                "yookassa reconciliation failed for payment_id=%s provider_payment_id=%s",
+                payment.id,
+                payment.provider_payment_id,
+            )
+            continue
+
+        if snapshot.account_id != payment.account_id:
+            await session.rollback()
+            logger.error(
+                "yookassa reconciliation account mismatch for payment_id=%s provider_payment_id=%s",
+                payment.id,
+                payment.provider_payment_id,
+            )
+            continue
+        if snapshot.flow_type != payment.flow_type:
+            await session.rollback()
+            logger.error(
+                "yookassa reconciliation flow mismatch for payment_id=%s provider_payment_id=%s",
+                payment.id,
+                payment.provider_payment_id,
+            )
+            continue
+        if snapshot.amount != payment.amount or snapshot.currency != payment.currency:
+            await session.rollback()
+            logger.error(
+                "yookassa reconciliation amount mismatch for payment_id=%s provider_payment_id=%s",
+                payment.id,
+                payment.provider_payment_id,
+            )
+            continue
+
+        payment.status = snapshot.status
+        payment.raw_payload = snapshot.raw_payload
+        payment.expires_at = _resolve_pending_payment_expires_at(
+            provider=payment.provider,
+            snapshot_expires_at=snapshot.expires_at,
+            existing_expires_at=payment.expires_at,
+        )
+
+        if snapshot.status == PaymentStatus.SUCCEEDED:
+            if payment.flow_type == PaymentFlowType.WALLET_TOPUP:
+                if await _finalize_wallet_topup_payment(session, payment_id=payment.id):
+                    summary.processed += 1
+                    summary.succeeded += 1
+            elif payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE:
+                await _stage_plan_purchase_grant(session, payment=payment)
+                if await _finalize_direct_plan_purchase(session, payment_id=payment.id):
+                    summary.processed += 1
+                    summary.succeeded += 1
+            continue
+
+        if snapshot.status in FINAL_FAILED_PAYMENT_STATUSES:
+            payment.finalized_at = _utcnow()
+            await notify_payment_failed(session, payment=payment, status=snapshot.status)
+            await session.commit()
+            summary.processed += 1
+            if snapshot.status == PaymentStatus.CANCELLED:
+                summary.cancelled += 1
+            else:
+                summary.failed += 1
+            continue
+
+        await session.commit()
+
+    if summary.processed == 0:
+        await session.rollback()
+
+    return summary
 
 
 async def create_payment(
@@ -1011,6 +1318,7 @@ async def _finalize_wallet_topup_payment(
         idempotency_key=f"payment:{payment.provider.value}:{payment.provider_payment_id}:credit",
     )
     payment.finalized_at = _utcnow()
+    await notify_payment_succeeded(session, payment=payment)
     await session.commit()
     await clear_account_cache(payment.account_id)
     return True
@@ -1054,6 +1362,7 @@ async def _finalize_direct_plan_purchase(
 
     grant.applied_at = _utcnow()
     payment.finalized_at = _utcnow()
+    await notify_payment_succeeded(session, payment=payment)
     await session.commit()
     await clear_account_cache(payment.account_id)
     return True
@@ -1123,6 +1432,8 @@ async def process_payment_webhook(
 
         if event.status == PaymentStatus.SUCCEEDED and payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE:
             await _stage_plan_purchase_grant(session, payment=payment)
+        elif event.status in FINAL_FAILED_PAYMENT_STATUSES:
+            await notify_payment_failed(session, payment=payment, status=event.status)
 
         try:
             await session.commit()

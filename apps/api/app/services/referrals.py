@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, ROUND_DOWN
 import uuid
 
@@ -10,8 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.config import settings
-from app.db.models import Account, LedgerEntryType, ReferralAttribution, ReferralReward, SubscriptionGrant
+from app.db.models import (
+    Account,
+    LedgerEntryType,
+    ReferralAttribution,
+    ReferralReward,
+    SubscriptionGrant,
+    TelegramReferralIntent,
+)
 from app.services.ledger import apply_credit_in_transaction
+from app.services.notifications import notify_referral_reward_received
 from app.services.plans import get_subscription_plan
 from app.services.withdrawals import get_withdrawal_availability
 
@@ -59,6 +67,13 @@ class ReferralSummary:
     available_for_withdraw: int
     effective_reward_rate: float
     items: list[ReferralSummaryItem]
+
+
+@dataclass(slots=True)
+class TelegramReferralIntentResult:
+    applied: bool
+    created: bool
+    reason: str | None = None
 
 
 def _normalize_referral_code(referral_code: str) -> str:
@@ -185,6 +200,21 @@ async def _has_completed_paid_purchase(
     return result.scalar_one_or_none() is not None
 
 
+async def _get_telegram_referral_intent_by_telegram_id(
+    session: AsyncSession,
+    telegram_id: int,
+    *,
+    for_update: bool = False,
+) -> TelegramReferralIntent | None:
+    statement: Select[tuple[TelegramReferralIntent]] = select(TelegramReferralIntent).where(
+        TelegramReferralIntent.telegram_id == telegram_id
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    result = await session.execute(statement)
+    return result.scalar_one_or_none()
+
+
 async def claim_referral_code(
     session: AsyncSession,
     *,
@@ -240,6 +270,95 @@ async def claim_referral_code(
     session.add(attribution)
     await session.flush()
     return ReferralClaimResult(attribution=attribution, created=True)
+
+
+async def record_telegram_referral_intent(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+    referral_code: str,
+) -> TelegramReferralIntent:
+    normalized_referral_code = _normalize_referral_code(referral_code)
+    if await _get_account_by_referral_code(session, normalized_referral_code) is None:
+        raise ReferralCodeNotFoundError("referral code not found")
+
+    intent = await _get_telegram_referral_intent_by_telegram_id(
+        session,
+        telegram_id,
+        for_update=True,
+    )
+    if intent is None:
+        intent = TelegramReferralIntent(
+            telegram_id=telegram_id,
+            referral_code=normalized_referral_code,
+            status="pending",
+        )
+        session.add(intent)
+    else:
+        intent.referral_code = normalized_referral_code
+        intent.status = "pending"
+        intent.result_reason = None
+        intent.account_id = None
+        intent.consumed_at = None
+        intent.updated_at = datetime.now(UTC)
+
+    await session.commit()
+    await session.refresh(intent)
+    return intent
+
+
+async def apply_telegram_referral_intent(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+    account_id: uuid.UUID,
+) -> TelegramReferralIntentResult | None:
+    intent = await _get_telegram_referral_intent_by_telegram_id(
+        session,
+        telegram_id,
+        for_update=True,
+    )
+    if intent is None or intent.status != "pending":
+        return None
+
+    intent.account_id = account_id
+    intent.consumed_at = datetime.now(UTC)
+
+    try:
+        claim_result = await claim_referral_code(
+            session,
+            account_id=account_id,
+            referral_code=intent.referral_code,
+        )
+    except ReferralCodeNotFoundError:
+        intent.status = "rejected"
+        intent.result_reason = "referral_code_not_found"
+        await session.commit()
+        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+    except ReferralSelfAttributionError:
+        intent.status = "rejected"
+        intent.result_reason = "self_referral"
+        await session.commit()
+        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+    except ReferralAlreadyAttributedError:
+        intent.status = "rejected"
+        intent.result_reason = "already_claimed"
+        await session.commit()
+        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+    except ReferralAttributionWindowClosedError:
+        intent.status = "rejected"
+        intent.result_reason = "window_closed"
+        await session.commit()
+        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+
+    intent.status = "applied" if claim_result.created else "noop"
+    intent.result_reason = None if claim_result.created else "already_applied"
+    await session.commit()
+    return TelegramReferralIntentResult(
+        applied=claim_result.created,
+        created=claim_result.created,
+        reason=intent.result_reason,
+    )
 
 
 async def apply_first_referral_reward_for_grant(
@@ -306,6 +425,7 @@ async def apply_first_referral_reward_for_grant(
     )
     session.add(reward)
     await session.flush()
+    await notify_referral_reward_received(session, reward=reward)
     return reward
 
 

@@ -42,3 +42,26 @@ class ReferralReward(Base):
     reward_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="RUB")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class TelegramReferralIntent(Base):
+    __tablename__ = "telegram_referral_intents"
+    __table_args__ = (
+        Index("ix_tg_ref_intents_telegram_id", "telegram_id", unique=True),
+        Index("ix_tg_ref_intents_account_id", "account_id"),
+        Index("ix_tg_ref_intents_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
+    referral_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    result_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    account_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

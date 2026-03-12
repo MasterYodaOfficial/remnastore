@@ -15,7 +15,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api.dependencies import get_current_account
 from app.core.config import settings
 from app.db.base import Base
-from app.db.models import Account, AccountStatus, LedgerEntry, LedgerEntryType, SubscriptionGrant
+from app.db.models import (
+    Account,
+    AccountStatus,
+    LedgerEntry,
+    LedgerEntryType,
+    Notification,
+    NotificationType,
+    SubscriptionGrant,
+)
 from app.db.session import get_session
 from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
 from app.main import create_app
@@ -227,6 +235,15 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
                 select(SubscriptionGrant)
                 .where(SubscriptionGrant.account_id == account_id)
                 .order_by(SubscriptionGrant.id.asc())
+            )
+            return list(result.scalars().all())
+
+    async def _get_notifications(self, account_id: uuid.UUID) -> list[Notification]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Notification)
+                .where(Notification.account_id == account_id)
+                .order_by(Notification.id.asc())
             )
             return list(result.scalars().all())
 
@@ -627,19 +644,21 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_remnawave_webhook_updates_local_snapshot(self) -> None:
         account = await self._create_account(email="webhook@example.com")
+        expires_at = datetime.now(UTC) + timedelta(days=10)
 
-        self._fake_gateway.users[account.id] = RemnawaveUser(
-            uuid=account.id,
-            username=f"acc_{account.id.hex}",
-            status="ACTIVE",
-            expire_at=datetime.now(UTC) + timedelta(days=10),
-            subscription_url="https://panel.test/sub/webhook",
-            telegram_id=None,
-            email=account.email,
-            tag="TRIAL",
-        )
-
-        payload = {"event": "user.modified", "data": str(account.id)}
+        payload = {
+            "scope": "user",
+            "event": "user.modified",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {
+                "uuid": str(account.id),
+                "status": "ACTIVE",
+                "expireAt": expires_at.isoformat(),
+                "subscriptionUrl": "https://panel.test/sub/webhook",
+                "email": account.email,
+                "tag": "TRIAL",
+            },
+        }
         raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         signature = hmac.new(
             settings.remnawave_webhook_secret.encode("utf-8"),
@@ -656,6 +675,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["handled"], True)
         self.assertEqual(response.json()["processed"], True)
 
         stored_account = await self._get_account(account.id)
@@ -668,6 +688,117 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             "https://panel.test/sub/webhook",
         )
         self.assertTrue(stored_account.subscription_is_trial)
+
+    async def test_remnawave_webhook_creates_subscription_expiring_notification(self) -> None:
+        account = await self._create_account(
+            email="expires-soon@example.com",
+            subscription_url="https://panel.test/sub/expires-soon",
+        )
+        expires_at = datetime.now(UTC) + timedelta(days=1)
+        payload = {
+            "scope": "user",
+            "event": "user.expires_in_24_hours",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {
+                "uuid": str(account.id),
+                "status": "ACTIVE",
+                "expireAt": expires_at.isoformat(),
+                "subscriptionUrl": "https://panel.test/sub/expires-soon",
+            },
+        }
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["notification_types"], ["subscription_expiring"])
+
+        notifications = await self._get_notifications(account.id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0].type, NotificationType.SUBSCRIPTION_EXPIRING)
+        self.assertEqual(notifications[0].payload["days_left"], 1)
+        self.assertEqual(notifications[0].payload["remnawave_event"], "user.expires_in_24_hours")
+
+    async def test_remnawave_webhook_creates_subscription_expired_notification(self) -> None:
+        account = await self._create_account(
+            email="expired@example.com",
+            subscription_status="ACTIVE",
+        )
+        expires_at = datetime.now(UTC) - timedelta(minutes=5)
+        payload = {
+            "scope": "user",
+            "event": "user.expired",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {
+                "uuid": str(account.id),
+                "status": "EXPIRED",
+                "expireAt": expires_at.isoformat(),
+            },
+        }
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["notification_types"], ["subscription_expired"])
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.subscription_status, "EXPIRED")
+
+        notifications = await self._get_notifications(account.id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0].type, NotificationType.SUBSCRIPTION_EXPIRED)
+        self.assertEqual(notifications[0].payload["remnawave_event"], "user.expired")
+
+    async def test_remnawave_webhook_accepts_unhandled_future_scope_event(self) -> None:
+        payload = {
+            "scope": "system",
+            "event": "system.started",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {"version": "1.0.0"},
+        }
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["handled"], False)
+        self.assertEqual(response.json()["processed"], False)
 
     async def test_remnawave_webhook_rejects_invalid_signature(self) -> None:
         account = await self._create_account(email="invalid-signature@example.com")

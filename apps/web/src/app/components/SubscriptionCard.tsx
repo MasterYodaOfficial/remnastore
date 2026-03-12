@@ -9,17 +9,20 @@ interface SubscriptionCardProps {
     totalDays?: number;
     hasTrial: boolean;
     hasUsedTrial: boolean;
+    subscriptionUrl?: string | null;
   };
   onActivateTrial: () => void;
   onRenew: () => void;
   onBuy: () => void;
+  onOpenAccess: () => void;
 }
 
 export function SubscriptionCard({ 
   subscription, 
   onActivateTrial, 
   onRenew, 
-  onBuy 
+  onBuy,
+  onOpenAccess,
 }: SubscriptionCardProps) {
   const progressValue = subscription.isActive && subscription.daysLeft && subscription.totalDays
     ? (subscription.daysLeft / subscription.totalDays) * 100
@@ -57,12 +60,21 @@ export function SubscriptionCard({
           
           <Progress value={progressValue} className="h-2" />
           
-          <button
-            onClick={onRenew}
-            className="w-full py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity"
-          >
-            Продлить подписку
-          </button>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              onClick={onOpenAccess}
+              disabled={!subscription.subscriptionUrl}
+              className="w-full rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] py-3 font-medium text-[var(--tg-theme-text-color,#000000)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Получить конфиг
+            </button>
+            <button
+              onClick={onRenew}
+              className="w-full py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity"
+            >
+              Продлить подписку
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

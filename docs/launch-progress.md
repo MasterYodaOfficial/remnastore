@@ -15,10 +15,11 @@
 - Фаза 2: `Завершена`
 - Фаза 3: `Завершена`
 - Фаза 4: `В работе`
-- Фаза 5: `Не начато`
-- Фаза 6: `Не начато`
+- Фаза 5: `В работе`
+- Фаза 6: `В работе`
 - Фаза 7: `Не начато`
 - Фаза 8: `Не начато`
+- Фаза 9: `Не начато`
 
 ## Очередность работы
 
@@ -26,7 +27,7 @@
 2. Перейти к Фазе 1
 3. Не начинать платежи до появления ledger
 4. Не начинать migration старой БД до стабилизации новых моделей
-5. Не деплоить в production до закрытия критичных пунктов Фазы 8
+5. Не деплоить в production до закрытия критичных пунктов Фазы 9
 
 ## Фаза 0. Стабилизация текущей базы
 Статус: `Завершена`
@@ -199,6 +200,15 @@
 - повторный callback с тем же `provider_event_id` больше не может продлить подписку второй раз; если первый проход успел только зафиксировать event/grant, повторный webhook безопасно завершит незакрытую финализацию
 - frontend checkout flow теперь использует реальные endpoints `GET /api/v1/payments/plans`, `POST /api/v1/payments/yookassa/topup`, `POST /api/v1/payments/yookassa/plans/{plan_code}` и `POST /api/v1/payments/telegram-stars/plans/{plan_code}` вместо заглушек
 
+Дополнено 2026-03-12 по платежной надежности:
+- все новые `pending` платежи теперь получают `expires_at`, даже если провайдер его не вернул
+- для `Telegram Stars` введен локальный TTL pending invoice link, чтобы брошенные попытки оплаты не висели бесконечно
+- добавлен backend cleanup `expire_stale_payments`, который переводит просроченные pending платежи в `expired` и создает `payment_failed` уведомление
+- добавлен backend reconcile `reconcile_pending_yookassa_payments`, который сверяет старые pending YooKassa платежи с провайдером и безопасно догоняет `succeeded/cancelled`
+- добавлен отдельный `payments worker`, который запускает cleanup/reconcile в фоне и использует Redis lock для защиты от параллельного запуска на нескольких инстансах
+- frontend checkout теперь хранит локальные активные попытки оплаты и перед повторным открытием сверяет их через `GET /api/v1/payments/status`
+- живые `pending/requires_action` попытки UI предлагает продолжить, а `expired/cancelled/failed` больше не переоткрываются и заменяются только новой явной попыткой пользователя
+
 ## Фаза 3. Единый purchase flow и Remnawave
 Статус: `Завершена`
 
@@ -298,6 +308,8 @@
 - effective referral rate теперь берется как `account.referral_reward_rate` override или `settings.default_referral_reward_rate`
 - добавлен `GET /api/v1/referrals/summary` для списка рефералов и текущих агрегатов
 - frontend теперь захватывает `?ref=...`, выполняет deferred claim после авторизации и подгружает реальный referral summary во вкладке рефералов
+- для Telegram referral transport бот теперь понимает `/start ref_<code>`, сохраняет pending referral intent на backend и отдает WebApp-кнопку с `?ref=<code>` в URL, поэтому flow `browser -> Telegram -> Mini App` больше не теряет реферальный код даже при повторном открытии Mini App
+- в интерфейсе добавлены отдельные действия `Скопировать ссылку` и `Поделиться в Telegram`, чтобы browser-link и Telegram deep-link не смешивались в один сценарий
 - добавлена модель `Withdrawal`, миграция `20260311_add_withdrawals.py` и доменный сервис `apps/api/app/services/withdrawals.py`
 - добавлены пользовательские endpoint'ы `POST /api/v1/withdrawals` и `GET /api/v1/withdrawals`
 - при создании заявки сумма сразу резервируется через `ledger entry` типа `withdrawal_reserve`, чтобы ее нельзя было потратить повторно до ручной обработки
@@ -314,22 +326,105 @@
 - `apps/web: npm run build`
 
 ## Фаза 5. Уведомления, поддержка и FAQ
-Статус: `Не начато`
+Статус: `В работе`
 
-- [ ] Спроектировать модель `notifications`
-- [ ] Сделать центр уведомлений в user app
-- [ ] Сделать Telegram notification service
-- [ ] Добавить уведомление об успешной оплате
-- [ ] Добавить уведомление об ошибке оплаты
-- [ ] Добавить уведомление о скором окончании подписки
-- [ ] Добавить уведомление об окончании подписки
-- [ ] Добавить уведомление о реферальном начислении
+- [x] Спроектировать модель `notifications`
+- [x] Сделать центр уведомлений в user app
+- [x] Сделать Telegram notification service
+- [x] Добавить уведомление об успешной оплате
+- [x] Добавить уведомление об ошибке оплаты
+- [x] Добавить уведомление о скором окончании подписки
+- [x] Добавить уведомление об окончании подписки
+- [x] Добавить уведомление о реферальном начислении
 - [ ] Добавить уведомления по заявкам на вывод
-- [ ] Добавить кнопку поддержки на Telegram-группу
-- [ ] Добавить FAQ страницу
-- [ ] Добавить `Privacy Policy` и `Terms`
+- [x] Добавить кнопку поддержки на Telegram-группу
+- [x] Добавить FAQ страницу
+- [x] Добавить `Privacy Policy` и `Terms`
 
-## Фаза 6. Отдельная админка
+Сделано 2026-03-12:
+- добавлены модели `Notification` и `NotificationDelivery`, а также миграция `20260312_add_notifications.py`
+- добавлен backend notification service `apps/api/app/services/notifications.py`
+- добавлены пользовательские endpoint'ы:
+  - `GET /api/v1/notifications`
+  - `GET /api/v1/notifications/unread-count`
+  - `POST /api/v1/notifications/{id}/read`
+  - `POST /api/v1/notifications/read-all`
+- во frontend добавлены реальные страницы `FAQ`, `Политика конфиденциальности`, `Пользовательское соглашение`
+- в `Settings` добавлены реальные действия для Telegram-support и переходов на FAQ / policy pages
+- в notification service сразу заложены:
+  - `dedupe_key` для идемпотентного создания бизнес-уведомлений
+  - `notification_deliveries` для разделения факта события и каналов доставки
+  - базовый канал `in_app`, который помечается как доставленный при создании уведомления
+- добавлен Telegram delivery sender с retry/backoff и batch processing по `notification_deliveries(channel=telegram)`
+- добавлен отдельный `notifications-worker`, который обрабатывает pending/retryable Telegram deliveries под Redis lock
+- подключены producers для бизнес-событий:
+  - успешная оплата
+  - неуспешная оплата
+  - реферальное начисление
+  - создание заявки на вывод
+- добавлены тесты `tests.test_notifications` на list/read/read-all, dedupe semantics и Telegram delivery flow
+- обновлены интеграционные тесты `tests.test_payments`, `tests.test_referrals`, `tests.test_withdrawals`
+- frontend checkout обновлен под `expires_at` и финальные payment status'ы: интерфейс переоткрывает только живые попытки и не продолжает слепо уже завершенные платежи
+- `POST /api/v1/webhooks/remnawave` переведен на payload-driven dispatcher:
+  - HMAC-подпись `X-Remnawave-Signature` сохраняется
+  - user events больше не требуют обязательного `GET` в Remnawave API для локального sync
+  - future non-user events больше не падают с `400`, а принимаются как `handled=false`
+- добавлены producers уведомлений:
+  - `subscription_expiring` для `user.expires_in_72_hours`, `user.expires_in_48_hours`, `user.expires_in_24_hours`
+  - `subscription_expired` для `user.expired`
+- заложена typed foundation для дальнейших Remnawave webhook событий через `RemnawaveWebhookEnvelope` и `RemnawaveWebhookUserData`
+- добавлены интеграционные тесты `tests.test_subscriptions` на:
+  - payload-driven sync snapshot из Remnawave webhook
+  - уведомление о скором окончании подписки
+  - уведомление об окончании подписки
+  - безопасное принятие future scope events без `400`
+- frontend user app теперь содержит реальный центр уведомлений:
+  - отдельная вкладка в mobile shell
+  - кнопка-колокол с badge непрочитанных в header
+  - desktop section в browser dashboard
+  - действия `mark read`, `read all`, `load more`
+  - `Settings` больше не показывает фальшивый toggle уведомлений и ведет в существующий центр
+
+## Фаза 6. Выдача подписки и конфигов
+Статус: `В работе`
+
+- [x] Спроектировать backend contract выдачи подписки
+- [x] Добавить endpoint `GET /api/v1/subscriptions/access`
+- [x] Добавить Redis cache для snapshot выдачи
+- [x] Сделать страницу `Подключение VPN` во frontend
+- [x] Добавить copy/QR flow для основной ссылки подписки
+- [x] Добавить блок `raw keys`
+- [x] Добавить базовые гайды по клиентам
+- [ ] Проверить реальные сценарии `Browser` и `Telegram Mini App` на устройствах
+- [ ] Решить, нужен ли позже dynamic subpage config из Remnawave
+
+Сделано 2026-03-12:
+- Remnawave gateway расширен вызовом `GET /api/subscriptions/by-uuid/{uuid}` для получения полной выдачи подписки, а не только локального snapshot статуса
+- добавлены backend schema и service:
+  - `apps/api/app/schemas/subscription_access.py`
+  - `apps/api/app/services/subscription_access.py`
+- добавлен endpoint `GET /api/v1/subscriptions/access`
+- выдача кешируется в Redis по `account_id` с коротким TTL, чтобы не дергать Remnawave на каждый повторный вход в экран конфигов
+- при недоступности Remnawave backend умеет возвращать:
+  - кэшированный snapshot
+  - локальный fallback со `subscription_url`, если он уже сохранен в аккаунте
+- добавлены backend тесты `tests.test_subscription_access`
+- во frontend добавлена новая страница `Подключение VPN`
+- в интерфейсе теперь доступны:
+  - основная ссылка подписки
+  - copy action
+  - QR для основной ссылки
+  - raw keys с copy/QR
+  - дополнительные `ssconf_links`, если их вернула панель
+  - базовые client guides для iOS, Android и desktop
+- `SubscriptionCard` теперь ведет в экран выдачи конфигов через действие `Получить конфиг`
+
+Проверено 2026-03-12:
+- `tests.test_subscription_access`
+- `tests.test_subscriptions`
+- `apps/web: npm run build`
+
+## Фаза 7. Отдельная админка
 Статус: `Не начато`
 
 - [ ] Создать `apps/admin`
@@ -347,7 +442,7 @@
 - [ ] Добавить базовую статистику
 - [ ] Добавить просмотр referral chain
 
-## Фаза 7. Миграция из старого бота
+## Фаза 8. Миграция из старого бота
 Статус: `Не начато`
 
 - [ ] Получить схему старой БД
@@ -360,7 +455,7 @@
 - [ ] Сверить данные с Remnawave
 - [ ] Подготовить verification report после миграции
 
-## Фаза 8. Production deployment и запуск
+## Фаза 9. Production deployment и запуск
 Статус: `Не начато`
 
 - [ ] Подготовить production `.env`

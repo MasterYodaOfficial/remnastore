@@ -34,3 +34,4 @@ dist/
 /.idea/webResources.xml
 /.env
 /tests.py
+/apps/subpageexample/

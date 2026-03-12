@@ -13,11 +13,21 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.dependencies import get_current_account
 from app.db.base import Base
-from app.db.models import Account, LedgerEntry, LedgerEntryType, Payment, PaymentEvent, SubscriptionGrant
+from app.db.models import (
+    Account,
+    LedgerEntry,
+    LedgerEntryType,
+    Notification,
+    NotificationType,
+    Payment,
+    PaymentEvent,
+    SubscriptionGrant,
+)
 from app.db.session import get_session
 from app.main import create_app
 from app.services.payments import (
     CreatePaymentIntentCommand,
+    PaymentIntentSnapshot,
     PaymentFlowType,
     PaymentGatewayError,
     PaymentProvider,
@@ -26,8 +36,10 @@ from app.services.payments import (
     TelegramStarsGateway,
     YooKassaGateway,
     _build_telegram_stars_invoice_payload,
+    expire_stale_payments,
     get_telegram_stars_gateway,
     get_yookassa_gateway,
+    reconcile_pending_yookassa_payments,
 )
 
 
@@ -281,6 +293,7 @@ class FakeYooKassaGateway:
 
     def __init__(self) -> None:
         self._events: dict[str, PaymentWebhookEvent] = {}
+        self._status_snapshots: dict[str, PaymentIntentSnapshot] = {}
 
     async def create_payment_intent(self, command: CreatePaymentIntentCommand):
         return SimpleNamespace(
@@ -305,6 +318,12 @@ class FakeYooKassaGateway:
 
     def put_event(self, event_id: str, event: PaymentWebhookEvent) -> None:
         self._events[event_id] = event
+
+    async def fetch_payment_snapshot(self, provider_payment_id: str) -> PaymentIntentSnapshot:
+        return self._status_snapshots[provider_payment_id]
+
+    def put_status_snapshot(self, snapshot: PaymentIntentSnapshot) -> None:
+        self._status_snapshots[snapshot.provider_payment_id] = snapshot
 
 
 class FakeTelegramStarsGateway:
@@ -367,9 +386,19 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self._original_gateway_factory = payments_service.get_yookassa_gateway
         self._original_stars_gateway_factory = payments_service.get_telegram_stars_gateway
         self._original_api_token = payments_service.settings.api_token
+        self._original_yookassa_pending_ttl_seconds = payments_service.settings.payment_pending_ttl_seconds_yookassa
+        self._original_telegram_stars_pending_ttl_seconds = (
+            payments_service.settings.payment_pending_ttl_seconds_telegram_stars
+        )
+        self._original_reconcile_yookassa_min_age_seconds = (
+            payments_service.settings.payment_reconcile_yookassa_min_age_seconds
+        )
         payments_service.get_yookassa_gateway = lambda: self._fake_gateway
         payments_service.get_telegram_stars_gateway = lambda: self._fake_stars_gateway
         payments_service.settings.api_token = "internal-token"
+        payments_service.settings.payment_pending_ttl_seconds_yookassa = 1800
+        payments_service.settings.payment_pending_ttl_seconds_telegram_stars = 600
+        payments_service.settings.payment_reconcile_yookassa_min_age_seconds = 0
 
         self.app = create_app()
 
@@ -400,6 +429,15 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self._payments_service.get_yookassa_gateway = self._original_gateway_factory
         self._payments_service.get_telegram_stars_gateway = self._original_stars_gateway_factory
         self._payments_service.settings.api_token = self._original_api_token
+        self._payments_service.settings.payment_pending_ttl_seconds_yookassa = (
+            self._original_yookassa_pending_ttl_seconds
+        )
+        self._payments_service.settings.payment_pending_ttl_seconds_telegram_stars = (
+            self._original_telegram_stars_pending_ttl_seconds
+        )
+        self._payments_service.settings.payment_reconcile_yookassa_min_age_seconds = (
+            self._original_reconcile_yookassa_min_age_seconds
+        )
         self._cache_module._cache = self._original_cache
         await self._engine.dispose()
         self._tmpdir.cleanup()
@@ -441,6 +479,15 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _get_notifications(self, account_id: uuid.UUID) -> list[Notification]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Notification)
+                .where(Notification.account_id == account_id)
+                .order_by(Notification.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def _create_direct_plan_payment(self, account: Account) -> None:
         response = await self.client.post(
             "/api/v1/payments/yookassa/plans/plan_1m",
@@ -477,6 +524,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.account_id, account.id)
         self.assertEqual(stored_payment.status, PaymentStatus.PENDING)
         self.assertEqual(stored_payment.amount, 500)
+        self.assertIsNotNone(stored_payment.expires_at)
 
     async def test_list_subscription_plans_returns_backend_catalog(self) -> None:
         account = await self._create_account(email="plans@example.com")
@@ -493,6 +541,35 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(body[0]["price_stars"], 0)
         self.assertEqual(body[0]["duration_days"], 30)
         self.assertTrue(body[0]["popular"])
+
+    async def test_get_payment_status_returns_current_state_for_account(self) -> None:
+        account = await self._create_account(balance=0, email="status@example.com")
+        self._current_account_id = account.id
+
+        create_response = await self.client.post(
+            "/api/v1/payments/yookassa/topup",
+            json={
+                "amount_rub": 500,
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "topup-status-500",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        response = await self.client.get(
+            "/api/v1/payments/status",
+            params={
+                "provider": "yookassa",
+                "provider_payment_id": "yoopay-topup-status-500",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["provider"], "yookassa")
+        self.assertEqual(body["status"], "pending")
+        self.assertEqual(body["amount"], 500)
+        self.assertIsNotNone(body["expires_at"])
+        self.assertIsNone(body["finalized_at"])
 
     async def test_yookassa_webhook_succeeded_credits_balance_once(self) -> None:
         account = await self._create_account(balance=100, email="payer@example.com")
@@ -551,6 +628,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entries[0].entry_type, LedgerEntryType.TOPUP_PAYMENT)
         self.assertEqual(entries[0].amount, 500)
 
+        notifications = await self._get_notifications(account.id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0].type, NotificationType.PAYMENT_SUCCEEDED)
+        self.assertEqual(notifications[0].payload["payment_id"], stored_payment.id)
+
         duplicate_response = await self.client.post(
             "/api/v1/webhooks/payments/yookassa",
             content=json.dumps({"event_id": "event-1"}),
@@ -564,6 +646,170 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertEqual(stored_account.balance, 600)
+        self.assertEqual(len(await self._get_notifications(account.id)), 1)
+
+    async def test_yookassa_webhook_cancelled_creates_failure_notification(self) -> None:
+        account = await self._create_account(balance=100, email="payer-cancel@example.com")
+        self._current_account_id = account.id
+
+        create_response = await self.client.post(
+            "/api/v1/payments/yookassa/topup",
+            json={
+                "amount_rub": 500,
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "topup-cancelled-500",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        self._fake_gateway.put_event(
+            "event-cancelled-1",
+            PaymentWebhookEvent(
+                provider=PaymentProvider.YOOKASSA,
+                provider_event_id="payment.canceled:yoopay-topup-cancelled-500",
+                provider_payment_id="yoopay-topup-cancelled-500",
+                status=PaymentStatus.CANCELLED,
+                amount=500,
+                currency="RUB",
+                flow_type=PaymentFlowType.WALLET_TOPUP,
+                account_id=account.id,
+                external_reference="topup-cancelled-500",
+                raw_payload={"status": "canceled"},
+            ),
+        )
+
+        response = await self.client.post(
+            "/api/v1/webhooks/payments/yookassa",
+            content=json.dumps({"event_id": "event-cancelled-1"}),
+            headers={"content-type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "cancelled")
+        self.assertFalse(response.json()["ledger_applied"])
+
+        stored_payment = await self._get_payment("yoopay-topup-cancelled-500")
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.status, PaymentStatus.CANCELLED)
+        self.assertIsNotNone(stored_payment.finalized_at)
+
+        self.assertEqual(len(await self._get_ledger_entries(account.id)), 0)
+
+        notifications = await self._get_notifications(account.id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0].type, NotificationType.PAYMENT_FAILED)
+        self.assertEqual(notifications[0].payload["status"], "cancelled")
+
+    async def test_expire_stale_payments_marks_unpaid_stars_payment_as_expired(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="stars-stale@example.com",
+            telegram_id=758107031,
+        )
+        self._current_account_id = account.id
+
+        with patch(
+            "app.services.payments.get_subscription_plan",
+            return_value=SimpleNamespace(
+                code="plan_1m",
+                name="1 месяц",
+                price_rub=299,
+                price_stars=85,
+                duration_days=30,
+            ),
+        ):
+            create_response = await self.client.post(
+                "/api/v1/payments/telegram-stars/plans/plan_1m",
+                json={"idempotency_key": "stars-stale-1m"},
+            )
+        self.assertEqual(create_response.status_code, 200)
+        provider_payment_id = create_response.json()["provider_payment_id"]
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Payment).where(Payment.provider_payment_id == provider_payment_id)
+            )
+            payment = result.scalar_one()
+            payment.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+            await session.commit()
+
+        async with self._session_factory() as session:
+            summary = await expire_stale_payments(session, limit=10)
+
+        self.assertEqual(summary.expired, 1)
+
+        stored_payment = await self._get_payment(provider_payment_id)
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.status, PaymentStatus.EXPIRED)
+        self.assertIsNotNone(stored_payment.finalized_at)
+
+        notifications = await self._get_notifications(account.id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0].type, NotificationType.PAYMENT_FAILED)
+        self.assertEqual(notifications[0].payload["status"], "expired")
+
+    async def test_reconcile_pending_yookassa_payment_applies_success_without_webhook(self) -> None:
+        account = await self._create_account(balance=100, email="reconcile@example.com")
+        self._current_account_id = account.id
+
+        create_response = await self.client.post(
+            "/api/v1/payments/yookassa/topup",
+            json={
+                "amount_rub": 500,
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "topup-reconcile-500",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Payment).where(Payment.provider_payment_id == "yoopay-topup-reconcile-500")
+            )
+            payment = result.scalar_one()
+            payment.created_at = datetime.now(UTC) - timedelta(minutes=10)
+            await session.commit()
+
+        self._fake_gateway.put_status_snapshot(
+            PaymentIntentSnapshot(
+                provider=PaymentProvider.YOOKASSA,
+                flow_type=PaymentFlowType.WALLET_TOPUP,
+                account_id=account.id,
+                status=PaymentStatus.SUCCEEDED,
+                amount=500,
+                currency="RUB",
+                provider_payment_id="yoopay-topup-reconcile-500",
+                external_reference="topup-reconcile-500",
+                confirmation_url="https://yookassa.test/confirm",
+                expires_at=datetime.now(UTC) + timedelta(minutes=20),
+                raw_payload={"status": "succeeded"},
+            )
+        )
+
+        async with self._session_factory() as session:
+            summary = await reconcile_pending_yookassa_payments(session, limit=10, min_age_seconds=0)
+
+        self.assertEqual(summary.succeeded, 1)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 600)
+
+        stored_payment = await self._get_payment("yoopay-topup-reconcile-500")
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.status, PaymentStatus.SUCCEEDED)
+        self.assertIsNotNone(stored_payment.finalized_at)
+
+        ledger_entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(ledger_entries), 1)
+        self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.TOPUP_PAYMENT)
+
+        notifications = await self._get_notifications(account.id)
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(notifications[0].type, NotificationType.PAYMENT_SUCCEEDED)
 
     async def test_yookassa_webhook_root_alias_is_supported(self) -> None:
         account = await self._create_account(balance=100)
@@ -672,6 +918,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(stored_payment.status, PaymentStatus.SUCCEEDED)
             self.assertIsNotNone(stored_payment.finalized_at)
 
+            notifications = await self._get_notifications(account.id)
+            self.assertEqual(len(notifications), 1)
+            self.assertEqual(notifications[0].type, NotificationType.PAYMENT_SUCCEEDED)
+            self.assertEqual(notifications[0].payload["plan_code"], "plan_1m")
+
             grants = await self._get_subscription_grants(account.id)
             self.assertEqual(len(grants), 1)
             self.assertEqual(grants[0].plan_code, "plan_1m")
@@ -768,6 +1019,10 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(ledger_entries), 1)
         self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD)
         self.assertEqual(ledger_entries[0].amount, 59)
+
+        referrer_notifications = await self._get_notifications(referrer.id)
+        self.assertEqual(len(referrer_notifications), 1)
+        self.assertEqual(referrer_notifications[0].type, NotificationType.REFERRAL_REWARD_RECEIVED)
 
     async def test_duplicate_event_can_resume_pending_plan_finalization(self) -> None:
         account = await self._create_account(balance=0, email="resume@example.com")
@@ -903,6 +1158,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.provider, PaymentProvider.TELEGRAM_STARS)
         self.assertEqual(stored_payment.amount, 85)
         self.assertEqual(stored_payment.plan_code, "plan_1m")
+        self.assertIsNotNone(stored_payment.expires_at)
 
     async def test_telegram_stars_pre_checkout_and_successful_payment_finalize_once(self) -> None:
         account = await self._create_account(

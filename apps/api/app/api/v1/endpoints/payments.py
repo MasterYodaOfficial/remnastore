@@ -9,16 +9,20 @@ from app.schemas.payment import (
     CreateYooKassaPlanPurchaseRequest,
     CreateYooKassaTopupRequest,
     PaymentIntentResponse,
+    PaymentStatusResponse,
     SubscriptionPlanResponse,
 )
+from app.domain.payments import PaymentProvider
 from app.services.plans import SubscriptionPlanError, get_subscription_plans
 from app.services.payments import (
     PaymentConflictError,
     PaymentGatewayConfigurationError,
     PaymentGatewayError,
+    PaymentNotFoundError,
     create_telegram_stars_plan_purchase_payment,
     create_yookassa_plan_purchase_payment,
     create_yookassa_topup_payment,
+    get_payment_for_account,
 )
 
 router = APIRouter()
@@ -46,6 +50,39 @@ async def list_subscription_plans() -> list[SubscriptionPlanResponse]:
         )
         for plan in plans
     ]
+
+
+@router.get("/status", response_model=PaymentStatusResponse)
+async def get_payment_status(
+    provider: PaymentProvider,
+    provider_payment_id: str,
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
+) -> PaymentStatusResponse:
+    try:
+        payment = await get_payment_for_account(
+            session,
+            account=current_account,
+            provider=provider,
+            provider_payment_id=provider_payment_id,
+        )
+    except PaymentNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return PaymentStatusResponse(
+        provider=payment.provider,
+        flow_type=payment.flow_type,
+        status=payment.status,
+        amount=payment.amount,
+        currency=payment.currency,
+        provider_payment_id=payment.provider_payment_id,
+        confirmation_url=payment.confirmation_url,
+        expires_at=payment.expires_at,
+        finalized_at=payment.finalized_at,
+    )
 
 
 @router.post("/yookassa/topup", response_model=PaymentIntentResponse)

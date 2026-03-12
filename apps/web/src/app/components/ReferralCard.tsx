@@ -1,23 +1,27 @@
 import React from 'react';
-import { Users, Copy, Check, DollarSign } from 'lucide-react';
+import { Users, Copy, Check, DollarSign, Send } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
 
 interface ReferralCardProps {
   referralCode: string;
   referralsCount: number;
   referralEarnings: number;
+  availableForWithdraw: number;
   onCopy: () => void;
+  onShareTelegram: () => void;
   onWithdraw: () => void;
   copied: boolean;
 }
 
-export function ReferralCard({ 
-  referralCode, 
-  referralsCount, 
+export function ReferralCard({
+  referralCode,
+  referralsCount,
   referralEarnings,
-  onCopy, 
+  availableForWithdraw,
+  onCopy,
+  onShareTelegram,
   onWithdraw,
-  copied 
+  copied,
 }: ReferralCardProps) {
   return (
     <div
@@ -61,31 +65,43 @@ export function ReferralCard({
           </div>
         </div>
 
-        <div className="rounded-xl p-3" style={{background:"var(--referral-tile)"}}>
-          <div className="text-xs text-[var(--tg-theme-hint-color,#999999)] mb-2">
-            Ваша реферальная ссылка
+        <div className="rounded-xl p-3" style={{ background: "var(--referral-tile)" }}>
+          <div className="mb-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+            Ваш реферальный код
           </div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 text-sm font-mono rounded-lg px-3 py-2 text-[var(--tg-theme-text-color,#000000)] overflow-x-auto"
-                  style={{background:"var(--referral-code-bg)"}}>
+          <div
+            className="rounded-lg px-3 py-2 text-sm font-mono text-[var(--tg-theme-text-color,#000000)]"
+            style={{ background: "var(--referral-code-bg)" }}
+          >
+            <code className="block overflow-x-auto">
               {referralCode}
             </code>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
               onClick={onCopy}
-              className="rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] p-2 text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+              className="flex items-center justify-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-2 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
             >
-              {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? 'Скопировано' : 'Скопировать ссылку'}
+            </button>
+            <button
+              onClick={onShareTelegram}
+              className="flex items-center justify-center gap-2 rounded-lg border border-[var(--tg-theme-button-color,#3390ec)] bg-transparent px-3 py-2 text-sm font-medium text-[var(--tg-theme-button-color,#3390ec)] transition-opacity hover:opacity-90"
+            >
+              <Send className="h-4 w-4" />
+              Поделиться в Telegram
             </button>
           </div>
         </div>
 
-        {referralEarnings > 0 && (
+        {availableForWithdraw > 0 && (
           <button
             onClick={onWithdraw}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--app-success-bg,#16a34a)] py-3 font-medium text-[var(--app-success-text,#ffffff)] transition-colors hover:bg-[var(--app-success-bg-hover,#15803d)]"
           >
             <DollarSign className="w-5 h-5" />
-            Вывести средства
+            Вывести {formatRubles(availableForWithdraw)} ₽
           </button>
         )}
       </div>

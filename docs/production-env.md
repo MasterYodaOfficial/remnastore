@@ -38,6 +38,11 @@
   - используется browser login entrypoint
   - пример: `https://t.me/your_bot_username`
 
+- `VITE_SUPPORT_TELEGRAM_URL`
+  - публичная ссылка на Telegram support-группу или support-чату
+  - используется frontend settings page и support entrypoint
+  - пример: `https://t.me/your_support_group`
+
 ### Bot
 
 - `BOT_TOKEN`
@@ -94,6 +99,7 @@
   - URL Redis
   - пример для compose-сети:
     `redis://redis:6379/0`
+  - используется не только для cache, но и для distributed lock фоновых payment jobs
 
 - `JWT_SECRET`
   - секрет для backend JWT
@@ -117,10 +123,61 @@
   - секрет для проверки входящих webhook от Remnawave
   - используется API endpoint `POST /api/v1/webhooks/remnawave`
   - должен совпадать с секретом, настроенным в панели Remnawave
+  - рекомендуемый минимальный набор событий в панели Remnawave:
+    - `user.expires_in_72_hours`
+    - `user.expires_in_48_hours`
+    - `user.expires_in_24_hours`
+    - `user.expired`
+  - backend уже принимает и другие scope/event combinations через общий dispatcher, но пока бизнес-логика подписочных уведомлений реализована только для этих `user.*` событий
 
 - `MIN_WITHDRAWAL_AMOUNT_RUB`
   - минимальная сумма пользовательской заявки на вывод реферальных средств
   - если не задана, backend использует дефолт из `apps/api/app/core/config.py`
+
+- `PAYMENT_PENDING_TTL_SECONDS_YOOKASSA`
+  - локальный fallback TTL для pending YooKassa платежей, если провайдер не вернул `expires_at`
+  - нужен для cleanup stale pending payments
+
+- `PAYMENT_PENDING_TTL_SECONDS_TELEGRAM_STARS`
+  - локальный TTL для pending Telegram Stars платежей
+  - без него брошенные invoice link будут висеть в `pending` бесконечно
+
+- `PAYMENT_EXPIRE_STALE_INTERVAL_SECONDS`
+  - период запуска worker job, который переводит просроченные pending платежи в `expired`
+
+- `PAYMENT_RECONCILE_YOOKASSA_INTERVAL_SECONDS`
+  - период запуска worker job сверки pending YooKassa платежей с провайдером
+
+- `PAYMENT_RECONCILE_YOOKASSA_MIN_AGE_SECONDS`
+  - минимальный возраст pending YooKassa платежа, после которого worker начинает его сверять с провайдером
+
+- `PAYMENT_JOBS_BATCH_SIZE`
+  - максимальный размер батча для payment maintenance jobs
+  - влияет на память и длину транзакций worker'а
+
+- `PAYMENT_JOB_LOCK_TTL_SECONDS`
+  - TTL Redis lock для payment maintenance jobs
+  - защищает от параллельного запуска одинаковой job на нескольких инстансах
+
+- `NOTIFICATION_TELEGRAM_DELIVERY_INTERVAL_SECONDS`
+  - период запуска worker job, который отправляет pending Telegram notifications
+
+- `NOTIFICATION_JOBS_BATCH_SIZE`
+  - размер батча для одного прохода notification worker
+  - влияет на память, длину транзакции и число сообщений за цикл
+
+- `NOTIFICATION_JOB_LOCK_TTL_SECONDS`
+  - TTL Redis lock для notification delivery job
+  - нужен, чтобы несколько worker instance не отправили одно и то же сообщение повторно
+
+- `NOTIFICATION_TELEGRAM_MAX_ATTEMPTS`
+  - максимальное число попыток доставки одного Telegram notification delivery
+
+- `NOTIFICATION_TELEGRAM_RETRY_BASE_SECONDS`
+  - базовый backoff между retry попытками Telegram delivery
+
+- `NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS`
+  - верхняя граница backoff между retry попытками Telegram delivery
 
 - backend-каталог тарифов теперь читается из файла
   - [subscription-plans.json](/home/yoda/PycharmProjects/remnastore/apps/api/app/config/subscription-plans.json)
@@ -150,6 +207,10 @@
   - обязателен
   - должен соответствовать `SUPABASE_ANON_KEY`
 
+- `VITE_SUPPORT_TELEGRAM_URL`
+  - рекомендуется задать явно
+  - если переменная не задана, frontend не сможет открыть Telegram-support из настроек и FAQ
+
 ## Переменные с рабочими дефолтами
 
 - `LOG_LEVEL`
@@ -157,6 +218,22 @@
 - `SUPABASE_USER_CACHE_TTL_SECONDS`
 - `AUTH_TOKEN_CACHE_TTL_SECONDS`
 - `ACCOUNT_RESPONSE_CACHE_TTL_SECONDS`
+- `SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS`
+  - TTL Redis cache для `GET /api/v1/subscriptions/access`
+  - нужен, чтобы экран выдачи конфигов не делал лишние запросы в Remnawave при каждом открытии
+- `PAYMENT_PENDING_TTL_SECONDS_YOOKASSA`
+- `PAYMENT_PENDING_TTL_SECONDS_TELEGRAM_STARS`
+- `PAYMENT_EXPIRE_STALE_INTERVAL_SECONDS`
+- `PAYMENT_RECONCILE_YOOKASSA_INTERVAL_SECONDS`
+- `PAYMENT_RECONCILE_YOOKASSA_MIN_AGE_SECONDS`
+- `PAYMENT_JOBS_BATCH_SIZE`
+- `PAYMENT_JOB_LOCK_TTL_SECONDS`
+- `NOTIFICATION_TELEGRAM_DELIVERY_INTERVAL_SECONDS`
+- `NOTIFICATION_JOBS_BATCH_SIZE`
+- `NOTIFICATION_JOB_LOCK_TTL_SECONDS`
+- `NOTIFICATION_TELEGRAM_MAX_ATTEMPTS`
+- `NOTIFICATION_TELEGRAM_RETRY_BASE_SECONDS`
+- `NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS`
 - `TELEGRAM_INIT_DATA_TTL_SECONDS`
 - `TRIAL_DURATION_DAYS`
 - `MIN_WITHDRAWAL_AMOUNT_RUB`
@@ -202,6 +279,98 @@
   - `API_URL` — внутренний адрес для bot внутри сети сервисов
   - `VITE_API_BASE_URL` — публичный адрес для браузера
 - `WEBAPP_URL` должен совпадать с реальным публичным URL витрины и Telegram Mini App
+- payment worker использует Redis lock, поэтому при нескольких replica `api/worker` нельзя отключать `REDIS_URL`
+
+## Рекомендуемая topology
+
+### Локальный и ранний stage
+
+Для локальной машины и раннего production-like stage текущая схема считается нормальной:
+- `api`: 1 container, 1 HTTP process
+- `worker`: 1 container для payment maintenance jobs
+- `notifications-worker`: 1 container для Telegram notification delivery
+- `bot`: 1 container
+- `db`: 1 container
+- `redis`: 1 container
+
+Это соответствует текущему `ops/docker/compose.yml` и достаточно для:
+- разработки
+- smoke-тестов
+- первого ограниченного трафика
+
+### Первый production tier
+
+Когда проект переходит из стадии локальных проверок в реальный production-трафик, рекомендуемая схема такая:
+- `api`: 1-2 container replica
+- в каждом `api` container: 2 HTTP worker process
+- `worker`: 1 отдельный container
+- `notifications-worker`: 1 отдельный container
+- `bot`: 1 container
+- `db` и `redis`: managed service или отдельные выделенные инстансы
+
+Практический смысл:
+- HTTP traffic масштабируется отдельно от фоновых job
+- фоновые payment jobs не конкурируют с API request handling
+- Redis lock не дает нескольким worker instance одновременно выполнять один и тот же cleanup/reconcile loop
+
+### Что именно масштабируется
+
+`api`:
+- масштабируется по HTTP latency, RPS и CPU
+- это отдельный контур от background jobs
+- увеличение числа HTTP worker process не заменяет отдельный `worker`
+
+`worker`:
+- сейчас предназначен для payment maintenance jobs
+- на текущей реализации обычно должен быть один instance
+- поднимать несколько одинаковых payment worker instance безопасно, но полезного ускорения почти не даст, потому что одинаковые job защищены Redis lock
+
+`notifications-worker`:
+- отвечает за Telegram delivery `notification_deliveries(channel=telegram)`
+- на текущей реализации тоже должен быть одним instance
+- несколько одинаковых instance безопасны только при рабочем Redis lock, иначе можно получить дубли отправки
+
+`bot`:
+- на текущем этапе держать одним instance
+- горизонтальное масштабирование bot-контейнера имеет смысл только после появления реальной нагрузки на webhook handling и после дополнительной проверки идемпотентности всех bot-side действий
+
+### Когда увеличивать `api`
+
+Увеличивать HTTP workers или число `api` replica имеет смысл, когда:
+- p95/p99 latency API стабильно растет
+- один `api` process упирается в CPU
+- запросы начинают очередиться
+- видно, что API медленнее отвечает под параллельной нагрузкой
+
+Практический порядок:
+1. сначала включить 2 HTTP worker process у `api`
+2. потом смотреть метрики
+3. только после этого увеличивать число `api` container replica
+
+### Когда не нужно увеличивать `worker`
+
+Не нужно автоматически поднимать второй такой же payment worker только из-за роста общего числа пользователей.
+
+Сначала нужно увидеть реальные симптомы:
+- cleanup/reconcile не укладываются в свой интервал
+- backlog старых `pending` платежей не уменьшается
+- каждый проход worker постоянно выбирает полный batch
+- задержка финализации платежей становится заметна пользователю
+
+До этого момента один payment worker предпочтительнее:
+- меньше operational complexity
+- меньше гонок
+- проще наблюдаемость
+
+### Рекомендуемая следующая эволюция
+
+Если фоновых задач станет больше, масштабировать лучше не копиями текущего worker, а разделением ролей:
+- один scheduler/dispatcher
+- отдельный `payments worker`
+- отдельный `notifications worker`
+- отдельный `broadcast worker`, если появятся массовые рассылки из админки
+
+То есть сначала масштабируется HTTP слой `api`, а background layer раскладывается на специализированные worker'ы только по фактической нагрузке.
 
 ## Быстрые сценарии
 
@@ -221,6 +390,7 @@ cp .env.example .env
 - `WEBAPP_URL`
 - `VITE_API_BASE_URL`
 - `VITE_TELEGRAM_BOT_URL`
+- `VITE_SUPPORT_TELEGRAM_URL`
 - `API_TOKEN`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
@@ -246,6 +416,7 @@ BOT_USE_WEBHOOK=false
 WEBAPP_URL=http://localhost:5173
 VITE_API_BASE_URL=http://localhost:8000
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
+VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support_group
 ```
 
 В этом режиме bot должен работать через polling, а browser/web можно гонять локально.

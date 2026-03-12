@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.db.models import Account, AccountStatus, LedgerEntryType, Withdrawal, WithdrawalStatus
 from app.db.models.withdrawal import WithdrawalDestinationType
 from app.services.ledger import apply_debit_in_transaction
+from app.services.notifications import notify_withdrawal_created
 
 
 class WithdrawalServiceError(Exception):
@@ -172,6 +173,7 @@ async def create_withdrawal_request(
     )
     withdrawal.reserved_ledger_entry_id = reserve_entry.id
     await session.flush()
+    await notify_withdrawal_created(session, withdrawal=withdrawal)
     return withdrawal
 
 

@@ -1,5 +1,16 @@
 import React from 'react';
-import { Moon, Sun, LogOut, Globe, Bell, Shield, HelpCircle, Mail, CheckCircle, XCircle, Link as LinkIcon } from 'lucide-react';
+import {
+  Bell,
+  CheckCircle,
+  FileText,
+  Globe,
+  HelpCircle,
+  Link as LinkIcon,
+  LogOut,
+  Mail,
+  MessageCircle,
+  Shield,
+} from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 
 interface SettingsPageProps {
@@ -14,6 +25,12 @@ interface SettingsPageProps {
   onLinkTelegram?: () => void;
   onLinkBrowser?: () => void;
   isTelegramWebApp?: boolean;
+  notificationUnreadCount?: number;
+  onOpenNotificationsCenter?: () => void;
+  onOpenFaq?: () => void;
+  onOpenPrivacy?: () => void;
+  onOpenTerms?: () => void;
+  onOpenSupport?: () => void;
 }
 
 export function SettingsPage({
@@ -25,6 +42,12 @@ export function SettingsPage({
   onLinkTelegram,
   onLinkBrowser,
   isTelegramWebApp = false,
+  notificationUnreadCount = 0,
+  onOpenNotificationsCenter,
+  onOpenFaq,
+  onOpenPrivacy,
+  onOpenTerms,
+  onOpenSupport,
 }: SettingsPageProps) {
   const toggleTheme = () => onThemeChange(theme === 'dark' ? 'light' : 'dark');
 
@@ -117,11 +140,20 @@ export function SettingsPage({
         {
           icon: Bell,
           label: 'Уведомления',
-          action: (
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" className="sr-only peer" defaultChecked />
-              <div className="relative h-6 w-11 rounded-full bg-[var(--app-toggle-track,#dbe7ff)] transition-colors peer-checked:bg-[var(--tg-theme-button-color,#3390ec)] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:bg-[var(--app-toggle-thumb,#ffffff)] after:transition-transform after:content-[''] peer-checked:after:translate-x-full"></div>
-            </label>
+          action: onOpenNotificationsCenter ? (
+            <button
+              onClick={onOpenNotificationsCenter}
+              className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+            >
+              Открыть
+              {notificationUnreadCount > 0 && (
+                <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-semibold">
+                  {notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}
+                </span>
+              )}
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
           ),
         },
       ],
@@ -130,14 +162,60 @@ export function SettingsPage({
       title: 'Поддержка',
       items: [
         {
-          icon: Shield,
-          label: 'Политика конфиденциальности',
-          action: <span className="text-[var(--tg-theme-hint-color,#999999)]">›</span>,
+          icon: MessageCircle,
+          label: 'Поддержка в Telegram',
+          action: onOpenSupport ? (
+            <button
+              onClick={onOpenSupport}
+              className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+            >
+              Перейти
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+          ),
         },
         {
           icon: HelpCircle,
-          label: 'Помощь и поддержка',
-          action: <span className="text-[var(--tg-theme-hint-color,#999999)]">›</span>,
+          label: 'FAQ',
+          action: onOpenFaq ? (
+            <button
+              onClick={onOpenFaq}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+            >
+              Открыть
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+          ),
+        },
+        {
+          icon: Shield,
+          label: 'Политика конфиденциальности',
+          action: onOpenPrivacy ? (
+            <button
+              onClick={onOpenPrivacy}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+            >
+              Открыть
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+          ),
+        },
+        {
+          icon: FileText,
+          label: 'Пользовательское соглашение',
+          action: onOpenTerms ? (
+            <button
+              onClick={onOpenTerms}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+            >
+              Открыть
+            </button>
+          ) : (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+          ),
         },
       ],
     },

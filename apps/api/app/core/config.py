@@ -26,6 +26,58 @@ class Settings(BaseSettings):
     )
     yookassa_verify_tls: bool = Field(default=True, validation_alias="YOOKASSA_VERIFY_TLS")
     api_token: str = Field(default="", validation_alias="API_TOKEN")
+    payment_pending_ttl_seconds_yookassa: int = Field(
+        default=3600,
+        validation_alias="PAYMENT_PENDING_TTL_SECONDS_YOOKASSA",
+    )
+    payment_pending_ttl_seconds_telegram_stars: int = Field(
+        default=900,
+        validation_alias="PAYMENT_PENDING_TTL_SECONDS_TELEGRAM_STARS",
+    )
+    payment_expire_stale_interval_seconds: int = Field(
+        default=60,
+        validation_alias="PAYMENT_EXPIRE_STALE_INTERVAL_SECONDS",
+    )
+    payment_reconcile_yookassa_interval_seconds: int = Field(
+        default=120,
+        validation_alias="PAYMENT_RECONCILE_YOOKASSA_INTERVAL_SECONDS",
+    )
+    payment_reconcile_yookassa_min_age_seconds: int = Field(
+        default=180,
+        validation_alias="PAYMENT_RECONCILE_YOOKASSA_MIN_AGE_SECONDS",
+    )
+    payment_jobs_batch_size: int = Field(
+        default=100,
+        validation_alias="PAYMENT_JOBS_BATCH_SIZE",
+    )
+    payment_job_lock_ttl_seconds: int = Field(
+        default=60,
+        validation_alias="PAYMENT_JOB_LOCK_TTL_SECONDS",
+    )
+    notification_telegram_delivery_interval_seconds: int = Field(
+        default=30,
+        validation_alias="NOTIFICATION_TELEGRAM_DELIVERY_INTERVAL_SECONDS",
+    )
+    notification_jobs_batch_size: int = Field(
+        default=100,
+        validation_alias="NOTIFICATION_JOBS_BATCH_SIZE",
+    )
+    notification_job_lock_ttl_seconds: int = Field(
+        default=60,
+        validation_alias="NOTIFICATION_JOB_LOCK_TTL_SECONDS",
+    )
+    notification_telegram_max_attempts: int = Field(
+        default=5,
+        validation_alias="NOTIFICATION_TELEGRAM_MAX_ATTEMPTS",
+    )
+    notification_telegram_retry_base_seconds: int = Field(
+        default=30,
+        validation_alias="NOTIFICATION_TELEGRAM_RETRY_BASE_SECONDS",
+    )
+    notification_telegram_retry_max_seconds: int = Field(
+        default=900,
+        validation_alias="NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS",
+    )
 
     # Auth
     jwt_secret: str = "change-me"
@@ -40,6 +92,9 @@ class Settings(BaseSettings):
     )
     account_response_cache_ttl_seconds: int = Field(
         default=60, validation_alias="ACCOUNT_RESPONSE_CACHE_TTL_SECONDS"
+    )
+    subscription_access_cache_ttl_seconds: int = Field(
+        default=60, validation_alias="SUBSCRIPTION_ACCESS_CACHE_TTL_SECONDS"
     )
 
     # Telegram

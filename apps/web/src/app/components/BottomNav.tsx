@@ -1,16 +1,23 @@
 import React from 'react';
-import { Home, CreditCard, Settings, Gift } from 'lucide-react';
+import { Bell, CreditCard, Gift, Home, Settings } from 'lucide-react';
 
 interface BottomNavProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   compact?: boolean;
+  unreadNotificationsCount?: number;
 }
 
-export function BottomNav({ activeTab, onTabChange, compact = false }: BottomNavProps) {
+export function BottomNav({
+  activeTab,
+  onTabChange,
+  compact = false,
+  unreadNotificationsCount = 0,
+}: BottomNavProps) {
   const tabs = [
     { id: 'home', label: 'Главная', icon: Home },
     { id: 'plans', label: 'Тарифы', icon: CreditCard },
+    { id: 'notifications', label: 'Уведомления', icon: Bell },
     { id: 'referral', label: 'Рефералы', icon: Gift },
     { id: 'settings', label: 'Настройки', icon: Settings },
   ];
@@ -30,7 +37,7 @@ export function BottomNav({ activeTab, onTabChange, compact = false }: BottomNav
             <button
               key={tab.id}
               onClick={() => onTabChange(tab.id)}
-              className="flex flex-col items-center justify-center gap-1 py-2 px-4 rounded-xl transition-all min-w-[70px]"
+              className="relative flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 transition-all"
               style={{
                 color: isActive 
                   ? 'var(--tg-theme-button-color, #3390ec)' 
@@ -38,6 +45,11 @@ export function BottomNav({ activeTab, onTabChange, compact = false }: BottomNav
               }}
             >
               <Icon className="w-6 h-6" />
+              {tab.id === 'notifications' && unreadNotificationsCount > 0 && (
+                <span className="absolute right-4 top-1 inline-flex min-h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] px-1 text-[10px] font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
               <span className="text-xs font-medium">{tab.label}</span>
             </button>
           );

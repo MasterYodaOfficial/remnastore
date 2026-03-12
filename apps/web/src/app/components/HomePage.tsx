@@ -14,11 +14,14 @@ interface HomePageProps {
     referralCode: string;
     referralsCount: number;
     referralEarnings: number;
+    availableForWithdraw: number;
   };
   onActivateTrial: () => void;
   onRenew: () => void;
   onBuy: () => void;
+  onOpenAccess: () => void;
   onCopyReferral: () => void;
+  onShareReferralToTelegram: () => void;
   onWithdraw: () => void;
   referralCopied: boolean;
 }
@@ -29,7 +32,9 @@ export function HomePage({
   onActivateTrial,
   onRenew,
   onBuy,
+  onOpenAccess,
   onCopyReferral,
+  onShareReferralToTelegram,
   onWithdraw,
   referralCopied,
 }: HomePageProps) {
@@ -40,13 +45,16 @@ export function HomePage({
         onActivateTrial={onActivateTrial}
         onRenew={onRenew}
         onBuy={onBuy}
+        onOpenAccess={onOpenAccess}
       />
       
       <ReferralCard
         referralCode={referralData.referralCode}
         referralsCount={referralData.referralsCount}
         referralEarnings={referralData.referralEarnings}
+        availableForWithdraw={referralData.availableForWithdraw}
         onCopy={onCopyReferral}
+        onShareTelegram={onShareReferralToTelegram}
         onWithdraw={onWithdraw}
         copied={referralCopied}
       />

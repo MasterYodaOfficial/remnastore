@@ -7,9 +7,16 @@ interface TopUpModalProps {
   onClose: () => void;
   onTopUp: (amount: number) => Promise<void> | void;
   isSubmitting?: boolean;
+  activeAttemptAmount?: number | null;
 }
 
-export function TopUpModal({ isOpen, onClose, onTopUp, isSubmitting = false }: TopUpModalProps) {
+export function TopUpModal({
+  isOpen,
+  onClose,
+  onTopUp,
+  isSubmitting = false,
+  activeAttemptAmount = null,
+}: TopUpModalProps) {
   const [customAmount, setCustomAmount] = useState('');
   const presetAmounts = [500, 1000, 2000, 5000];
   const parsedCustomAmount = Number.parseInt(customAmount, 10);
@@ -57,6 +64,12 @@ export function TopUpModal({ isOpen, onClose, onTopUp, isSubmitting = false }: T
             <p className="mb-3 text-sm text-[var(--tg-theme-hint-color,#999999)]">
               Выберите сумму пополнения
             </p>
+            {activeAttemptAmount ? (
+              <div className="mb-3 rounded-2xl border border-[var(--tg-theme-button-color,#3390ec)] border-opacity-20 bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+                Есть незавершенное пополнение на {formatRubles(activeAttemptAmount)} ₽. Если выберете ту же сумму,
+                откроем текущую попытку, пока она не истекла.
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               {presetAmounts.map((amount) => (
                 <button

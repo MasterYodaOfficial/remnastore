@@ -20,6 +20,7 @@ interface PlansPageProps {
   isLoading?: boolean;
   checkoutPlanId?: string | null;
   isTelegramWebApp?: boolean;
+  resumablePlanIds?: string[];
 }
 
 export function PlansPage({
@@ -30,8 +31,13 @@ export function PlansPage({
   isLoading = false,
   checkoutPlanId = null,
   isTelegramWebApp = false,
+  resumablePlanIds = [],
 }: PlansPageProps) {
   const getPlanButtonLabel = (plan: Plan): string => {
+    if (resumablePlanIds.includes(plan.id)) {
+      return 'Продолжить оплату';
+    }
+
     const canPayFromBalance = balance >= plan.price;
 
     if (!isTelegramWebApp) {

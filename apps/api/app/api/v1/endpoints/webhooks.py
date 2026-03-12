@@ -1,7 +1,5 @@
 import hashlib
 import hmac
-import json
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +11,7 @@ from app.schemas.payment import (
     TelegramStarsPreCheckoutRequest,
     TelegramStarsPreCheckoutResponse,
 )
+from app.schemas.referral import TelegramReferralIntentRequest, TelegramReferralIntentResponse
 from app.services.payments import (
     PaymentConflictError,
     PaymentGatewayConfigurationError,
@@ -22,7 +21,11 @@ from app.services.payments import (
     process_yookassa_webhook,
     validate_telegram_stars_pre_checkout,
 )
-from app.services.subscriptions import RemnawaveSyncError, sync_subscription_by_remnawave_user_uuid
+from app.services.referrals import ReferralCodeNotFoundError, record_telegram_referral_intent
+from app.services.remnawave_webhooks import (
+    RemnawaveWebhookPayloadError,
+    process_remnawave_webhook,
+)
 
 router = APIRouter()
 
@@ -72,35 +75,6 @@ def _verify_internal_api_token(authorization: str | None) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid internal api token",
         )
-
-
-def _extract_remnawave_user_uuid(payload: dict) -> UUID:
-    event_data = payload.get("data")
-    if isinstance(event_data, str):
-        try:
-            return UUID(event_data)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="invalid Remnawave user uuid",
-            ) from exc
-
-    if isinstance(event_data, dict):
-        raw_uuid = event_data.get("uuid")
-        if isinstance(raw_uuid, str):
-            try:
-                return UUID(raw_uuid)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="invalid Remnawave user uuid",
-                ) from exc
-
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="invalid Remnawave webhook payload",
-    )
-
 
 def _payment_webhook_response(result: PaymentWebhookProcessResult) -> PaymentWebhookProcessResponse:
     return PaymentWebhookProcessResponse(
@@ -198,6 +172,27 @@ async def telegram_stars_payments_webhook(
     return _payment_webhook_response(result)
 
 
+@router.post("/referrals/telegram-start", response_model=TelegramReferralIntentResponse)
+async def telegram_referral_start_webhook(
+    payload: TelegramReferralIntentRequest,
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+) -> TelegramReferralIntentResponse:
+    _verify_internal_api_token(authorization)
+    try:
+        await record_telegram_referral_intent(
+            session,
+            telegram_id=payload.telegram_id,
+            referral_code=payload.referral_code,
+        )
+    except ReferralCodeNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return TelegramReferralIntentResponse()
+
+
 @router.post("/remnawave")
 async def remnawave_webhook(
     request: Request,
@@ -208,35 +203,22 @@ async def remnawave_webhook(
     _verify_remnawave_signature(raw_body, x_remnawave_signature)
 
     try:
-        payload = json.loads(raw_body)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="invalid JSON payload",
-        ) from exc
-
-    event = payload.get("event")
-    if not isinstance(event, str) or not event.startswith("user."):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="unsupported Remnawave webhook event",
-        )
-
-    remnawave_user_uuid = _extract_remnawave_user_uuid(payload)
-
-    try:
-        account = await sync_subscription_by_remnawave_user_uuid(
+        result = await process_remnawave_webhook(
             session,
-            remnawave_user_uuid=remnawave_user_uuid,
+            raw_body=raw_body,
         )
-    except RemnawaveSyncError as exc:
+    except RemnawaveWebhookPayloadError as exc:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
 
     return {
         "ok": True,
-        "processed": account is not None,
-        "account_id": str(account.id) if account is not None else None,
+        "event": result.event,
+        "scope": result.scope,
+        "handled": result.handled,
+        "processed": result.processed,
+        "account_id": str(result.account_id) if result.account_id is not None else None,
+        "notification_types": [notification_type.value for notification_type in result.notification_types],
     }
