@@ -9,6 +9,15 @@ from app.db.models.account import (
     LoginSource,
     LinkType,
 )
+from app.db.models.broadcast import (
+    Broadcast,
+    BroadcastAudienceSegment,
+    BroadcastChannel,
+    BroadcastContentType,
+    BroadcastDelivery,
+    BroadcastDeliveryStatus,
+    BroadcastStatus,
+)
 from app.db.models.ledger import LedgerEntry, LedgerEntryType
 from app.db.models.notification import (
     Notification,
@@ -29,6 +38,13 @@ __all__ = [
     "Admin",
     "Account",
     "AccountStatus",
+    "Broadcast",
+    "BroadcastAudienceSegment",
+    "BroadcastChannel",
+    "BroadcastContentType",
+    "BroadcastDelivery",
+    "BroadcastDeliveryStatus",
+    "BroadcastStatus",
     "LoginSource",
     "AuthAccount",
     "AuthProvider",

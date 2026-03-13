@@ -41,6 +41,10 @@ class TrialEligibilityError(SubscriptionServiceError):
         self.status_code = status_code
 
 
+class SubscriptionPurchaseBlockedError(SubscriptionServiceError):
+    pass
+
+
 @dataclass(slots=True)
 class TrialEligibility:
     eligible: bool
@@ -258,6 +262,9 @@ async def purchase_subscription_with_wallet(
     plan_code: str,
     idempotency_key: str,
 ) -> SubscriptionStateResponse:
+    if account.status == AccountStatus.BLOCKED:
+        raise SubscriptionPurchaseBlockedError("blocked accounts cannot purchase subscriptions")
+
     account = await purchase_plan_with_wallet(
         session,
         account_id=account.id,

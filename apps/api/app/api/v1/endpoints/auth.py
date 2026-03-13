@@ -7,7 +7,7 @@ from app.db.models import LoginSource
 from app.db.session import get_session
 from app.schemas.account import AccountResponse
 from app.schemas.auth import AuthResponse, TelegramAuthRequest, TelegramReferralResultResponse
-from app.services.accounts import upsert_telegram_account
+from app.services.accounts import AccountBlockedError, upsert_telegram_account
 from app.services.referrals import (
     ReferralCodeNotFoundError,
     apply_telegram_referral_intent,
@@ -31,18 +31,21 @@ async def auth_telegram_webapp(
     if not user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="init data missing user")
 
-    account = await upsert_telegram_account(
-        session,
-        telegram_id=int(user.get("id")),
-        username=user.get("username"),
-        first_name=user.get("first_name"),
-        last_name=user.get("last_name"),
-        is_premium=bool(user.get("is_premium", False)),
-        locale=user.get("language_code"),
-        email=None,
-        display_name=None,
-        last_login_source=LoginSource.TELEGRAM_WEBAPP,
-    )
+    try:
+        account = await upsert_telegram_account(
+            session,
+            telegram_id=int(user.get("id")),
+            username=user.get("username"),
+            first_name=user.get("first_name"),
+            last_name=user.get("last_name"),
+            is_premium=bool(user.get("is_premium", False)),
+            locale=user.get("language_code"),
+            email=None,
+            display_name=None,
+            last_login_source=LoginSource.TELEGRAM_WEBAPP,
+        )
+    except AccountBlockedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
     start_param = data.get("start_param")
     referral_result = None

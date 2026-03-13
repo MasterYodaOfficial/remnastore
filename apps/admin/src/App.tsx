@@ -16,6 +16,16 @@ type AdminDashboardSummary = {
   active_subscriptions: number;
   pending_withdrawals: number;
   pending_payments: number;
+  blocked_accounts: number;
+  new_accounts_last_7d: number;
+  total_wallet_balance: number;
+  total_referral_earnings: number;
+  pending_withdrawals_amount: number;
+  paid_withdrawals_amount_last_30d: number;
+  successful_payments_last_30d: number;
+  successful_payments_amount_last_30d: number;
+  wallet_topups_amount_last_30d: number;
+  direct_plan_revenue_last_30d: number;
 };
 
 type AdminAuthResponse = {
@@ -26,7 +36,7 @@ type AdminAuthResponse = {
 
 type DashboardCardProps = {
   label: string;
-  value: number;
+  value: string | number;
   hint: string;
 };
 
@@ -65,7 +75,17 @@ type AdminAccountLedgerEntry = {
   reference_type: string | null;
   reference_id: string | null;
   comment: string | null;
+  idempotency_key: string | null;
+  created_by_account_id: string | null;
+  created_by_admin_id: string | null;
   created_at: string;
+};
+
+type AdminAccountLedgerHistoryResponse = {
+  items: AdminAccountLedgerEntry[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 type AdminAccountPayment = {
@@ -156,10 +176,139 @@ type AdminSubscriptionGrantResponse = {
   subscription_url: string | null;
 };
 
-type AdminView = "dashboard" | "accounts";
+type AdminAccountStatusChangeResponse = {
+  account_id: string;
+  previous_status: "active" | "blocked";
+  status: "active" | "blocked";
+  audit_log_id: number;
+};
+
+type AdminWithdrawalQueueItem = {
+  id: number;
+  account_id: string;
+  account_email: string | null;
+  account_display_name: string | null;
+  account_telegram_id: number | null;
+  account_username: string | null;
+  account_status: "active" | "blocked";
+  amount: number;
+  destination_type: string;
+  destination_value: string;
+  user_comment: string | null;
+  admin_comment: string | null;
+  status: "new" | "in_progress" | "paid" | "rejected" | "cancelled";
+  created_at: string;
+  processed_at: string | null;
+};
+
+type AdminWithdrawalQueueResponse = {
+  items: AdminWithdrawalQueueItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type AdminWithdrawalStatusChangeResponse = {
+  withdrawal_id: number;
+  account_id: string;
+  previous_status: "new" | "in_progress" | "paid" | "rejected" | "cancelled";
+  status: "new" | "in_progress" | "paid" | "rejected" | "cancelled";
+  admin_comment: string | null;
+  processed_at: string | null;
+  released_ledger_entry_id: number | null;
+  audit_log_id: number;
+};
+
+type AdminBroadcastButton = {
+  text: string;
+  url: string;
+};
+
+type AdminBroadcastAudience = {
+  segment: "all" | "active" | "with_telegram" | "paid" | "expired";
+  exclude_blocked: boolean;
+};
+
+type AdminBroadcast = {
+  id: number;
+  name: string;
+  title: string;
+  body_html: string;
+  content_type: "text" | "photo";
+  image_url: string | null;
+  channels: ("in_app" | "telegram")[];
+  buttons: AdminBroadcastButton[];
+  audience: AdminBroadcastAudience;
+  status: "draft" | "scheduled" | "running" | "paused" | "completed" | "failed" | "cancelled";
+  estimated_total_accounts: number;
+  estimated_in_app_recipients: number;
+  estimated_telegram_recipients: number;
+  created_by_admin_id: string;
+  updated_by_admin_id: string;
+  scheduled_at: string | null;
+  launched_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AdminBroadcastListResponse = {
+  items: AdminBroadcast[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type BroadcastButtonDraft = {
+  id: string;
+  text: string;
+  url: string;
+};
+
+type BroadcastAudienceSegment = AdminBroadcastAudience["segment"];
+type BroadcastContentType = AdminBroadcast["content_type"];
+type BroadcastStatus = AdminBroadcast["status"];
+type BroadcastChannel = AdminBroadcast["channels"][number];
+
+type AdminView = "dashboard" | "accounts" | "broadcasts" | "withdrawals";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000";
 const TOKEN_KEY = "remnastore_admin_token";
+const ADMIN_LEDGER_HISTORY_PAGE_SIZE = 20;
+const BROADCAST_AUDIENCE_SEGMENTS = ["all", "active", "with_telegram", "paid", "expired"] as const;
+const LEDGER_ENTRY_FILTER_OPTIONS = [
+  "all",
+  "topup_manual",
+  "topup_payment",
+  "subscription_debit",
+  "referral_reward",
+  "withdrawal_reserve",
+  "withdrawal_release",
+  "withdrawal_payout",
+  "promo_credit",
+  "refund",
+  "admin_credit",
+  "admin_debit",
+  "merge_credit",
+  "merge_debit",
+] as const;
+
+type LedgerEntryFilterOption = (typeof LEDGER_ENTRY_FILTER_OPTIONS)[number];
+
+function createBroadcastButtonDraft(button?: AdminBroadcastButton): BroadcastButtonDraft {
+  const draftId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
+
+  return {
+    id: draftId,
+    text: button?.text || "",
+    url: button?.url || "",
+  };
+}
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -215,7 +364,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
 }
 
 function humanizeAccountStatus(status: string): string {
-  return status === "blocked" ? "Заблокирован" : "Активен";
+  return status === "blocked" ? "Полная блокировка" : "Активен";
 }
 
 function humanizePaymentStatus(status: string): string {
@@ -245,6 +394,8 @@ function humanizePaymentFlow(flow: string): string {
 
 function humanizeLedgerType(entryType: string): string {
   switch (entryType) {
+    case "topup_manual":
+      return "Ручное пополнение";
     case "topup_payment":
       return "Пополнение по платежу";
     case "subscription_debit":
@@ -257,13 +408,46 @@ function humanizeLedgerType(entryType: string): string {
       return "Возврат резерва";
     case "withdrawal_payout":
       return "Выплата вывода";
+    case "promo_credit":
+      return "Промо-зачисление";
+    case "refund":
+      return "Возврат";
     case "admin_credit":
       return "Зачисление админом";
     case "admin_debit":
       return "Списание админом";
+    case "merge_credit":
+      return "Баланс перенесен в аккаунт";
+    case "merge_debit":
+      return "Баланс перенесен из аккаунта";
     default:
       return entryType;
   }
+}
+
+function humanizeLedgerEntryFilter(entryType: LedgerEntryFilterOption): string {
+  if (entryType === "all") {
+    return "Все типы";
+  }
+  return humanizeLedgerType(entryType);
+}
+
+function describeLedgerEntryContext(entry: AdminAccountLedgerEntry): string {
+  const context: string[] = [];
+
+  if (entry.reference_type || entry.reference_id) {
+    context.push(`${entry.reference_type || "reference"} ${entry.reference_id || ""}`.trim());
+  }
+  if (entry.created_by_admin_id) {
+    context.push("инициатор: admin");
+  } else if (entry.created_by_account_id) {
+    context.push("инициатор: account");
+  }
+  if (entry.idempotency_key) {
+    context.push(`key ${entry.idempotency_key}`);
+  }
+
+  return context.join(" · ");
 }
 
 function humanizeWithdrawalStatus(status: string): string {
@@ -281,6 +465,67 @@ function humanizeWithdrawalStatus(status: string): string {
     default:
       return status;
   }
+}
+
+function humanizeWithdrawalDestinationType(destinationType: string): string {
+  switch (destinationType) {
+    case "card":
+      return "Карта";
+    case "sbp":
+      return "СБП";
+    default:
+      return destinationType;
+  }
+}
+
+function humanizeBroadcastStatus(status: BroadcastStatus): string {
+  switch (status) {
+    case "draft":
+      return "Черновик";
+    case "scheduled":
+      return "Запланирована";
+    case "running":
+      return "В работе";
+    case "paused":
+      return "Пауза";
+    case "completed":
+      return "Завершена";
+    case "failed":
+      return "Ошибка";
+    case "cancelled":
+      return "Отменена";
+    default:
+      return status;
+  }
+}
+
+function humanizeBroadcastAudienceSegment(segment: BroadcastAudienceSegment): string {
+  switch (segment) {
+    case "all":
+      return "Все аккаунты";
+    case "active":
+      return "Активные аккаунты";
+    case "with_telegram":
+      return "Только с Telegram";
+    case "paid":
+      return "Только платившие";
+    case "expired":
+      return "С истекшей подпиской";
+    default:
+      return segment;
+  }
+}
+
+function humanizeBroadcastChannel(channel: BroadcastChannel): string {
+  return channel === "telegram" ? "Telegram" : "In-app";
+}
+
+function humanizeBroadcastChannels(channels: BroadcastChannel[]): string {
+  return channels.map((channel) => humanizeBroadcastChannel(channel)).join(" + ");
+}
+
+function renderBroadcastPreviewHtml(html: string): string {
+  return html.replace(/\n/g, "<br />");
 }
 
 function DashboardCard({ label, value, hint }: DashboardCardProps) {
@@ -319,6 +564,11 @@ export default function App() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<AdminAccountDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [ledgerHistoryItems, setLedgerHistoryItems] = useState<AdminAccountLedgerEntry[]>([]);
+  const [ledgerHistoryTotal, setLedgerHistoryTotal] = useState(0);
+  const [ledgerHistoryFilter, setLedgerHistoryFilter] = useState<LedgerEntryFilterOption>("all");
+  const [ledgerHistoryLoading, setLedgerHistoryLoading] = useState(false);
+  const [ledgerHistoryLoadingMore, setLedgerHistoryLoadingMore] = useState(false);
   const [subscriptionPlans, setSubscriptionPlans] = useState<AdminSubscriptionPlan[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
   const [balanceAdjustmentAmount, setBalanceAdjustmentAmount] = useState("");
@@ -327,6 +577,30 @@ export default function App() {
   const [subscriptionGrantPlanCode, setSubscriptionGrantPlanCode] = useState("");
   const [subscriptionGrantComment, setSubscriptionGrantComment] = useState("");
   const [subscriptionSubmitting, setSubscriptionSubmitting] = useState(false);
+  const [statusChangeComment, setStatusChangeComment] = useState("");
+  const [statusSubmitting, setStatusSubmitting] = useState(false);
+  const [withdrawalItems, setWithdrawalItems] = useState<AdminWithdrawalQueueItem[]>([]);
+  const [withdrawalTotal, setWithdrawalTotal] = useState(0);
+  const [selectedWithdrawalId, setSelectedWithdrawalId] = useState<number | null>(null);
+  const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
+  const [withdrawalComment, setWithdrawalComment] = useState("");
+  const [withdrawalSubmitting, setWithdrawalSubmitting] = useState(false);
+  const [broadcastItems, setBroadcastItems] = useState<AdminBroadcast[]>([]);
+  const [broadcastTotal, setBroadcastTotal] = useState(0);
+  const [selectedBroadcastId, setSelectedBroadcastId] = useState<number | null>(null);
+  const [selectedBroadcast, setSelectedBroadcast] = useState<AdminBroadcast | null>(null);
+  const [broadcastsLoading, setBroadcastsLoading] = useState(false);
+  const [broadcastSubmitting, setBroadcastSubmitting] = useState(false);
+  const [broadcastName, setBroadcastName] = useState("");
+  const [broadcastTitle, setBroadcastTitle] = useState("");
+  const [broadcastBodyHtml, setBroadcastBodyHtml] = useState("");
+  const [broadcastContentType, setBroadcastContentType] = useState<BroadcastContentType>("text");
+  const [broadcastImageUrl, setBroadcastImageUrl] = useState("");
+  const [broadcastButtonDrafts, setBroadcastButtonDrafts] = useState<BroadcastButtonDraft[]>([]);
+  const [broadcastAudienceSegment, setBroadcastAudienceSegment] = useState<BroadcastAudienceSegment>("all");
+  const [broadcastAudienceExcludeBlocked, setBroadcastAudienceExcludeBlocked] = useState(true);
+  const [broadcastSendInApp, setBroadcastSendInApp] = useState(true);
+  const [broadcastSendTelegram, setBroadcastSendTelegram] = useState(false);
 
   const cards = useMemo(() => {
     if (!summary) {
@@ -355,11 +629,84 @@ export default function App() {
       },
     ];
   }, [summary]);
+  const financeCards = useMemo(() => {
+    if (!summary) {
+      return [];
+    }
+    return [
+      {
+        label: "Баланс кошельков",
+        value: formatMoney(summary.total_wallet_balance),
+        hint: "суммарный snapshot по аккаунтам",
+      },
+      {
+        label: "Резерв выводов",
+        value: formatMoney(summary.pending_withdrawals_amount),
+        hint: "сейчас висит в pending и in_progress",
+      },
+      {
+        label: "Платежи 30д",
+        value: formatMoney(summary.successful_payments_amount_last_30d),
+        hint: `${summary.successful_payments_last_30d} успешных оплат за 30 дней`,
+      },
+      {
+        label: "Выводы 30д",
+        value: formatMoney(summary.paid_withdrawals_amount_last_30d),
+        hint: "фактически выплаченные заявки",
+      },
+    ];
+  }, [summary]);
+  const activityCards = useMemo(() => {
+    if (!summary) {
+      return [];
+    }
+    return [
+      {
+        label: "Новые аккаунты 7д",
+        value: summary.new_accounts_last_7d,
+        hint: "свежий приток пользователей",
+      },
+      {
+        label: "Заблокированные",
+        value: summary.blocked_accounts,
+        hint: "аккаунты на полном стопе",
+      },
+      {
+        label: "Пополнения 30д",
+        value: formatMoney(summary.wallet_topups_amount_last_30d),
+        hint: "wallet_topup через провайдеров",
+      },
+      {
+        label: "Покупки тарифов 30д",
+        value: formatMoney(summary.direct_plan_revenue_last_30d),
+        hint: "direct plan purchase",
+      },
+      {
+        label: "Реферальные начисления",
+        value: formatMoney(summary.total_referral_earnings),
+        hint: "накоплено по всем аккаунтам",
+      },
+    ];
+  }, [summary]);
 
   const selectedGrantPlan = useMemo(
     () => subscriptionPlans.find((plan) => plan.code === subscriptionGrantPlanCode) || null,
     [subscriptionGrantPlanCode, subscriptionPlans],
   );
+  const selectedWithdrawal = useMemo(
+    () => withdrawalItems.find((item) => item.id === selectedWithdrawalId) || null,
+    [selectedWithdrawalId, withdrawalItems],
+  );
+  const withdrawalStats = useMemo(
+    () => ({
+      newCount: withdrawalItems.filter((item) => item.status === "new").length,
+      inProgressCount: withdrawalItems.filter((item) => item.status === "in_progress").length,
+    }),
+    [withdrawalItems],
+  );
+  const hasMoreLedgerHistory = ledgerHistoryItems.length < ledgerHistoryTotal;
+  const broadcastEstimate = selectedBroadcastId ? selectedBroadcast : null;
+  const broadcastEditorMode = selectedBroadcastId ? "edit" : "create";
 
   const loadDashboard = useCallback(
     async (activeToken: string) => {
@@ -392,6 +739,60 @@ export default function App() {
     [],
   );
 
+  const loadLedgerHistory = useCallback(
+    async (
+      accountId: string,
+      activeToken: string,
+      options?: {
+        offset?: number;
+        append?: boolean;
+        entryType?: LedgerEntryFilterOption;
+      },
+    ): Promise<AdminAccountLedgerHistoryResponse | null> => {
+      const offset = options?.offset ?? 0;
+      const append = options?.append ?? false;
+      const entryType = options?.entryType ?? ledgerHistoryFilter;
+      const searchParams = new URLSearchParams({
+        limit: String(ADMIN_LEDGER_HISTORY_PAGE_SIZE),
+        offset: String(offset),
+      });
+
+      if (entryType !== "all") {
+        searchParams.set("entry_type", entryType);
+      }
+
+      if (append) {
+        setLedgerHistoryLoadingMore(true);
+      } else {
+        setLedgerHistoryLoading(true);
+      }
+
+      try {
+        const response = await adminFetch<AdminAccountLedgerHistoryResponse>(
+          `/api/v1/admin/accounts/${accountId}/ledger-entries?${searchParams.toString()}`,
+          activeToken,
+        );
+        setLedgerHistoryItems((currentItems) => (append ? [...currentItems, ...response.items] : response.items));
+        setLedgerHistoryTotal(response.total);
+        return response;
+      } catch (fetchError) {
+        if (!append) {
+          setLedgerHistoryItems([]);
+          setLedgerHistoryTotal(0);
+        }
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить ledger history");
+        return null;
+      } finally {
+        if (append) {
+          setLedgerHistoryLoadingMore(false);
+        } else {
+          setLedgerHistoryLoading(false);
+        }
+      }
+    },
+    [ledgerHistoryFilter],
+  );
+
   const loadSubscriptionPlans = useCallback(
     async (activeToken: string): Promise<AdminSubscriptionPlan[]> => {
       setPlansLoading(true);
@@ -407,6 +808,81 @@ export default function App() {
         return [];
       } finally {
         setPlansLoading(false);
+      }
+    },
+    [],
+  );
+
+  const loadWithdrawals = useCallback(
+    async (activeToken: string): Promise<AdminWithdrawalQueueItem[]> => {
+      setWithdrawalsLoading(true);
+      try {
+        const response = await adminFetch<AdminWithdrawalQueueResponse>(
+          "/api/v1/admin/withdrawals?limit=50&offset=0",
+          activeToken,
+        );
+        setWithdrawalItems(response.items);
+        setWithdrawalTotal(response.total);
+        setSelectedWithdrawalId((currentSelection) =>
+          response.items.some((item) => item.id === currentSelection) ? currentSelection : (response.items[0]?.id ?? null),
+        );
+        return response.items;
+      } catch (fetchError) {
+        setWithdrawalItems([]);
+        setWithdrawalTotal(0);
+        setSelectedWithdrawalId(null);
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить очередь выводов");
+        return [];
+      } finally {
+        setWithdrawalsLoading(false);
+      }
+    },
+    [],
+  );
+
+  const loadBroadcasts = useCallback(
+    async (activeToken: string): Promise<AdminBroadcast[]> => {
+      setBroadcastsLoading(true);
+      try {
+        const response = await adminFetch<AdminBroadcastListResponse>(
+          "/api/v1/admin/broadcasts?limit=50&offset=0",
+          activeToken,
+        );
+        setBroadcastItems(response.items);
+        setBroadcastTotal(response.total);
+        setSelectedBroadcastId((currentSelection) =>
+          response.items.some((item) => item.id === currentSelection)
+            ? currentSelection
+            : (response.items[0]?.id ?? null),
+        );
+        return response.items;
+      } catch (fetchError) {
+        setBroadcastItems([]);
+        setBroadcastTotal(0);
+        setSelectedBroadcastId(null);
+        setSelectedBroadcast(null);
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить рассылки");
+        return [];
+      } finally {
+        setBroadcastsLoading(false);
+      }
+    },
+    [],
+  );
+
+  const loadBroadcastDetail = useCallback(
+    async (broadcastId: number, activeToken: string): Promise<AdminBroadcast | null> => {
+      try {
+        const broadcast = await adminFetch<AdminBroadcast>(
+          `/api/v1/admin/broadcasts/${broadcastId}`,
+          activeToken,
+        );
+        setSelectedBroadcast(broadcast);
+        return broadcast;
+      } catch (fetchError) {
+        setSelectedBroadcast(null);
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить черновик рассылки");
+        return null;
       }
     },
     [],
@@ -436,6 +912,26 @@ export default function App() {
       setSubscriptionPlans([]);
       setSearchResults([]);
       setSelectedAccount(null);
+      setLedgerHistoryItems([]);
+      setLedgerHistoryTotal(0);
+      setWithdrawalItems([]);
+      setWithdrawalTotal(0);
+      setSelectedWithdrawalId(null);
+      setWithdrawalComment("");
+      setBroadcastItems([]);
+      setBroadcastTotal(0);
+      setSelectedBroadcastId(null);
+      setSelectedBroadcast(null);
+      setBroadcastName("");
+      setBroadcastTitle("");
+      setBroadcastBodyHtml("");
+      setBroadcastContentType("text");
+      setBroadcastImageUrl("");
+      setBroadcastButtonDrafts([]);
+      setBroadcastAudienceSegment("all");
+      setBroadcastAudienceExcludeBlocked(true);
+      setBroadcastSendInApp(true);
+      setBroadcastSendTelegram(false);
       setNotice(null);
       return;
     }
@@ -457,6 +953,8 @@ export default function App() {
         setSummary(null);
         setSearchResults([]);
         setSelectedAccount(null);
+        setLedgerHistoryItems([]);
+        setLedgerHistoryTotal(0);
         setNotice(null);
         setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить админку");
       } finally {
@@ -482,6 +980,46 @@ export default function App() {
   }, [activeView, loadSubscriptionPlans, subscriptionPlans.length, token]);
 
   useEffect(() => {
+    if (!token || activeView !== "withdrawals") {
+      return;
+    }
+
+    void loadWithdrawals(token);
+  }, [activeView, loadWithdrawals, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "broadcasts") {
+      return;
+    }
+
+    void loadBroadcasts(token);
+  }, [activeView, loadBroadcasts, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "broadcasts") {
+      return;
+    }
+    if (selectedBroadcastId === null) {
+      setSelectedBroadcast(null);
+      return;
+    }
+
+    void loadBroadcastDetail(selectedBroadcastId, token);
+  }, [activeView, loadBroadcastDetail, selectedBroadcastId, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "accounts" || !selectedAccountId) {
+      return;
+    }
+
+    void loadLedgerHistory(selectedAccountId, token, {
+      offset: 0,
+      append: false,
+      entryType: ledgerHistoryFilter,
+    });
+  }, [activeView, ledgerHistoryFilter, loadLedgerHistory, selectedAccountId, token]);
+
+  useEffect(() => {
     if (subscriptionGrantPlanCode || subscriptionPlans.length === 0) {
       return;
     }
@@ -496,7 +1034,44 @@ export default function App() {
     setBalanceAdjustmentAmount("");
     setBalanceAdjustmentComment("");
     setSubscriptionGrantComment("");
+    setStatusChangeComment("");
   }, [selectedAccountId]);
+
+  useEffect(() => {
+    setLedgerHistoryItems([]);
+    setLedgerHistoryTotal(0);
+  }, [selectedAccountId]);
+
+  useEffect(() => {
+    setWithdrawalComment("");
+  }, [selectedWithdrawalId]);
+
+  useEffect(() => {
+    if (!selectedBroadcast) {
+      setBroadcastName("");
+      setBroadcastTitle("");
+      setBroadcastBodyHtml("");
+      setBroadcastContentType("text");
+      setBroadcastImageUrl("");
+      setBroadcastButtonDrafts([]);
+      setBroadcastAudienceSegment("all");
+      setBroadcastAudienceExcludeBlocked(true);
+      setBroadcastSendInApp(true);
+      setBroadcastSendTelegram(false);
+      return;
+    }
+
+    setBroadcastName(selectedBroadcast.name);
+    setBroadcastTitle(selectedBroadcast.title);
+    setBroadcastBodyHtml(selectedBroadcast.body_html);
+    setBroadcastContentType(selectedBroadcast.content_type);
+    setBroadcastImageUrl(selectedBroadcast.image_url || "");
+    setBroadcastButtonDrafts(selectedBroadcast.buttons.map((button) => createBroadcastButtonDraft(button)));
+    setBroadcastAudienceSegment(selectedBroadcast.audience.segment);
+    setBroadcastAudienceExcludeBlocked(selectedBroadcast.audience.exclude_blocked);
+    setBroadcastSendInApp(selectedBroadcast.channels.includes("in_app"));
+    setBroadcastSendTelegram(selectedBroadcast.channels.includes("telegram"));
+  }, [selectedBroadcast]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -541,6 +1116,26 @@ export default function App() {
     setSubscriptionPlans([]);
     setSearchResults([]);
     setSelectedAccount(null);
+    setLedgerHistoryItems([]);
+    setLedgerHistoryTotal(0);
+    setWithdrawalItems([]);
+    setWithdrawalTotal(0);
+    setSelectedWithdrawalId(null);
+    setWithdrawalComment("");
+    setBroadcastItems([]);
+    setBroadcastTotal(0);
+    setSelectedBroadcastId(null);
+    setSelectedBroadcast(null);
+    setBroadcastName("");
+    setBroadcastTitle("");
+    setBroadcastBodyHtml("");
+    setBroadcastContentType("text");
+    setBroadcastImageUrl("");
+    setBroadcastButtonDrafts([]);
+    setBroadcastAudienceSegment("all");
+    setBroadcastAudienceExcludeBlocked(true);
+    setBroadcastSendInApp(true);
+    setBroadcastSendTelegram(false);
     setError(null);
     setNotice(null);
     setActiveView("dashboard");
@@ -557,8 +1152,24 @@ export default function App() {
       if (activeView === "accounts" && subscriptionPlans.length === 0) {
         await loadSubscriptionPlans(token);
       }
+      if (activeView === "accounts" && selectedAccountId) {
+        await loadLedgerHistory(selectedAccountId, token, {
+          offset: 0,
+          append: false,
+          entryType: ledgerHistoryFilter,
+        });
+      }
+      if (activeView === "withdrawals") {
+        await loadWithdrawals(token);
+      }
+      if (activeView === "broadcasts") {
+        await loadBroadcasts(token);
+      }
       if (selectedAccountId) {
         await loadAccountDetail(selectedAccountId, token);
+      }
+      if (activeView === "broadcasts" && selectedBroadcastId !== null) {
+        await loadBroadcastDetail(selectedBroadcastId, token);
       }
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "Не удалось обновить данные");
@@ -604,6 +1215,136 @@ export default function App() {
     setError(null);
     setNotice(null);
     await loadAccountDetail(accountId, token);
+  }
+
+  async function handleOpenWithdrawalAccount(accountId: string) {
+    if (!token) {
+      return;
+    }
+
+    setActiveView("accounts");
+    setError(null);
+    setNotice(null);
+    await loadAccountDetail(accountId, token);
+  }
+
+  function handleNewBroadcastDraft() {
+    setSelectedBroadcastId(null);
+    setSelectedBroadcast(null);
+    setError(null);
+    setNotice(null);
+  }
+
+  function handleSelectBroadcast(broadcastId: number) {
+    setSelectedBroadcastId(broadcastId);
+    setError(null);
+    setNotice(null);
+  }
+
+  function handleBroadcastButtonChange(
+    buttonId: string,
+    field: "text" | "url",
+    value: string,
+  ) {
+    setBroadcastButtonDrafts((currentItems) =>
+      currentItems.map((item) => (item.id === buttonId ? { ...item, [field]: value } : item)),
+    );
+  }
+
+  function handleAddBroadcastButton() {
+    setBroadcastButtonDrafts((currentItems) => {
+      if (currentItems.length >= 3) {
+        return currentItems;
+      }
+      return [...currentItems, createBroadcastButtonDraft()];
+    });
+  }
+
+  function handleRemoveBroadcastButton(buttonId: string) {
+    setBroadcastButtonDrafts((currentItems) => currentItems.filter((item) => item.id !== buttonId));
+  }
+
+  async function handleSaveBroadcast(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) {
+      return;
+    }
+
+    const trimmedName = broadcastName.trim();
+    const trimmedTitle = broadcastTitle.trim();
+    const trimmedBody = broadcastBodyHtml.trim();
+    const trimmedImageUrl = broadcastImageUrl.trim();
+    const channels: BroadcastChannel[] = [];
+
+    if (broadcastSendInApp) {
+      channels.push("in_app");
+    }
+    if (broadcastSendTelegram) {
+      channels.push("telegram");
+    }
+
+    if (!trimmedName || !trimmedTitle || !trimmedBody) {
+      setError("Название, заголовок и текст рассылки обязательны");
+      return;
+    }
+    if (channels.length === 0) {
+      setError("Выбери хотя бы один канал доставки");
+      return;
+    }
+    if (broadcastContentType === "photo" && !trimmedImageUrl) {
+      setError("Для фото-рассылки нужен image URL");
+      return;
+    }
+
+    const buttons: AdminBroadcastButton[] = [];
+    for (const button of broadcastButtonDrafts) {
+      const text = button.text.trim();
+      const url = button.url.trim();
+      if (!text && !url) {
+        continue;
+      }
+      if (!text || !url) {
+        setError("У Telegram-кнопки должны быть заполнены и текст, и URL");
+        return;
+      }
+      buttons.push({ text, url });
+    }
+
+    setBroadcastSubmitting(true);
+    setError(null);
+
+    try {
+      const payload = {
+        name: trimmedName,
+        title: trimmedTitle,
+        body_html: trimmedBody,
+        content_type: broadcastContentType,
+        image_url: broadcastContentType === "photo" ? trimmedImageUrl : null,
+        channels,
+        buttons,
+        audience: {
+          segment: broadcastAudienceSegment,
+          exclude_blocked: broadcastAudienceExcludeBlocked,
+        },
+      };
+      const isEditing = selectedBroadcastId !== null;
+      const broadcast = await adminFetch<AdminBroadcast>(
+        isEditing ? `/api/v1/admin/broadcasts/${selectedBroadcastId}` : "/api/v1/admin/broadcasts",
+        token,
+        {
+          method: isEditing ? "PUT" : "POST",
+          body: JSON.stringify(payload),
+        },
+      );
+      setSelectedBroadcast(broadcast);
+      setSelectedBroadcastId(broadcast.id);
+      setNotice(isEditing ? "Черновик рассылки обновлен" : "Черновик рассылки создан");
+      await loadBroadcasts(token);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Не удалось сохранить черновик рассылки");
+    } finally {
+      setBroadcastSubmitting(false);
+    }
   }
 
   async function handleBalanceAdjustment(event: FormEvent<HTMLFormElement>) {
@@ -665,6 +1406,11 @@ export default function App() {
         );
       }
 
+      await loadLedgerHistory(selectedAccount.id, token, {
+        offset: 0,
+        append: false,
+        entryType: ledgerHistoryFilter,
+      });
       await loadDashboard(token);
       setBalanceAdjustmentAmount("");
       setBalanceAdjustmentComment("");
@@ -758,6 +1504,147 @@ export default function App() {
     }
   }
 
+  async function handleAccountStatusChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!token || !selectedAccount) {
+      return;
+    }
+
+    const trimmedComment = statusChangeComment.trim();
+    if (!trimmedComment) {
+      setError("Комментарий обязателен");
+      return;
+    }
+
+    const targetStatus: "active" | "blocked" =
+      selectedAccount.status === "blocked" ? "active" : "blocked";
+
+    setStatusSubmitting(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const idempotencyKey =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `admin-status-${Date.now()}`;
+
+      const response = await adminFetch<AdminAccountStatusChangeResponse>(
+        `/api/v1/admin/accounts/${selectedAccount.id}/status`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            status: targetStatus,
+            comment: trimmedComment,
+            idempotency_key: idempotencyKey,
+          }),
+        },
+      );
+
+      const refreshedAccount = await loadAccountDetail(selectedAccount.id, token);
+      if (refreshedAccount) {
+        updateSearchResultSnapshot(refreshedAccount);
+      } else {
+        setSearchResults((items) =>
+          items.map((item) =>
+            item.id === response.account_id
+              ? {
+                  ...item,
+                  status: response.status,
+                }
+              : item,
+          ),
+        );
+      }
+
+      await loadDashboard(token);
+      setStatusChangeComment("");
+      setNotice(
+        response.status === "blocked"
+          ? "Полная блокировка включена. Protected API, Telegram WebApp auth и команды бота для этого пользователя теперь режутся."
+          : "Полная блокировка снята.",
+      );
+    } catch (statusError) {
+      setError(
+        statusError instanceof Error ? statusError.message : "Не удалось изменить статус пользователя",
+      );
+    } finally {
+      setStatusSubmitting(false);
+    }
+  }
+
+  async function handleLoadMoreLedgerHistory() {
+    if (!token || !selectedAccountId || !hasMoreLedgerHistory || ledgerHistoryLoadingMore) {
+      return;
+    }
+
+    await loadLedgerHistory(selectedAccountId, token, {
+      offset: ledgerHistoryItems.length,
+      append: true,
+      entryType: ledgerHistoryFilter,
+    });
+  }
+
+  async function handleWithdrawalStatusChange(targetStatus: "in_progress" | "paid" | "rejected") {
+    if (!token || !selectedWithdrawal) {
+      return;
+    }
+
+    const currentWithdrawal = selectedWithdrawal;
+    const trimmedComment = withdrawalComment.trim();
+    if (!trimmedComment) {
+      setError("Комментарий обязателен");
+      return;
+    }
+
+    setWithdrawalSubmitting(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const idempotencyKey =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `admin-withdrawal-${Date.now()}`;
+
+      const response = await adminFetch<AdminWithdrawalStatusChangeResponse>(
+        `/api/v1/admin/withdrawals/${currentWithdrawal.id}/status`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            status: targetStatus,
+            comment: trimmedComment,
+            idempotency_key: idempotencyKey,
+          }),
+        },
+      );
+
+      await Promise.all([loadWithdrawals(token), loadDashboard(token)]);
+      setWithdrawalComment("");
+
+      if (targetStatus === "in_progress") {
+        setNotice(`Заявка на вывод #${response.withdrawal_id} переведена в работу.`);
+      } else if (targetStatus === "paid") {
+        setNotice(`Заявка на вывод #${response.withdrawal_id} отмечена как выплаченная.`);
+      } else {
+        setNotice(
+          `Заявка на вывод #${response.withdrawal_id} отклонена. ${formatMoney(currentWithdrawal.amount)} возвращены на баланс пользователя.`,
+        );
+      }
+    } catch (withdrawalError) {
+      setError(
+        withdrawalError instanceof Error
+          ? withdrawalError.message
+          : "Не удалось изменить статус заявки на вывод",
+      );
+    } finally {
+      setWithdrawalSubmitting(false);
+    }
+  }
+
   if (!token) {
     return (
       <main className="admin-shell admin-shell--auth">
@@ -830,8 +1717,8 @@ export default function App() {
           <h1>Операционный мостик админки</h1>
           <p>
             Текущий контур уже держит bootstrap admin, auth, сводку, поиск пользователей и ручные
-            действия над балансом и подписками. Следом сюда встают выводы, блокировки и
-            расширенная история.
+            действия над балансом, подписками, статусом пользователя и очередью выводов. Дальше
+            сюда встают расширенная история, статистика и рассылки.
           </p>
         </div>
         <div className="hero-side">
@@ -864,6 +1751,28 @@ export default function App() {
           onClick={() => setActiveView("accounts")}
         >
           Пользователи
+        </button>
+        <button
+          type="button"
+          className={
+            activeView === "broadcasts"
+              ? "module-nav__button module-nav__button--active"
+              : "module-nav__button"
+          }
+          onClick={() => setActiveView("broadcasts")}
+        >
+          Рассылки
+        </button>
+        <button
+          type="button"
+          className={
+            activeView === "withdrawals"
+              ? "module-nav__button module-nav__button--active"
+              : "module-nav__button"
+          }
+          onClick={() => setActiveView("withdrawals")}
+        >
+          Выводы
         </button>
       </nav>
 
@@ -903,17 +1812,48 @@ export default function App() {
             </section>
           </section>
 
+          <section className="dashboard-panels">
+            <article className="dashboard-panel">
+              <div className="dashboard-panel__header">
+                <div>
+                  <span className="eyebrow">Финансовый срез</span>
+                  <h2>Деньги и очереди</h2>
+                </div>
+                <p>Snapshot на сейчас и агрегаты за последние 30 дней.</p>
+              </div>
+              <div className="metrics-grid metrics-grid--dense">
+                {financeCards.map((card) => (
+                  <DashboardCard key={card.label} {...card} />
+                ))}
+              </div>
+            </article>
+
+            <article className="dashboard-panel">
+              <div className="dashboard-panel__header">
+                <div>
+                  <span className="eyebrow">Операционный срез</span>
+                  <h2>Поток пользователей и продаж</h2>
+                </div>
+                <p>Здесь виден приток, блокировки, топапы, direct purchase и общий referral хвост.</p>
+              </div>
+              <div className="metrics-grid metrics-grid--dense">
+                {activityCards.map((card) => (
+                  <DashboardCard key={card.label} {...card} />
+                ))}
+              </div>
+            </article>
+          </section>
+
           <section className="roadmap-card">
             <span className="eyebrow">Следующий сектор</span>
             <ul>
-              <li>Полная история ledger с пагинацией и фильтрами</li>
-              <li>Очередь выводов и admin processing</li>
-              <li>Блокировка пользователя и запрет новых операций</li>
-              <li>Audit trail и расширенная статистика</li>
+              <li>Рассылки</li>
+              <li>Довести audit trail до всех admin actions</li>
+              <li>Фильтры и экспорт для очереди выводов</li>
             </ul>
           </section>
         </>
-      ) : (
+      ) : activeView === "accounts" ? (
         <section className="search-shell">
           <aside className="search-column">
             <form className="search-panel" onSubmit={handleSearch}>
@@ -1144,24 +2084,69 @@ export default function App() {
 
                 <section className="activity-grid">
                   <article className="detail-section">
-                    <span className="eyebrow">Последний ledger</span>
+                    <div className="detail-section__header detail-section__header--stacked">
+                      <div>
+                        <span className="eyebrow">История ledger</span>
+                        <h3>Все движения по балансу</h3>
+                      </div>
+                      <div className="inline-filter">
+                        <label className="inline-filter__field">
+                          <span>Фильтр</span>
+                          <select
+                            value={ledgerHistoryFilter}
+                            onChange={(event) =>
+                              setLedgerHistoryFilter(event.target.value as LedgerEntryFilterOption)
+                            }
+                            disabled={ledgerHistoryLoading}
+                          >
+                            {LEDGER_ENTRY_FILTER_OPTIONS.map((entryType) => (
+                              <option key={entryType} value={entryType}>
+                                {humanizeLedgerEntryFilter(entryType)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
                     <div className="activity-list">
-                      {selectedAccount.recent_ledger_entries.length === 0 ? (
+                      {ledgerHistoryLoading ? (
+                        <div className="activity-empty">Загружаем ledger history...</div>
+                      ) : ledgerHistoryItems.length === 0 ? (
                         <div className="activity-empty">Записей пока нет.</div>
                       ) : (
-                        selectedAccount.recent_ledger_entries.map((entry) => (
+                        ledgerHistoryItems.map((entry) => (
                           <article key={entry.id} className="activity-item activity-item--dense">
                             <div>
                               <strong>{humanizeLedgerType(entry.entry_type)}</strong>
-                              <span>{entry.comment || `${entry.reference_type || "entry"} ${entry.reference_id || ""}`.trim()}</span>
+                              <span>
+                                {entry.comment ||
+                                  describeLedgerEntryContext(entry) ||
+                                  `${entry.reference_type || "entry"} ${entry.reference_id || ""}`.trim()}
+                              </span>
                             </div>
                             <div className="activity-item__meta">
                               <strong>{formatMoney(entry.amount, entry.currency)}</strong>
+                              <span>{formatDate(entry.created_at)}</span>
                               <span>После: {formatMoney(entry.balance_after, entry.currency)}</span>
                             </div>
                           </article>
                         ))
                       )}
+                    </div>
+                    <div className="section-footer">
+                      <span className="form-hint">
+                        Показано {ledgerHistoryItems.length} из {ledgerHistoryTotal} записей.
+                      </span>
+                      {hasMoreLedgerHistory ? (
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void handleLoadMoreLedgerHistory()}
+                          disabled={ledgerHistoryLoading || ledgerHistoryLoadingMore}
+                        >
+                          {ledgerHistoryLoadingMore ? "Загружаем..." : "Загрузить еще"}
+                        </button>
+                      ) : null}
                     </div>
                   </article>
 
@@ -1207,6 +2192,642 @@ export default function App() {
                         </article>
                       ))
                     )}
+                  </div>
+                </section>
+
+                <section className="detail-section detail-section--action detail-section--danger">
+                  <span className="eyebrow">Опасная зона</span>
+                  <div className="detail-section__intro">
+                    <h3>Полная блокировка пользователя</h3>
+                    <p>
+                      Это удаленное административное действие. Полная блокировка режет protected API,
+                      Telegram WebApp auth, новые платежи, wallet-покупки, новые выводы и заставляет
+                      бота молчать на обычные сообщения и `/start`.
+                    </p>
+                  </div>
+                  <form className="adjustment-form" onSubmit={handleAccountStatusChange}>
+                    <div className="form-field">
+                      <span>Текущий статус</span>
+                      <div className="status-action-summary status-action-summary--danger">
+                        <strong>{humanizeAccountStatus(selectedAccount.status)}</strong>
+                        <small>
+                          {selectedAccount.status === "blocked"
+                            ? "Сейчас для пользователя действует полный стоп по доступу и основным входным точкам."
+                            : "Сейчас пользователь работает в обычном режиме. Полную блокировку применяй только как крайнее действие."}
+                        </small>
+                      </div>
+                    </div>
+                    <label className="form-field form-field--wide">
+                      <span>Комментарий</span>
+                      <textarea
+                        value={statusChangeComment}
+                        onChange={(event) => setStatusChangeComment(event.target.value)}
+                        placeholder="Почему включаем или снимаем полную блокировку"
+                        rows={3}
+                        required
+                      />
+                    </label>
+                    <div className="adjustment-form__footer">
+                      <span className="form-hint">
+                        Следующее действие:{" "}
+                        {selectedAccount.status === "blocked"
+                          ? "снять полную блокировку"
+                          : "включить полную блокировку"}
+                        . Комментарий попадет в audit trail.
+                      </span>
+                      <button
+                        className={
+                          selectedAccount.status === "blocked"
+                            ? "action-button"
+                            : "action-button action-button--danger"
+                        }
+                        type="submit"
+                        disabled={statusSubmitting}
+                      >
+                        {statusSubmitting
+                          ? "Сохраняем..."
+                          : selectedAccount.status === "blocked"
+                            ? "Снять полную блокировку"
+                            : "Включить полную блокировку"}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+              </>
+            ) : null}
+          </div>
+        </section>
+      ) : activeView === "broadcasts" ? (
+        <section className="search-shell">
+          <aside className="search-column">
+            <section className="search-panel">
+              <span className="eyebrow">Broadcasts v1</span>
+              <h2>Черновики рассылок</h2>
+              <p className="queue-panel__copy">
+                Канонический формат текста здесь Telegram HTML subset. В v1 доступны только
+                черновики, preview и оценка аудитории перед запуском.
+              </p>
+              <div className="queue-summary">
+                <article className="queue-summary__item">
+                  <span>Всего черновиков</span>
+                  <strong>{broadcastTotal}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>Выделено</span>
+                  <strong>{selectedBroadcastId ? `#${selectedBroadcastId}` : "новый"}</strong>
+                </article>
+              </div>
+              <button className="ghost-button detail-inline-button" type="button" onClick={handleNewBroadcastDraft}>
+                Новый черновик
+              </button>
+            </section>
+
+            <div className="results-list">
+              {broadcastsLoading ? (
+                <div className="empty-state">Загружаем черновики рассылок...</div>
+              ) : broadcastItems.length === 0 ? (
+                <div className="empty-state">Черновиков пока нет. Создай первый справа.</div>
+              ) : (
+                broadcastItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={
+                      selectedBroadcastId === item.id
+                        ? "result-card result-card--active result-card--broadcast"
+                        : "result-card result-card--broadcast"
+                    }
+                    onClick={() => handleSelectBroadcast(item.id)}
+                  >
+                    <div className="result-card__top">
+                      <strong>{item.name}</strong>
+                      <span className={`status-pill status-pill--${item.status}`}>
+                        {humanizeBroadcastStatus(item.status)}
+                      </span>
+                    </div>
+                    <span>{item.title}</span>
+                    <span>{humanizeBroadcastChannels(item.channels)}</span>
+                    <span>
+                      {humanizeBroadcastAudienceSegment(item.audience.segment)} ·{" "}
+                      {item.estimated_total_accounts} акк.
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </aside>
+
+          <div className="detail-column">
+            <section className="detail-section detail-section--action">
+              <div className="detail-section__header">
+                <div>
+                  <span className="eyebrow">Редактор рассылки</span>
+                  <h3>{broadcastEditorMode === "edit" ? "Редактирование черновика" : "Новый черновик"}</h3>
+                </div>
+                {selectedBroadcast ? (
+                  <span className={`status-pill status-pill--${selectedBroadcast.status}`}>
+                    {humanizeBroadcastStatus(selectedBroadcast.status)}
+                  </span>
+                ) : null}
+              </div>
+              <form className="adjustment-form" onSubmit={handleSaveBroadcast}>
+                <label className="form-field">
+                  <span>Внутреннее название</span>
+                  <input
+                    value={broadcastName}
+                    onChange={(event) => setBroadcastName(event.target.value)}
+                    placeholder="Например: Spring promo 2026"
+                    required
+                  />
+                </label>
+                <label className="form-field form-field--wide">
+                  <span>Заголовок</span>
+                  <input
+                    value={broadcastTitle}
+                    onChange={(event) => setBroadcastTitle(event.target.value)}
+                    placeholder="Что увидит пользователь в Telegram и in-app"
+                    required
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Тип контента</span>
+                  <select
+                    value={broadcastContentType}
+                    onChange={(event) => setBroadcastContentType(event.target.value as BroadcastContentType)}
+                  >
+                    <option value="text">Только текст</option>
+                    <option value="photo">Текст + фото</option>
+                  </select>
+                </label>
+                <div className="broadcast-channel-grid">
+                  <label className="checkbox-card">
+                    <input
+                      type="checkbox"
+                      checked={broadcastSendInApp}
+                      onChange={(event) => setBroadcastSendInApp(event.target.checked)}
+                    />
+                    <span>In-app</span>
+                  </label>
+                  <label className="checkbox-card">
+                    <input
+                      type="checkbox"
+                      checked={broadcastSendTelegram}
+                      onChange={(event) => setBroadcastSendTelegram(event.target.checked)}
+                    />
+                    <span>Telegram</span>
+                  </label>
+                </div>
+                <label className="form-field">
+                  <span>Сегмент аудитории</span>
+                  <select
+                    value={broadcastAudienceSegment}
+                    onChange={(event) => setBroadcastAudienceSegment(event.target.value as BroadcastAudienceSegment)}
+                  >
+                    {BROADCAST_AUDIENCE_SEGMENTS.map((segment) => (
+                      <option key={segment} value={segment}>
+                        {humanizeBroadcastAudienceSegment(segment)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="checkbox-card checkbox-card--inline">
+                  <input
+                    type="checkbox"
+                    checked={broadcastAudienceExcludeBlocked}
+                    onChange={(event) => setBroadcastAudienceExcludeBlocked(event.target.checked)}
+                  />
+                  <span>Исключать полностью заблокированных</span>
+                </label>
+                {broadcastContentType === "photo" ? (
+                  <label className="form-field form-field--wide">
+                    <span>Image URL</span>
+                    <input
+                      value={broadcastImageUrl}
+                      onChange={(event) => setBroadcastImageUrl(event.target.value)}
+                      placeholder="https://..."
+                      required
+                    />
+                  </label>
+                ) : null}
+                <label className="form-field form-field--wide">
+                  <span>HTML-текст</span>
+                  <textarea
+                    value={broadcastBodyHtml}
+                    onChange={(event) => setBroadcastBodyHtml(event.target.value)}
+                    placeholder={"<b>Жирный текст</b>, <a href=\"https://...\">ссылка</a>, emoji и обычные переносы строк"}
+                    rows={8}
+                    required
+                  />
+                </label>
+
+                <div className="broadcast-buttons-section">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">Telegram buttons</span>
+                      <h3>URL-кнопки</h3>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={handleAddBroadcastButton}
+                      disabled={broadcastButtonDrafts.length >= 3}
+                    >
+                      Добавить кнопку
+                    </button>
+                  </div>
+                  {broadcastButtonDrafts.length === 0 ? (
+                    <div className="activity-empty">
+                      Кнопки опциональны. В v1 поддерживаются до 3 URL-кнопок.
+                    </div>
+                  ) : (
+                    <div className="broadcast-buttons-list">
+                      {broadcastButtonDrafts.map((button, index) => (
+                        <div key={button.id} className="broadcast-button-editor">
+                          <label className="form-field">
+                            <span>Текст #{index + 1}</span>
+                            <input
+                              value={button.text}
+                              onChange={(event) =>
+                                handleBroadcastButtonChange(button.id, "text", event.target.value)
+                              }
+                              placeholder="Например: Открыть"
+                            />
+                          </label>
+                          <label className="form-field form-field--wide">
+                            <span>URL</span>
+                            <input
+                              value={button.url}
+                              onChange={(event) =>
+                                handleBroadcastButtonChange(button.id, "url", event.target.value)
+                              }
+                              placeholder="https://..."
+                            />
+                          </label>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => handleRemoveBroadcastButton(button.id)}
+                          >
+                            Удалить
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="adjustment-form__footer">
+                  <span className="form-hint">
+                    Сейчас сохраняется только draft. Estimate аудитории пересчитывается на сервере при каждом сохранении.
+                  </span>
+                  <button className="action-button" type="submit" disabled={broadcastSubmitting}>
+                    {broadcastSubmitting
+                      ? "Сохраняем..."
+                      : broadcastEditorMode === "edit"
+                        ? "Сохранить черновик"
+                        : "Создать черновик"}
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section className="detail-facts-grid detail-facts-grid--compact">
+              <DetailFact
+                label="Estimate total"
+                value={broadcastEstimate ? String(broadcastEstimate.estimated_total_accounts) : "—"}
+              />
+              <DetailFact
+                label="Estimate in-app"
+                value={broadcastEstimate ? String(broadcastEstimate.estimated_in_app_recipients) : "—"}
+              />
+              <DetailFact
+                label="Estimate Telegram"
+                value={broadcastEstimate ? String(broadcastEstimate.estimated_telegram_recipients) : "—"}
+              />
+              <DetailFact
+                label="Updated"
+                value={broadcastEstimate ? formatDate(broadcastEstimate.updated_at) : "Сохрани черновик"}
+              />
+            </section>
+
+            <section className="detail-sections-grid">
+              <article className="detail-section">
+                <div className="detail-section__header">
+                  <div>
+                    <span className="eyebrow">Telegram preview</span>
+                    <h3>Как это увидит пользователь</h3>
+                  </div>
+                </div>
+                <div className="broadcast-preview broadcast-preview--telegram">
+                  {broadcastContentType === "photo" && broadcastImageUrl ? (
+                    <div className="broadcast-preview__media">
+                      <img src={broadcastImageUrl} alt="Broadcast preview" />
+                    </div>
+                  ) : null}
+                  <div className="broadcast-preview__body">
+                    <strong>{broadcastTitle || "Заголовок рассылки"}</strong>
+                    <div
+                      className="broadcast-preview__html"
+                      dangerouslySetInnerHTML={{
+                        __html: renderBroadcastPreviewHtml(
+                          broadcastBodyHtml || "HTML-текст рассылки появится здесь после ввода",
+                        ),
+                      }}
+                    />
+                  </div>
+                  {broadcastButtonDrafts.length > 0 ? (
+                    <div className="broadcast-preview__buttons">
+                      {broadcastButtonDrafts
+                        .filter((button) => button.text.trim() && button.url.trim())
+                        .map((button) => (
+                          <button key={button.id} className="broadcast-preview__button" type="button">
+                            {button.text}
+                          </button>
+                        ))}
+                    </div>
+                  ) : null}
+                </div>
+              </article>
+
+              <article className="detail-section">
+                <div className="detail-section__header">
+                  <div>
+                    <span className="eyebrow">In-app preview</span>
+                    <h3>Карточка внутри приложения</h3>
+                  </div>
+                </div>
+                <div className="broadcast-preview broadcast-preview--app">
+                  <div className="broadcast-preview__header">
+                    <strong>{broadcastTitle || "Заголовок уведомления"}</strong>
+                    <span>{broadcastEstimate ? humanizeBroadcastStatus(broadcastEstimate.status) : "черновик"}</span>
+                  </div>
+                  {broadcastContentType === "photo" && broadcastImageUrl ? (
+                    <div className="broadcast-preview__media broadcast-preview__media--app">
+                      <img src={broadcastImageUrl} alt="Broadcast preview" />
+                    </div>
+                  ) : null}
+                  <div
+                    className="broadcast-preview__html"
+                    dangerouslySetInnerHTML={{
+                      __html: renderBroadcastPreviewHtml(
+                        broadcastBodyHtml || "Тело уведомления появится после заполнения формы",
+                      ),
+                    }}
+                  />
+                  {broadcastButtonDrafts.length > 0 ? (
+                    <div className="broadcast-preview__actions">
+                      {broadcastButtonDrafts
+                        .filter((button) => button.text.trim() && button.url.trim())
+                        .map((button) => (
+                          <a
+                            key={button.id}
+                            className="detail-link"
+                            href={button.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {button.text}
+                          </a>
+                        ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="section-footer">
+                  <span className="form-hint">
+                    {broadcastEstimate
+                      ? `${humanizeBroadcastAudienceSegment(broadcastEstimate.audience.segment)} · ${humanizeBroadcastChannels(broadcastEstimate.channels)}`
+                      : "Сегмент и каналы будут зафиксированы в черновике после сохранения."}
+                  </span>
+                </div>
+              </article>
+            </section>
+          </div>
+        </section>
+      ) : (
+        <section className="search-shell">
+          <aside className="search-column">
+            <section className="search-panel">
+              <span className="eyebrow">Очередь выводов</span>
+              <h2>Новые и в работе</h2>
+              <p className="queue-panel__copy">
+                Здесь живут только активные заявки. При отклонении резерв вернется на баланс
+                пользователя, при выплате заявка уйдет из очереди.
+              </p>
+              <div className="queue-summary">
+                <article className="queue-summary__item">
+                  <span>Всего в очереди</span>
+                  <strong>{withdrawalTotal}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>Новые</span>
+                  <strong>{withdrawalStats.newCount}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>В работе</span>
+                  <strong>{withdrawalStats.inProgressCount}</strong>
+                </article>
+              </div>
+            </section>
+
+            <div className="results-list">
+              {withdrawalsLoading ? (
+                <div className="empty-state">Загружаем очередь выводов...</div>
+              ) : withdrawalItems.length === 0 ? (
+                <div className="empty-state">Очередь пуста. Новых заявок сейчас нет.</div>
+              ) : (
+                withdrawalItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={
+                      selectedWithdrawalId === item.id
+                        ? "result-card result-card--active result-card--withdrawal"
+                        : "result-card result-card--withdrawal"
+                    }
+                    onClick={() => setSelectedWithdrawalId(item.id)}
+                  >
+                    <div className="result-card__top">
+                      <strong>
+                        #{item.id} · {formatMoney(item.amount)}
+                      </strong>
+                      <span className={`status-pill status-pill--${item.status}`}>
+                        {humanizeWithdrawalStatus(item.status)}
+                      </span>
+                    </div>
+                    <span>
+                      {item.account_display_name ||
+                        item.account_username ||
+                        item.account_email ||
+                        item.account_id}
+                    </span>
+                    <span>
+                      {humanizeWithdrawalDestinationType(item.destination_type)}:{" "}
+                      {item.destination_value}
+                    </span>
+                    <span>Создан: {formatDate(item.created_at)}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </aside>
+
+          <div className="detail-column">
+            {withdrawalsLoading ? (
+              <div className="detail-skeleton">Загружаем детали заявки...</div>
+            ) : null}
+            {!withdrawalsLoading && !selectedWithdrawal ? (
+              <div className="detail-skeleton">Выбери заявку на вывод из очереди.</div>
+            ) : null}
+            {!withdrawalsLoading && selectedWithdrawal ? (
+              <>
+                <section className="detail-header">
+                  <div>
+                    <span className="eyebrow">Заявка на вывод</span>
+                    <h2>
+                      {selectedWithdrawal.account_display_name ||
+                        selectedWithdrawal.account_username ||
+                        selectedWithdrawal.account_email ||
+                        selectedWithdrawal.account_id}
+                    </h2>
+                    <p>
+                      {selectedWithdrawal.account_email || "Без email"} ·{" "}
+                      {selectedWithdrawal.account_telegram_id
+                        ? `Telegram ${selectedWithdrawal.account_telegram_id}`
+                        : "Telegram не привязан"}
+                    </p>
+                  </div>
+                  <span className={`status-pill status-pill--${selectedWithdrawal.status}`}>
+                    {humanizeWithdrawalStatus(selectedWithdrawal.status)}
+                  </span>
+                </section>
+
+                <section className="detail-facts-grid">
+                  <DetailFact label="Сумма" value={formatMoney(selectedWithdrawal.amount)} />
+                  <DetailFact
+                    label="Канал"
+                    value={humanizeWithdrawalDestinationType(selectedWithdrawal.destination_type)}
+                  />
+                  <DetailFact
+                    label="Статус аккаунта"
+                    value={humanizeAccountStatus(selectedWithdrawal.account_status)}
+                  />
+                  <DetailFact label="Создан" value={formatDate(selectedWithdrawal.created_at)} />
+                </section>
+
+                <section className="detail-sections-grid">
+                  <article className="detail-section">
+                    <span className="eyebrow">Реквизиты и аккаунт</span>
+                    <div className="detail-kv">
+                      <div>
+                        <span>Назначение</span>
+                        <strong>
+                          {humanizeWithdrawalDestinationType(selectedWithdrawal.destination_type)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Реквизиты</span>
+                        <strong>{selectedWithdrawal.destination_value}</strong>
+                      </div>
+                      <div>
+                        <span>Username</span>
+                        <strong>{selectedWithdrawal.account_username || "-"}</strong>
+                      </div>
+                      <div>
+                        <span>Статус аккаунта</span>
+                        <strong>{humanizeAccountStatus(selectedWithdrawal.account_status)}</strong>
+                      </div>
+                    </div>
+                    <button
+                      className="ghost-button detail-inline-button"
+                      type="button"
+                      onClick={() => void handleOpenWithdrawalAccount(selectedWithdrawal.account_id)}
+                    >
+                      Открыть карточку пользователя
+                    </button>
+                  </article>
+
+                  <article className="detail-section">
+                    <span className="eyebrow">Комментарии</span>
+                    <div className="note-card">
+                      <strong>Комментарий пользователя</strong>
+                      <p>{selectedWithdrawal.user_comment || "Пользователь ничего не указал."}</p>
+                    </div>
+                    {selectedWithdrawal.admin_comment ? (
+                      <div className="note-card note-card--secondary">
+                        <strong>Текущий admin comment</strong>
+                        <p>{selectedWithdrawal.admin_comment}</p>
+                      </div>
+                    ) : null}
+                  </article>
+                </section>
+
+                <section className="detail-section detail-section--action">
+                  <span className="eyebrow">Обработка заявки</span>
+                  <div className="detail-section__intro">
+                    <h3>Комментарий обязателен для каждого действия</h3>
+                    <p>
+                      Перевод в работу просто фиксирует ownership состояния. Отклонение делает
+                      compensating release записи в ledger, а выплата окончательно закрывает заявку.
+                    </p>
+                  </div>
+                  <div className="adjustment-form">
+                    <div className="form-field">
+                      <span>Текущее состояние</span>
+                      <div className="status-action-summary">
+                        <strong>{humanizeWithdrawalStatus(selectedWithdrawal.status)}</strong>
+                        <small>
+                          {selectedWithdrawal.status === "new"
+                            ? "Новая заявка: резерв уже удержан, дальше ее можно взять в работу или отклонить."
+                            : "Заявка уже в работе: после фактической выплаты отметь ее как выплаченную или отклони с возвратом резерва."}
+                        </small>
+                      </div>
+                    </div>
+                    <label className="form-field form-field--wide">
+                      <span>Комментарий</span>
+                      <textarea
+                        value={withdrawalComment}
+                        onChange={(event) => setWithdrawalComment(event.target.value)}
+                        placeholder="Что проверили, кто выплачивает или почему отклоняем"
+                        rows={4}
+                        required
+                      />
+                    </label>
+                    <div className="adjustment-form__footer">
+                      <span className="form-hint">
+                        Комментарий попадет в audit trail. При отклонении {formatMoney(selectedWithdrawal.amount)}{" "}
+                        вернутся на баланс пользователя.
+                      </span>
+                      <div className="action-cluster">
+                        {selectedWithdrawal.status === "new" ? (
+                          <button
+                            className="action-button"
+                            type="button"
+                            disabled={withdrawalSubmitting}
+                            onClick={() => void handleWithdrawalStatusChange("in_progress")}
+                          >
+                            {withdrawalSubmitting ? "Сохраняем..." : "Взять в работу"}
+                          </button>
+                        ) : null}
+                        {selectedWithdrawal.status === "in_progress" ? (
+                          <button
+                            className="action-button"
+                            type="button"
+                            disabled={withdrawalSubmitting}
+                            onClick={() => void handleWithdrawalStatusChange("paid")}
+                          >
+                            {withdrawalSubmitting ? "Сохраняем..." : "Отметить выплаченным"}
+                          </button>
+                        ) : null}
+                        <button
+                          className="action-button action-button--danger"
+                          type="button"
+                          disabled={withdrawalSubmitting}
+                          onClick={() => void handleWithdrawalStatusChange("rejected")}
+                        >
+                          {withdrawalSubmitting ? "Сохраняем..." : "Отклонить и вернуть резерв"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </section>
               </>

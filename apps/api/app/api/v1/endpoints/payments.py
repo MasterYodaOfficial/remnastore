@@ -17,6 +17,7 @@ from app.schemas.payment import (
 from app.domain.payments import PaymentProvider
 from app.services.plans import SubscriptionPlanError, get_subscription_plans
 from app.services.payments import (
+    PaymentAccountBlockedError,
     PaymentConflictError,
     PaymentGatewayConfigurationError,
     PaymentGatewayError,
@@ -137,6 +138,11 @@ async def create_yookassa_topup(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except PaymentAccountBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     except PaymentGatewayError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -178,6 +184,11 @@ async def create_yookassa_plan_purchase(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except PaymentAccountBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     except PaymentGatewayError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -215,6 +226,11 @@ async def create_telegram_stars_plan_purchase(
     except PaymentConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except PaymentAccountBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
     except PaymentGatewayError as exc:

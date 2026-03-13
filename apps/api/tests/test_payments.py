@@ -15,6 +15,7 @@ from app.api.dependencies import get_current_account
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountStatus,
     LedgerEntry,
     LedgerEntryType,
     Notification,
@@ -525,6 +526,26 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.status, PaymentStatus.PENDING)
         self.assertEqual(stored_payment.amount, 500)
         self.assertIsNotNone(stored_payment.expires_at)
+
+    async def test_create_yookassa_topup_rejects_blocked_account(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="blocked-payer@example.com",
+            status=AccountStatus.BLOCKED,
+        )
+        self._current_account_id = account.id
+
+        response = await self.client.post(
+            "/api/v1/payments/yookassa/topup",
+            json={
+                "amount_rub": 500,
+                "success_url": "https://app.example.com/payments/return",
+                "idempotency_key": "blocked-topup-500",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "blocked accounts cannot create payments")
+        self.assertIsNone(await self._get_payment("yoopay-blocked-topup-500"))
 
     async def test_list_subscription_plans_returns_backend_catalog(self) -> None:
         account = await self._create_account(email="plans@example.com")
@@ -1267,6 +1288,54 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.amount, 85)
         self.assertEqual(stored_payment.plan_code, "plan_1m")
         self.assertIsNotNone(stored_payment.expires_at)
+
+    async def test_telegram_stars_pre_checkout_rejects_fully_blocked_account(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="stars-blocked@example.com",
+            telegram_id=758107031,
+        )
+        self._current_account_id = account.id
+
+        with patch(
+            "app.services.payments.get_subscription_plan",
+            return_value=SimpleNamespace(
+                code="plan_1m",
+                name="1 месяц",
+                price_rub=299,
+                price_stars=85,
+                duration_days=30,
+            ),
+        ):
+            create_response = await self.client.post(
+                "/api/v1/payments/telegram-stars/plans/plan_1m",
+                json={"idempotency_key": "stars-plan-blocked"},
+            )
+        self.assertEqual(create_response.status_code, 200)
+        provider_payment_id = create_response.json()["provider_payment_id"]
+
+        async with self._session_factory() as session:
+            stored_account = await session.get(Account, account.id)
+            assert stored_account is not None
+            stored_account.status = AccountStatus.BLOCKED
+            await session.commit()
+
+        pre_checkout_response = await self.client.post(
+            "/api/v1/webhooks/payments/telegram-stars/pre-checkout",
+            json={
+                "telegram_id": 758107031,
+                "invoice_payload": provider_payment_id,
+                "total_amount": 85,
+                "currency": "XTR",
+                "pre_checkout_query_id": "pcq-blocked-1",
+            },
+            headers={"Authorization": "Bearer internal-token"},
+        )
+        self.assertEqual(pre_checkout_response.status_code, 200)
+        self.assertEqual(
+            pre_checkout_response.json(),
+            {"ok": False, "error_message": "Аккаунт полностью заблокирован"},
+        )
 
     async def test_telegram_stars_pre_checkout_and_successful_payment_finalize_once(self) -> None:
         account = await self._create_account(

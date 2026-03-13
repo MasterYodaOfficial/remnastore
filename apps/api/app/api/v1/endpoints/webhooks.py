@@ -4,6 +4,7 @@ import hmac
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import verify_internal_api_token
 from app.core.config import settings
 from app.db.session import get_session
 from app.schemas.payment import (
@@ -53,27 +54,6 @@ def _verify_remnawave_signature(raw_body: bytes, signature: str | None) -> None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid Remnawave signature",
-        )
-
-
-def _verify_internal_api_token(authorization: str | None) -> None:
-    if not settings.api_token:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="API_TOKEN is not configured",
-        )
-
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="missing internal api token",
-        )
-
-    token = authorization.removeprefix("Bearer ").strip()
-    if not token or token != settings.api_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid internal api token",
         )
 
 def _payment_webhook_response(result: PaymentWebhookProcessResult) -> PaymentWebhookProcessResponse:
@@ -126,7 +106,7 @@ async def telegram_stars_pre_checkout(
     session: AsyncSession = Depends(get_session),
     authorization: str | None = Header(default=None),
 ) -> TelegramStarsPreCheckoutResponse:
-    _verify_internal_api_token(authorization)
+    verify_internal_api_token(authorization)
     ok, error_message = await validate_telegram_stars_pre_checkout(
         session,
         telegram_id=payload.telegram_id,
@@ -143,7 +123,7 @@ async def telegram_stars_payments_webhook(
     session: AsyncSession = Depends(get_session),
     authorization: str | None = Header(default=None),
 ) -> PaymentWebhookProcessResponse:
-    _verify_internal_api_token(authorization)
+    verify_internal_api_token(authorization)
     raw_body = await request.body()
     headers = {key: value for key, value in request.headers.items()}
 
@@ -178,7 +158,7 @@ async def telegram_referral_start_webhook(
     session: AsyncSession = Depends(get_session),
     authorization: str | None = Header(default=None),
 ) -> TelegramReferralIntentResponse:
-    _verify_internal_api_token(authorization)
+    verify_internal_api_token(authorization)
     try:
         await record_telegram_referral_intent(
             session,

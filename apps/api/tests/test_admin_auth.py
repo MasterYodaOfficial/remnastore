@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountStatus,
     Payment,
     Withdrawal,
     WithdrawalDestinationType,
@@ -125,10 +127,24 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_admin_dashboard_summary_returns_counts(self) -> None:
         await self._create_admin()
+        now = datetime.now(UTC)
 
         async with self._session_factory() as session:
-            account_one = Account(email="a@example.com", subscription_status="active")
-            account_two = Account(email="b@example.com", subscription_status="inactive")
+            account_one = Account(
+                email="a@example.com",
+                subscription_status="active",
+                balance=700,
+                referral_earnings=150,
+                created_at=now - timedelta(days=3),
+            )
+            account_two = Account(
+                email="b@example.com",
+                subscription_status="inactive",
+                balance=200,
+                referral_earnings=20,
+                status=AccountStatus.BLOCKED,
+                created_at=now - timedelta(days=15),
+            )
             session.add_all([account_one, account_two])
             await session.flush()
             session.add(
@@ -141,6 +157,16 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             session.add(
+                Withdrawal(
+                    account_id=account_two.id,
+                    amount=150,
+                    destination_type=WithdrawalDestinationType.CARD,
+                    destination_value="2200123412341234",
+                    status=WithdrawalStatus.PAID,
+                    processed_at=now - timedelta(days=4),
+                )
+            )
+            session.add(
                 Payment(
                     account_id=account_two.id,
                     provider=PaymentProvider.YOOKASSA,
@@ -149,6 +175,30 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
                     amount=500,
                     currency="RUB",
                     provider_payment_id="admin-summary-payment",
+                )
+            )
+            session.add(
+                Payment(
+                    account_id=account_one.id,
+                    provider=PaymentProvider.YOOKASSA,
+                    flow_type=PaymentFlowType.WALLET_TOPUP,
+                    status=PaymentStatus.SUCCEEDED,
+                    amount=900,
+                    currency="RUB",
+                    provider_payment_id="admin-summary-wallet-topup",
+                    finalized_at=now - timedelta(days=2),
+                )
+            )
+            session.add(
+                Payment(
+                    account_id=account_one.id,
+                    provider=PaymentProvider.TELEGRAM_STARS,
+                    flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    status=PaymentStatus.SUCCEEDED,
+                    amount=1200,
+                    currency="RUB",
+                    provider_payment_id="admin-summary-direct-plan",
+                    finalized_at=now - timedelta(days=1),
                 )
             )
             await session.commit()
@@ -172,5 +222,15 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
                 "active_subscriptions": 1,
                 "pending_withdrawals": 1,
                 "pending_payments": 1,
+                "blocked_accounts": 1,
+                "new_accounts_last_7d": 1,
+                "total_wallet_balance": 900,
+                "total_referral_earnings": 170,
+                "pending_withdrawals_amount": 300,
+                "paid_withdrawals_amount_last_30d": 150,
+                "successful_payments_last_30d": 2,
+                "successful_payments_amount_last_30d": 2100,
+                "wallet_topups_amount_last_30d": 900,
+                "direct_plan_revenue_last_30d": 1200,
             },
         )

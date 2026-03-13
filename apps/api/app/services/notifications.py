@@ -543,6 +543,57 @@ async def notify_withdrawal_created(
     )
 
 
+async def notify_withdrawal_paid(
+    session: AsyncSession,
+    *,
+    withdrawal: Withdrawal,
+) -> Notification:
+    return await create_notification(
+        session,
+        account_id=withdrawal.account_id,
+        type=NotificationType.WITHDRAWAL_PAID,
+        title="Заявка на вывод выплачена",
+        body=(
+            "Мы отметили заявку на вывод "
+            f"{_format_amount(int(withdrawal.amount), 'RUB')} как выплаченную."
+        ),
+        priority=NotificationPriority.INFO,
+        payload={
+            "withdrawal_id": withdrawal.id,
+            "amount": int(withdrawal.amount),
+            "destination_type": withdrawal.destination_type.value,
+            "status": withdrawal.status.value,
+        },
+        dedupe_key=f"withdrawal_paid:{withdrawal.id}",
+    )
+
+
+async def notify_withdrawal_rejected(
+    session: AsyncSession,
+    *,
+    withdrawal: Withdrawal,
+) -> Notification:
+    return await create_notification(
+        session,
+        account_id=withdrawal.account_id,
+        type=NotificationType.WITHDRAWAL_REJECTED,
+        title="Заявка на вывод отклонена",
+        body=(
+            "Заявка на вывод "
+            f"{_format_amount(int(withdrawal.amount), 'RUB')} отклонена. "
+            "Резерв возвращен на баланс."
+        ),
+        priority=NotificationPriority.WARNING,
+        payload={
+            "withdrawal_id": withdrawal.id,
+            "amount": int(withdrawal.amount),
+            "destination_type": withdrawal.destination_type.value,
+            "status": withdrawal.status.value,
+        },
+        dedupe_key=f"withdrawal_rejected:{withdrawal.id}",
+    )
+
+
 async def process_pending_telegram_deliveries(
     session: AsyncSession,
     *,

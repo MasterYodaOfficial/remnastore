@@ -3,9 +3,16 @@ import httpx
 from bot.core.config import settings
 
 
+def build_api_headers() -> dict[str, str]:
+    token = settings.api_token.strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 class ApiClient:
     def __init__(self) -> None:
-        self._base_url = settings.api_base_url.rstrip("/")
+        self._base_url = settings.api_url.rstrip("/")
 
     async def get_me(self) -> dict:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=15.0) as client:
@@ -41,3 +48,15 @@ class ApiClient:
             resp = await client.post("/api/v1/accounts/telegram", json=payload)
             resp.raise_for_status()
             return resp.json()
+
+    async def is_telegram_account_fully_blocked(self, *, telegram_id: int) -> bool:
+        try:
+            async with httpx.AsyncClient(base_url=self._base_url, timeout=5.0) as client:
+                resp = await client.get(
+                    f"/api/v1/internal/telegram-accounts/{telegram_id}/access",
+                    headers=build_api_headers(),
+                )
+                resp.raise_for_status()
+        except httpx.HTTPError:
+            return False
+        return bool(resp.json().get("fully_blocked"))

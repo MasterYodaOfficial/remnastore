@@ -301,6 +301,92 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["recent_payments"][0]["status"], PaymentStatus.PENDING.value)
         self.assertEqual(body["recent_withdrawals"][0]["status"], WithdrawalStatus.NEW.value)
 
+    async def test_account_ledger_entries_history_supports_pagination_and_entry_type_filter(self) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(
+                email="ledger-history@example.com",
+                display_name="Ledger History User",
+                balance=1150,
+            )
+            session.add(account)
+            await session.flush()
+
+            session.add_all(
+                [
+                    LedgerEntry(
+                        account_id=account.id,
+                        entry_type=LedgerEntryType.TOPUP_PAYMENT,
+                        amount=500,
+                        currency="RUB",
+                        balance_before=0,
+                        balance_after=500,
+                        reference_type="payment",
+                        reference_id="pay-1",
+                        comment="Первое пополнение",
+                        created_at=datetime(2026, 3, 11, 10, 0, tzinfo=UTC),
+                    ),
+                    LedgerEntry(
+                        account_id=account.id,
+                        entry_type=LedgerEntryType.ADMIN_CREDIT,
+                        amount=700,
+                        currency="RUB",
+                        balance_before=500,
+                        balance_after=1200,
+                        reference_type="admin_adjustment",
+                        reference_id="adj-1",
+                        comment="Ручное начисление",
+                        created_by_admin_id=uuid.uuid4(),
+                        created_at=datetime(2026, 3, 12, 10, 0, tzinfo=UTC),
+                    ),
+                    LedgerEntry(
+                        account_id=account.id,
+                        entry_type=LedgerEntryType.ADMIN_DEBIT,
+                        amount=-50,
+                        currency="RUB",
+                        balance_before=1200,
+                        balance_after=1150,
+                        reference_type="admin_adjustment",
+                        reference_id="adj-2",
+                        comment="Коррекция",
+                        created_by_admin_id=uuid.uuid4(),
+                        created_at=datetime(2026, 3, 13, 10, 0, tzinfo=UTC),
+                    ),
+                ]
+            )
+            await session.commit()
+            account_id = str(account.id)
+
+        page_response = await self.client.get(
+            f"/api/v1/admin/accounts/{account_id}/ledger-entries",
+            params={"limit": 2, "offset": 0},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(page_response.status_code, 200)
+        page_body = page_response.json()
+        self.assertEqual(page_body["total"], 3)
+        self.assertEqual(page_body["limit"], 2)
+        self.assertEqual([item["entry_type"] for item in page_body["items"]], [
+            LedgerEntryType.ADMIN_DEBIT.value,
+            LedgerEntryType.ADMIN_CREDIT.value,
+        ])
+        self.assertIsNotNone(page_body["items"][0]["created_by_admin_id"])
+
+        filtered_response = await self.client.get(
+            f"/api/v1/admin/accounts/{account_id}/ledger-entries",
+            params={"entry_type": LedgerEntryType.ADMIN_CREDIT.value, "limit": 10, "offset": 0},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(filtered_response.status_code, 200)
+        filtered_body = filtered_response.json()
+        self.assertEqual(filtered_body["total"], 1)
+        self.assertEqual(len(filtered_body["items"]), 1)
+        self.assertEqual(filtered_body["items"][0]["entry_type"], LedgerEntryType.ADMIN_CREDIT.value)
+        self.assertEqual(filtered_body["items"][0]["comment"], "Ручное начисление")
+
     async def test_balance_adjustment_updates_balance_and_is_idempotent(self) -> None:
         token = await self._create_admin_token()
 
@@ -464,3 +550,59 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(logs[0].comment, "Выдали доступ после офлайн-оплаты")
             self.assertEqual(logs[0].payload["plan_code"], "plan_1m")
             self.assertEqual(logs[0].payload["subscription_grant_id"], grants[0].id)
+
+    async def test_account_status_change_updates_status_and_is_idempotent(self) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(
+                email="blocked-user@example.com",
+                display_name="Blocked User",
+                status=AccountStatus.ACTIVE,
+            )
+            session.add(account)
+            await session.commit()
+            account_id = str(account.id)
+
+        payload = {
+            "status": AccountStatus.BLOCKED.value,
+            "comment": "Блокировка по abuse signal",
+            "idempotency_key": "admin-status-change-1",
+        }
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/status",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["account_id"], account_id)
+        self.assertEqual(body["previous_status"], AccountStatus.ACTIVE.value)
+        self.assertEqual(body["status"], AccountStatus.BLOCKED.value)
+
+        duplicate_response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/status",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(duplicate_response.status_code, 200)
+        duplicate_body = duplicate_response.json()
+        self.assertEqual(duplicate_body["audit_log_id"], body["audit_log_id"])
+        self.assertEqual(duplicate_body["status"], AccountStatus.BLOCKED.value)
+
+        async with self._session_factory() as session:
+            stored_account = await session.get(Account, uuid.UUID(account_id))
+            assert stored_account is not None
+            self.assertEqual(stored_account.status, AccountStatus.BLOCKED)
+
+            logs_result = await session.execute(
+                select(AdminActionLog)
+                .where(AdminActionLog.target_account_id == stored_account.id)
+                .order_by(AdminActionLog.id.asc())
+            )
+            logs = list(logs_result.scalars().all())
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0].comment, "Блокировка по abuse signal")
+            self.assertEqual(logs[0].payload["previous_status"], AccountStatus.ACTIVE.value)
+            self.assertEqual(logs[0].payload["next_status"], AccountStatus.BLOCKED.value)

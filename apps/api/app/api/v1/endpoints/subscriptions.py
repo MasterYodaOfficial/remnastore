@@ -15,6 +15,7 @@ from app.services.purchases import PurchaseConflictError
 from app.services.subscriptions import (
     RemnawaveSyncError,
     TrialEligibilityError,
+    SubscriptionPurchaseBlockedError,
     activate_trial,
     get_current_subscription,
     get_trial_eligibility,
@@ -97,6 +98,11 @@ async def purchase_with_wallet(
     except PurchaseConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except SubscriptionPurchaseBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
     except RemnawaveSyncError as exc:

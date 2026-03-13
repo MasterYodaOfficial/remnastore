@@ -345,6 +345,30 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["detail"], "account_blocked")
 
+    async def test_wallet_plan_purchase_rejects_blocked_account(self) -> None:
+        account = await self._create_account(
+            email="blocked-wallet@example.com",
+            balance=1000,
+            status=AccountStatus.BLOCKED,
+        )
+        self._current_account_id = account.id
+
+        response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "blocked-wallet-plan-1m"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(
+            response.json()["detail"],
+            "blocked accounts cannot purchase subscriptions",
+        )
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 1000)
+        self.assertIsNone(stored_account.subscription_status)
+
     async def test_trial_eligibility_reports_remnawave_unavailable(self) -> None:
         account = await self._create_account(email="unavailable@example.com")
         self._current_account_id = account.id

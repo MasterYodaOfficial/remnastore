@@ -6,6 +6,7 @@ import httpx
 
 from bot.keyboards.main import main_menu
 from bot.core.config import settings
+from bot.services.api import ApiClient
 
 router = Router()
 REFERRAL_START_PREFIX = "ref_"
@@ -21,6 +22,10 @@ def build_api_headers() -> dict[str, str]:
 @router.message(CommandStart())
 async def start_handler(message: Message) -> None:
     """Handle /start command with optional linking token parameter."""
+    if message.from_user is not None:
+        if await ApiClient().is_telegram_account_fully_blocked(telegram_id=message.from_user.id):
+            return
+
     args = message.text.split(maxsplit=1)
 
     # Check if there's a linking token parameter

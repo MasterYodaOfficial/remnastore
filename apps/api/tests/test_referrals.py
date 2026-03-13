@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountStatus,
     LedgerEntry,
     Notification,
     NotificationType,
@@ -383,6 +384,57 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(intent.status, "applied")
         self.assertEqual(intent.account_id, referred_account.id)
         self.assertIsNotNone(intent.consumed_at)
+
+    async def test_telegram_auth_rejects_fully_blocked_account(self) -> None:
+        await self._create_account(
+            telegram_id=700003,
+            status=AccountStatus.BLOCKED,
+            username="blocked-telegram-user",
+        )
+
+        with patch.object(
+            auth_endpoints,
+            "verify_telegram_init_data",
+            return_value={
+                "user": {
+                    "id": 700003,
+                    "username": "blocked-telegram-user",
+                    "first_name": "Blocked",
+                    "last_name": "User",
+                    "is_premium": False,
+                    "language_code": "ru",
+                }
+            },
+        ):
+            response = await self.client.post(
+                "/api/v1/auth/telegram/webapp",
+                json={"init_data": "stub"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "account blocked")
+
+    async def test_internal_telegram_access_reports_full_block(self) -> None:
+        await self._create_account(
+            telegram_id=700004,
+            status=AccountStatus.BLOCKED,
+        )
+
+        response = await self.client.get(
+            "/api/v1/internal/telegram-accounts/700004/access",
+            headers={"Authorization": f"Bearer {settings.api_token}"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "telegram_id": 700004,
+                "exists": True,
+                "status": "blocked",
+                "fully_blocked": True,
+            },
+        )
 
     async def test_reward_uses_partner_override_and_only_once(self) -> None:
         referrer = await self._create_account(

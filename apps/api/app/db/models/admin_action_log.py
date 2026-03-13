@@ -20,6 +20,9 @@ admin_action_enum_kwargs = dict(
 class AdminActionType(str, enum.Enum):
     BALANCE_ADJUSTMENT = "balance_adjustment"
     SUBSCRIPTION_GRANT = "subscription_grant"
+    ACCOUNT_STATUS_CHANGE = "account_status_change"
+    WITHDRAWAL_STATUS_CHANGE = "withdrawal_status_change"
+    BROADCAST_DRAFT_UPSERT = "broadcast_draft_upsert"
 
 
 class AdminActionLog(Base):

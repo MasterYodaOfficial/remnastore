@@ -420,13 +420,20 @@ async def get_account_ledger_history(
     account_id: uuid.UUID,
     limit: int,
     offset: int,
+    entry_types: tuple[LedgerEntryType, ...] | None = None,
 ) -> tuple[list[LedgerEntry], int]:
-    total = await session.scalar(
-        select(func.count()).select_from(LedgerEntry).where(LedgerEntry.account_id == account_id)
+    count_statement = select(func.count()).select_from(LedgerEntry).where(
+        LedgerEntry.account_id == account_id
     )
+    history_statement = select(LedgerEntry).where(LedgerEntry.account_id == account_id)
+
+    if entry_types:
+        count_statement = count_statement.where(LedgerEntry.entry_type.in_(entry_types))
+        history_statement = history_statement.where(LedgerEntry.entry_type.in_(entry_types))
+
+    total = await session.scalar(count_statement)
     result = await session.execute(
-        select(LedgerEntry)
-        .where(LedgerEntry.account_id == account_id)
+        history_statement
         .order_by(LedgerEntry.created_at.desc(), LedgerEntry.id.desc())
         .limit(limit)
         .offset(offset)

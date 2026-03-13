@@ -17,6 +17,10 @@ class AccountIdentityConflictError(Exception):
     pass
 
 
+class AccountBlockedError(Exception):
+    pass
+
+
 SUPPORTED_SUPABASE_IDENTITY_PROVIDERS = {
     "google": AuthProvider.GOOGLE,
     "yandex": AuthProvider.YANDEX,
@@ -252,6 +256,8 @@ async def upsert_telegram_account(
         )
         session.add(account)
     else:
+        if account.status == AccountStatus.BLOCKED:
+            raise AccountBlockedError("account blocked")
         account.username = username or account.username
         account.first_name = first_name or account.first_name
         account.last_name = last_name or account.last_name

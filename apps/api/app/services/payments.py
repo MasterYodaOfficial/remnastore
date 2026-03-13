@@ -22,7 +22,7 @@ from yookassa.domain.exceptions import ApiError as YooKassaApiError
 from yookassa.domain.notification.webhook_notification import WebhookNotification
 
 from app.core.config import settings
-from app.db.models import Account, LedgerEntryType, Payment, PaymentEvent, SubscriptionGrant
+from app.db.models import Account, AccountStatus, LedgerEntryType, Payment, PaymentEvent, SubscriptionGrant
 from app.domain.payments import (
     CreatePaymentIntentCommand,
     PaymentFlowType,
@@ -52,6 +52,10 @@ from app.services.referrals import apply_first_referral_reward_for_grant
 
 
 logger = logging.getLogger(__name__)
+
+
+class PaymentAccountBlockedError(PaymentGatewayError):
+    pass
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -1062,6 +1066,9 @@ async def create_payment(
     idempotency_key: str | None = None,
     metadata: dict[str, str] | None = None,
 ) -> PaymentIntentSnapshot:
+    if account.status == AccountStatus.BLOCKED:
+        raise PaymentAccountBlockedError("blocked accounts cannot create payments")
+
     if idempotency_key:
         existing_payment = await _get_payment_by_idempotency_key(
             session,
@@ -1262,6 +1269,8 @@ async def validate_telegram_stars_pre_checkout(
     account = await session.get(Account, payment.account_id)
     if account is None:
         return False, "Аккаунт не найден"
+    if account.status == AccountStatus.BLOCKED:
+        return False, "Аккаунт полностью заблокирован"
     if account.telegram_id != telegram_id:
         return False, "Платёж не принадлежит текущему Telegram-аккаунту"
     if payment.flow_type != PaymentFlowType.DIRECT_PLAN_PURCHASE:

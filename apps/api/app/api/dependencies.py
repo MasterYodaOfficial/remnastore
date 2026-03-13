@@ -24,6 +24,27 @@ from app.services.cache import get_cache
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def verify_internal_api_token(authorization: str | None) -> None:
+    if not settings.api_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API_TOKEN is not configured",
+        )
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing internal api token",
+        )
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token or token != settings.api_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid internal api token",
+        )
+
+
 async def get_current_account(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_session),
