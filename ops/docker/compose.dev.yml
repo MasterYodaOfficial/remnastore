@@ -1,0 +1,64 @@
+services:
+  api:
+    command: ["/bin/sh", "/app/api.dev.entrypoint.sh"]
+    restart: unless-stopped
+    volumes:
+      - ../../apps/api/app:/app/app
+      - ../../apps/api/alembic:/app/alembic
+      - ../../alembic.ini:/app/alembic.ini:ro
+      - ../../ops/docker/api.dev.entrypoint.sh:/app/api.dev.entrypoint.sh:ro
+
+  bot:
+    command: ["/bin/sh", "/app/python.watch-entrypoint.sh", "python -m bot.main", "/app/bot"]
+    restart: unless-stopped
+    volumes:
+      - ../../apps/bot/bot:/app/bot
+      - ../../ops/docker/python.watch-entrypoint.sh:/app/python.watch-entrypoint.sh:ro
+
+  worker:
+    command:
+      [
+        "/bin/sh",
+        "/app/python.watch-entrypoint.sh",
+        "python -m app.tasks.payments_worker",
+        "/app/app",
+      ]
+    restart: unless-stopped
+    volumes:
+      - ../../apps/api/app:/app/app
+      - ../../ops/docker/python.watch-entrypoint.sh:/app/python.watch-entrypoint.sh:ro
+
+  notifications-worker:
+    command:
+      [
+        "/bin/sh",
+        "/app/python.watch-entrypoint.sh",
+        "python -m app.tasks.notifications_worker",
+        "/app/app",
+      ]
+    restart: unless-stopped
+    volumes:
+      - ../../apps/api/app:/app/app
+      - ../../ops/docker/python.watch-entrypoint.sh:/app/python.watch-entrypoint.sh:ro
+
+  web:
+    restart: unless-stopped
+    volumes:
+      - ../../apps/web:/app/apps/web
+      - web-node-modules:/app/apps/web/node_modules
+
+  admin:
+    restart: unless-stopped
+    volumes:
+      - ../../apps/admin:/app/apps/admin
+      - admin-node-modules:/app/apps/admin/node_modules
+
+  db:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+volumes:
+  web-node-modules:
+  admin-node-modules:

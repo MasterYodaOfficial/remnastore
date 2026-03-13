@@ -156,14 +156,16 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         account_id: uuid.UUID,
         plan_code: str = "plan_1m",
         amount: int = 299,
+        purchase_source: str = "wallet",
+        reference_type: str = "wallet_purchase",
     ) -> SubscriptionGrant:
         async with self._session_factory() as session:
             now = datetime.now(UTC)
             grant = SubscriptionGrant(
                 account_id=account_id,
                 payment_id=None,
-                purchase_source="wallet",
-                reference_type="wallet_purchase",
+                purchase_source=purchase_source,
+                reference_type=reference_type,
                 reference_id=f"test-{uuid.uuid4().hex}",
                 plan_code=plan_code,
                 amount=amount,
@@ -239,6 +241,25 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_referrer)
         assert stored_referrer is not None
         self.assertEqual(stored_referrer.referrals_count, 0)
+
+    async def test_claim_referral_code_allows_admin_grant_before_first_paid_purchase(self) -> None:
+        referrer = await self._create_account(referral_code="ref-admin")
+        referred = await self._create_account(referral_code="ref-manual")
+        await self._create_subscription_grant(
+            account_id=referred.id,
+            amount=0,
+            purchase_source="admin",
+            reference_type="admin_manual_grant",
+        )
+        self._current_account_id = referred.id
+
+        response = await self.client.post(
+            "/api/v1/referrals/claim",
+            json={"referral_code": "ref-admin"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["created"], True)
+        self.assertEqual(response.json()["referred_by_account_id"], str(referrer.id))
 
     async def test_summary_returns_real_referrals_and_rewards(self) -> None:
         referrer = await self._create_account(referral_code="ref-summary")

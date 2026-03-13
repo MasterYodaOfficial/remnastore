@@ -23,6 +23,8 @@ from app.services.notifications import notify_referral_reward_received
 from app.services.plans import get_subscription_plan
 from app.services.withdrawals import get_withdrawal_availability
 
+PAID_REFERRAL_PURCHASE_SOURCES = ("wallet", "direct_payment")
+
 
 class ReferralServiceError(Exception):
     pass
@@ -194,6 +196,7 @@ async def _has_completed_paid_purchase(
         .where(
             SubscriptionGrant.account_id == account_id,
             SubscriptionGrant.applied_at.is_not(None),
+            SubscriptionGrant.purchase_source.in_(PAID_REFERRAL_PURCHASE_SOURCES),
         )
         .limit(1)
     )
@@ -366,6 +369,9 @@ async def apply_first_referral_reward_for_grant(
     *,
     grant: SubscriptionGrant,
 ) -> ReferralReward | None:
+    if grant.purchase_source not in PAID_REFERRAL_PURCHASE_SOURCES:
+        return None
+
     if grant.id is None:
         raise ReferralServiceError("subscription grant must be flushed before referral reward")
 

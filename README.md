@@ -50,10 +50,10 @@ cp .env_old.example .env_old
 
 Подробный production-контракт по env-переменным: [`docs/production-env.md`](docs/production-env.md)
 
-### 2. Поднять стек
+### 2. Поднять dev-стек
 
 ```bash
-sudo docker compose -f ops/docker/compose.yml up --build
+./scripts/dev.sh
 ```
 
 Сервисы:
@@ -63,22 +63,33 @@ sudo docker compose -f ops/docker/compose.yml up --build
 - Postgres: `localhost:5432`
 - Redis: `localhost:6379`
 
+Что важно:
+- `api`, `bot`, `worker`, `notifications-worker`, `web`, `admin` теперь запускаются через dev overlay `ops/docker/compose.dev.yml`
+- исходники для dev примонтированы в контейнеры, поэтому изменения в коде не требуют `docker compose up --build`
+- если меняешь зависимости или Dockerfile, тогда запускай `./scripts/dev.sh rebuild` или `./scripts/dev.sh rebuild api`
+- все основные действия теперь доступны через один helper: `./scripts/dev.sh help`
+
 ## Полезные команды
+
+### Основные dev-команды
+
+```bash
+./scripts/dev.sh logs
+./scripts/dev.sh logs api
+./scripts/dev.sh ps
+./scripts/dev.sh restart api
+./scripts/dev.sh stop
+./scripts/dev.sh down
+./scripts/dev.sh rebuild
+./scripts/dev.sh rebuild web admin
+```
 
 ### Полный сброс с чистой БД
 
 ```bash
-sudo docker compose -f ops/docker/compose.yml down --volumes --remove-orphans --rmi local
-sudo docker builder prune -a -f
-sudo docker compose -f ops/docker/compose.yml up --build --force-recreate
-```
-
-### Перезапуск одного сервиса
-
-```bash
-sudo docker compose -f ops/docker/compose.yml restart api
-sudo docker compose -f ops/docker/compose.yml restart bot
-sudo docker compose -f ops/docker/compose.yml restart web
+./scripts/dev.sh down --volumes --remove-orphans --rmi local
+docker builder prune -a -f
+./scripts/dev.sh rebuild
 ```
 
 ## Основные документы

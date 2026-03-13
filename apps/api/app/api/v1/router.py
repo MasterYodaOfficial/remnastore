@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies import get_current_account, get_current_admin
+from app.api.v1.endpoints.admin_accounts import router as admin_accounts_router
 from app.api.v1.endpoints.admin_auth import router as admin_auth_router
 from app.api.v1.endpoints.admin_dashboard import router as admin_dashboard_router
 from app.api.v1.endpoints.health import router as health_router
@@ -41,5 +42,6 @@ api_router.include_router(protected_router)
 api_router.include_router(webhooks_router, prefix="/webhooks", tags=["webhooks"])
 
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(get_current_admin)])
+admin_router.include_router(admin_accounts_router, prefix="/accounts", tags=["admin-accounts"])
 admin_router.include_router(admin_dashboard_router, prefix="/dashboard", tags=["admin-dashboard"])
 api_router.include_router(admin_router)

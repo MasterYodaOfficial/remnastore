@@ -3,6 +3,11 @@ import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+const extraAllowedHosts = (process.env.__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+
 export default defineConfig({
   plugins: [
     // The React and Tailwind plugins are both required for Make, even if
@@ -13,7 +18,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
-    allowedHosts: ['relentlessly-logical-turaco.cloudpub.ru'],
+    allowedHosts: ['relentlessly-logical-turaco.cloudpub.ru', ...extraAllowedHosts],
   },
   resolve: {
     alias: {

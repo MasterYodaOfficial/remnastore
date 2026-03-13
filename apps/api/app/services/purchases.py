@@ -27,6 +27,7 @@ class PurchaseSource(str, Enum):
     TRIAL = "trial"
     WALLET = "wallet"
     DIRECT_PAYMENT = "direct_payment"
+    ADMIN = "admin"
 
 
 class PurchaseServiceError(Exception):

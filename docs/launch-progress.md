@@ -81,7 +81,7 @@
 - [x] Реализовать `ledger service`
 - [x] Перевести изменение баланса на ledger-backed операции
 - [x] Добавить endpoint истории операций пользователя
-- [ ] Добавить admin flow корректировки баланса с обязательным комментарием
+- [x] Добавить admin flow корректировки баланса с обязательным комментарием
 - [x] Покрыть credit/debit операции тестами
 
 Утверждено 2026-03-10:
@@ -136,8 +136,10 @@
 - direct writes в `accounts.balance` теперь сосредоточены только внутри `ledger service`
 - покрытие расширено тестами `tests.test_ledger`; суммарно `Ran 21 tests ... OK`
 
-Остается до закрытия Фазы 1:
-- вынести admin correction в отдельный защищенный HTTP flow; доменный метод `admin_adjust_balance` уже есть, но endpoint не добавлен, пока не утверждена схема admin-auth
+Дополнено 2026-03-13:
+- добавлен защищенный endpoint `POST /api/v1/admin/accounts/{account_id}/balance-adjustments`
+- ручная корректировка баланса теперь требует обязательный комментарий и поддерживает `idempotency_key`
+- admin UI получил форму корректировки баланса прямо в карточке пользователя
 
 ## Фаза 2. Платежи: YooKassa и Telegram Stars
 Статус: `Завершена`
@@ -412,11 +414,11 @@
 - [x] Добавить таблицу `admins`
 - [x] Реализовать admin login
 - [x] Сделать dashboard
-- [ ] Сделать user search по `telegram_id / email / username`
-- [ ] Сделать карточку пользователя
+- [x] Сделать user search по `telegram_id / email / username`
+- [x] Сделать карточку пользователя
 - [ ] Добавить просмотр баланса и истории операций
-- [ ] Добавить ручную корректировку баланса
-- [ ] Добавить ручную выдачу подписки
+- [x] Добавить ручную корректировку баланса
+- [x] Добавить ручную выдачу подписки
 - [ ] Добавить блокировку пользователя
 - [ ] Добавить очередь выводов
 - [ ] Добавить рассылки
@@ -431,10 +433,21 @@
 - Docker Compose теперь поднимает отдельный сервис `admin` на порту `5174`
 
 Что дальше по Фазе 7:
-- user search
-- карточка пользователя с ledger, подпиской, платежами и рефералами
+- полный просмотр баланса и истории операций пользователя
 - ручные admin actions: корректировка баланса, выдача подписки, блокировка
 - очередь выводов и рассылки
+
+Дополнено 2026-03-13:
+- backend добавил `GET /api/v1/admin/accounts/search` и `GET /api/v1/admin/accounts/{account_id}`
+- поиск работает по `telegram_id`, `email`, `username`, `display_name` и email из `auth_accounts`
+- в `apps/admin` добавлен модуль `Пользователи` с поиском и карточкой аккаунта
+- карточка показывает identity, subscription snapshot, auth identities, последние ledger entries, платежи и выводы
+- backend добавил `POST /api/v1/admin/accounts/{account_id}/balance-adjustments`
+- в карточке пользователя появилась ручная корректировка баланса с обязательным комментарием
+- backend добавил таблицу `admin_action_logs` и миграцию `apps/api/alembic/versions/20260313_add_admin_action_logs.py`
+- backend добавил `GET /api/v1/admin/accounts/subscription-plans` и `POST /api/v1/admin/accounts/{account_id}/subscription-grants`
+- ручная выдача подписки использует backend-каталог тарифов, пишет audit record и идемпотентна по `idempotency_key`
+- реферальное окно теперь закрывается только после первой оплаченной подписки; admin grant не считается paid purchase
 
 ## Фаза 8. Миграция из старого бота
 Статус: `Не начато`
