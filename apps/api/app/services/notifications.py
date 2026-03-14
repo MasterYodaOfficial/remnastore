@@ -584,13 +584,15 @@ async def notify_withdrawal_created(
         title="Заявка на вывод создана",
         body=(
             "Мы получили заявку на вывод "
-            f"{_format_amount(int(withdrawal.amount), 'RUB')}."
+            f"{_format_amount(int(withdrawal.amount), 'RUB')} "
+            "и передали ее администратору на рассмотрение."
         ),
         priority=NotificationPriority.INFO,
         payload={
             "withdrawal_id": withdrawal.id,
             "amount": int(withdrawal.amount),
             "destination_type": withdrawal.destination_type.value,
+            "status": withdrawal.status.value,
         },
         dedupe_key=f"withdrawal_created:{withdrawal.id}",
     )

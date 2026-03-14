@@ -18,12 +18,14 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { BottomNav } from './components/BottomNav';
 import { PaymentMethodSheet, type PaymentMethodOption, type PaymentMethodProvider } from './components/PaymentMethodSheet';
 import { TopUpModal } from './components/TopUpModal';
+import { WithdrawalRequestModal } from './components/WithdrawalRequestModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { NotificationsPage, type NotificationItemView } from './components/NotificationsPage';
 import { PendingPaymentsPage, type PendingPaymentView } from './components/PendingPaymentsPage';
 import { FaqPage } from './components/FaqPage';
 import { LegalDocumentPage } from './components/LegalDocumentPage';
 import { BalanceHistoryPage, type BalanceHistoryItemView } from './components/BalanceHistoryPage';
+import { WithdrawalRequestsCard, type WithdrawalRequestItemView } from './components/WithdrawalRequestsCard';
 import { formatRubles } from '../lib/currency';
 import { toast, Toaster } from 'sonner';
 import {
@@ -278,6 +280,30 @@ interface BackendReferralSummary {
   available_for_withdraw: number;
   effective_reward_rate: number;
   items: BackendReferralSummaryItem[];
+}
+
+interface BackendWithdrawalItem {
+  id: number;
+  amount: number;
+  destination_type: 'card' | 'sbp';
+  destination_value: string;
+  user_comment?: string | null;
+  admin_comment?: string | null;
+  status: 'new' | 'in_progress' | 'paid' | 'rejected' | 'cancelled';
+  reserved_ledger_entry_id?: number | null;
+  released_ledger_entry_id?: number | null;
+  processed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BackendWithdrawalListResponse {
+  items: BackendWithdrawalItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  available_for_withdraw: number;
+  minimum_amount_rub: number;
 }
 
 interface BackendNotificationItem {
@@ -567,6 +593,24 @@ function getPaymentErrorMessage(detail: string): string {
   }
 }
 
+function getWithdrawalErrorMessage(detail: string): string {
+  switch (detail) {
+    case 'destination value is required':
+      return 'Введите реквизиты для вывода.';
+    case 'invalid bank card number':
+      return 'Проверьте номер карты. Он не прошел валидацию.';
+    case 'blocked accounts cannot create withdrawals':
+      return 'Для заблокированного аккаунта создание заявки недоступно.';
+    case 'insufficient referral funds for withdrawal':
+      return 'Недостаточно доступных реферальных средств для вывода.';
+    default:
+      if (detail.startsWith('minimum withdrawal amount is ')) {
+        return `Минимальная сумма вывода: ${detail.replace('minimum withdrawal amount is ', '')}.`;
+      }
+      return detail;
+  }
+}
+
 function mapBackendPlanToView(plan: BackendPlan): Plan {
   return {
     id: plan.code,
@@ -682,6 +726,20 @@ function mapBackendLedgerEntryToView(entry: BackendLedgerEntry): BalanceHistoryI
     comment: entry.comment ?? null,
     referenceType: entry.reference_type ?? null,
     referenceId: entry.reference_id ?? null,
+    createdAt: entry.created_at,
+  };
+}
+
+function mapBackendWithdrawalToView(entry: BackendWithdrawalItem): WithdrawalRequestItemView {
+  return {
+    id: entry.id,
+    amount: entry.amount,
+    destinationType: entry.destination_type,
+    destinationLabel: entry.destination_value,
+    status: entry.status,
+    userComment: entry.user_comment ?? null,
+    adminComment: entry.admin_comment ?? null,
+    processedAt: entry.processed_at ?? null,
     createdAt: entry.created_at,
   };
 }
@@ -846,6 +904,12 @@ export default function App() {
   const [referralCopied, setReferralCopied] = useState(false);
   const [referralSummary, setReferralSummary] = useState<BackendReferralSummary | null>(null);
   const [isLoadingReferralSummary, setIsLoadingReferralSummary] = useState(false);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequestItemView[]>([]);
+  const [withdrawalsTotal, setWithdrawalsTotal] = useState(0);
+  const [withdrawalMinimumAmount, setWithdrawalMinimumAmount] = useState(0);
+  const [isLoadingWithdrawals, setIsLoadingWithdrawals] = useState(false);
+  const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
+  const [isWithdrawalSubmitting, setIsWithdrawalSubmitting] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItemView[]>([]);
   const [notificationsTotal, setNotificationsTotal] = useState(0);
   const [notificationsUnreadCount, setNotificationsUnreadCount] = useState(0);
@@ -869,6 +933,7 @@ export default function App() {
   const pendingTelegramLinkRefreshRef = useRef(false);
   const pendingPaymentRefreshRef = useRef(false);
   const pendingReferralClaimRef = useRef(false);
+  const attemptedWithdrawalsTokenRef = useRef<string | null>(null);
   const attemptedPlansTokenRef = useRef<string | null>(null);
   const attemptedNotificationsTokenRef = useRef<string | null>(null);
   const attemptedActivePaymentsTokenRef = useRef<string | null>(null);
@@ -1003,6 +1068,27 @@ export default function App() {
     }
 
     return await response.json() as BackendReferralSummary;
+  };
+
+  const loadWithdrawalsSnapshot = async (
+    token: string,
+    options: { limit?: number; offset?: number } = {}
+  ) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(options.limit ?? 10));
+    params.set('offset', String(options.offset ?? 0));
+
+    const response = await fetch(`${BACKEND_API}/api/v1/withdrawals?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load withdrawals from backend');
+    }
+
+    return (await response.json()) as BackendWithdrawalListResponse;
   };
 
   const loadPaymentStatusSnapshot = async (
@@ -1581,12 +1667,17 @@ export default function App() {
         setUser(null);
         setSubscription(null);
         setPlans([]);
+        setReferralSummary(null);
+        setWithdrawals([]);
+        setWithdrawalsTotal(0);
+        setWithdrawalMinimumAmount(0);
         setNotifications([]);
         setNotificationsTotal(0);
         setNotificationsUnreadCount(0);
         setActivePayments([]);
         setLedgerEntries([]);
         setLedgerEntriesTotal(0);
+        attemptedWithdrawalsTokenRef.current = null;
         attemptedPlansTokenRef.current = null;
         attemptedNotificationsTokenRef.current = null;
         attemptedActivePaymentsTokenRef.current = null;
@@ -1603,12 +1694,17 @@ export default function App() {
       setUser(null);
       setSubscription(null);
       setPlans([]);
+      setReferralSummary(null);
+      setWithdrawals([]);
+      setWithdrawalsTotal(0);
+      setWithdrawalMinimumAmount(0);
       setNotifications([]);
       setNotificationsTotal(0);
       setNotificationsUnreadCount(0);
       setActivePayments([]);
       setLedgerEntries([]);
       setLedgerEntriesTotal(0);
+      attemptedWithdrawalsTokenRef.current = null;
       attemptedPlansTokenRef.current = null;
       attemptedNotificationsTokenRef.current = null;
       attemptedActivePaymentsTokenRef.current = null;
@@ -1787,6 +1883,9 @@ export default function App() {
     setAccessToken(null);
     setPlans([]);
     setReferralSummary(null);
+    setWithdrawals([]);
+    setWithdrawalsTotal(0);
+    setWithdrawalMinimumAmount(0);
     setNotifications([]);
     setNotificationsTotal(0);
     setNotificationsUnreadCount(0);
@@ -1794,6 +1893,9 @@ export default function App() {
     setLedgerEntries([]);
     setLedgerEntriesTotal(0);
     setCheckoutAttempts([]);
+    setIsWithdrawalModalOpen(false);
+    setIsWithdrawalSubmitting(false);
+    attemptedWithdrawalsTokenRef.current = null;
     attemptedPlansTokenRef.current = null;
     attemptedNotificationsTokenRef.current = null;
     attemptedActivePaymentsTokenRef.current = null;
@@ -1898,6 +2000,35 @@ export default function App() {
       return false;
     } finally {
       setIsLoadingReferralSummary(false);
+    }
+  };
+
+  const loadWithdrawals = async (
+    token: string,
+    options: { silent?: boolean } = {}
+  ) => {
+    attemptedWithdrawalsTokenRef.current = token;
+    if (!options.silent) {
+      setIsLoadingWithdrawals(true);
+    }
+
+    try {
+      const snapshot = await loadWithdrawalsSnapshot(token, { limit: 10, offset: 0 });
+      setWithdrawals(snapshot.items.map(mapBackendWithdrawalToView));
+      setWithdrawalsTotal(snapshot.total);
+      setWithdrawalMinimumAmount(snapshot.minimum_amount_rub);
+      return snapshot;
+    } catch (err) {
+      console.error('Error loading withdrawals:', err);
+      if (!options.silent) {
+        setWithdrawals([]);
+        setWithdrawalsTotal(0);
+      }
+      return null;
+    } finally {
+      if (!options.silent) {
+        setIsLoadingWithdrawals(false);
+      }
     }
   };
 
@@ -2510,6 +2641,22 @@ export default function App() {
       return;
     }
 
+    if (!isDesktopBrowser && activeTab !== 'referral') {
+      return;
+    }
+
+    if (attemptedWithdrawalsTokenRef.current === accessToken) {
+      return;
+    }
+
+    void loadWithdrawals(accessToken, { silent: isDesktopBrowser });
+  }, [isAuthenticated, accessToken, activeTab, isDesktopBrowser]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      return;
+    }
+
     if (attemptedNotificationsTokenRef.current === accessToken) {
       return;
     }
@@ -2990,8 +3137,78 @@ export default function App() {
   };
 
   const handleWithdraw = async () => {
-    if (!accessToken) return;
-    toast.error('Вывод пока не перенесен на новый API.');
+    if (!accessToken) {
+      toast.error('Необходимо войти в аккаунт');
+      return;
+    }
+
+    const availableForWithdraw =
+      referralSummary?.available_for_withdraw ?? user?.referralEarnings ?? 0;
+    if (availableForWithdraw <= 0) {
+      toast.error('Сейчас нет доступной суммы для вывода.');
+      return;
+    }
+
+    const snapshot = await loadWithdrawals(accessToken, { silent: true });
+    if (!snapshot) {
+      toast.error('Не удалось загрузить форму вывода.');
+      return;
+    }
+    setIsWithdrawalModalOpen(true);
+  };
+
+  const handleCreateWithdrawal = async (payload: {
+    amount: number;
+    cardNumber: string;
+    comment: string;
+  }) => {
+    if (!accessToken) {
+      toast.error('Необходимо войти в аккаунт');
+      return;
+    }
+
+    setIsWithdrawalSubmitting(true);
+    try {
+      const response = await fetch(`${BACKEND_API}/api/v1/withdrawals`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: payload.amount,
+          destination_type: 'card',
+          destination_value: payload.cardNumber,
+          user_comment: payload.comment.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const detail =
+          errorData && typeof errorData.detail === 'string'
+            ? errorData.detail
+            : 'Не удалось создать заявку на вывод';
+        throw new Error(getWithdrawalErrorMessage(detail));
+      }
+
+      setIsWithdrawalModalOpen(false);
+      toast.success('Заявка на вывод создана и отправлена на рассмотрение администратора.');
+
+      await Promise.all([
+        refreshUserData(),
+        loadReferralSummary(accessToken),
+        loadWithdrawals(accessToken, { silent: true }),
+        activeTab === 'notifications' || isDesktopBrowser
+          ? loadNotifications(accessToken, { silent: true })
+          : loadNotificationsUnreadCount(accessToken),
+      ]);
+    } catch (err) {
+      console.error('Withdrawal create error:', err);
+      toast.error(err instanceof Error ? err.message : 'Не удалось создать заявку на вывод');
+    } finally {
+      setIsWithdrawalSubmitting(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -3345,8 +3562,12 @@ export default function App() {
             }))}
             totalEarnings={referralSummary?.referral_earnings ?? (user.referralEarnings || 0)}
             availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+            minimumWithdrawalAmount={withdrawalMinimumAmount}
             rewardRate={referralSummary?.effective_reward_rate ?? 20}
             isLoading={isLoadingReferralSummary}
+            withdrawals={withdrawals}
+            withdrawalsTotal={withdrawalsTotal}
+            isLoadingWithdrawals={isLoadingWithdrawals}
             copied={referralCopied}
             onCopyLink={handleCopyReferral}
             onShareTelegram={handleShareReferralToTelegram}
@@ -3524,6 +3745,14 @@ export default function App() {
         onTopUp={handleTopUpAmount}
         isSubmitting={isTopUpSubmitting}
         activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
+      />
+      <WithdrawalRequestModal
+        isOpen={isWithdrawalModalOpen}
+        onClose={() => setIsWithdrawalModalOpen(false)}
+        onSubmit={handleCreateWithdrawal}
+        isSubmitting={isWithdrawalSubmitting}
+        availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+        minimumAmount={withdrawalMinimumAmount}
       />
       <PaymentMethodSheet
         isOpen={Boolean(paymentMethodSelection)}
@@ -3825,11 +4054,16 @@ export default function App() {
                         {formatRubles(referralSummary?.available_for_withdraw ?? user.referralEarnings)} ₽
                       </div>
                     </div>
-                    <div className="rounded-[24px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
-                      {isLoadingReferralSummary
-                        ? 'Загружаем детали реферальной активности.'
-                        : 'Полный список рефералов и статусы начислений доступны во вкладке «Рефералы».'}
-                    </div>
+                    <WithdrawalRequestsCard
+                      items={withdrawals}
+                      total={withdrawalsTotal}
+                      isLoading={isLoadingWithdrawals}
+                      availableForWithdraw={
+                        referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)
+                      }
+                      minimumAmount={withdrawalMinimumAmount}
+                      onCreate={handleWithdraw}
+                    />
                   </div>
                 </div>
               </div>
@@ -4060,6 +4294,14 @@ export default function App() {
         onTopUp={handleTopUpAmount}
         isSubmitting={isTopUpSubmitting}
         activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
+      />
+      <WithdrawalRequestModal
+        isOpen={isWithdrawalModalOpen}
+        onClose={() => setIsWithdrawalModalOpen(false)}
+        onSubmit={handleCreateWithdrawal}
+        isSubmitting={isWithdrawalSubmitting}
+        availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+        minimumAmount={withdrawalMinimumAmount}
       />
       <PaymentMethodSheet
         isOpen={Boolean(paymentMethodSelection)}

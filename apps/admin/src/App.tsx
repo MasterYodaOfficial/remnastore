@@ -884,6 +884,9 @@ export default function App() {
   const [broadcastAudienceExcludeBlocked, setBroadcastAudienceExcludeBlocked] = useState(true);
   const [broadcastSendInApp, setBroadcastSendInApp] = useState(true);
   const [broadcastSendTelegram, setBroadcastSendTelegram] = useState(false);
+  const [broadcastEditorDirty, setBroadcastEditorDirty] = useState(false);
+  const [broadcastFormSourceId, setBroadcastFormSourceId] = useState<number | null>(null);
+  const [broadcastWorkspaceRefreshing, setBroadcastWorkspaceRefreshing] = useState(false);
 
   const cards = useMemo(() => {
     if (!summary) {
@@ -1016,6 +1019,49 @@ export default function App() {
       estimated_telegram_recipients: selectedBroadcast.estimated_telegram_recipients,
     };
   }, [broadcastEstimate, selectedBroadcast]);
+
+  function resetBroadcastEditorForm() {
+    setBroadcastName("");
+    setBroadcastTitle("");
+    setBroadcastBodyHtml("");
+    setBroadcastContentType("text");
+    setBroadcastImageUrl("");
+    setBroadcastButtonDrafts([]);
+    setBroadcastAudienceSegment("all");
+    setBroadcastAudienceExcludeBlocked(true);
+    setBroadcastSendInApp(true);
+    setBroadcastSendTelegram(false);
+    setBroadcastEditorDirty(false);
+    setBroadcastFormSourceId(null);
+  }
+
+  function hydrateBroadcastEditorForm(broadcast: AdminBroadcast) {
+    setBroadcastName(broadcast.name);
+    setBroadcastTitle(broadcast.title);
+    setBroadcastBodyHtml(broadcast.body_html);
+    setBroadcastContentType(broadcast.content_type);
+    setBroadcastImageUrl(broadcast.image_url || "");
+    setBroadcastButtonDrafts(broadcast.buttons.map((button) => createBroadcastButtonDraft(button)));
+    setBroadcastAudienceSegment(broadcast.audience.segment);
+    setBroadcastAudienceExcludeBlocked(broadcast.audience.exclude_blocked);
+    setBroadcastSendInApp(broadcast.channels.includes("in_app"));
+    setBroadcastSendTelegram(broadcast.channels.includes("telegram"));
+    setBroadcastEditorDirty(false);
+    setBroadcastFormSourceId(broadcast.id);
+  }
+
+  function markBroadcastEditorDirty() {
+    setBroadcastEditorDirty(true);
+  }
+
+  function confirmDiscardBroadcastEditorChanges(): boolean {
+    if (!broadcastEditorDirty) {
+      return true;
+    }
+    return window.confirm(
+      "Есть несохраненные изменения в черновике рассылки. Сбросить их и продолжить?",
+    );
+  }
 
   const loadDashboard = useCallback(
     async (activeToken: string) => {
@@ -1343,6 +1389,9 @@ export default function App() {
       setBroadcastAudienceExcludeBlocked(true);
       setBroadcastSendInApp(true);
       setBroadcastSendTelegram(false);
+      setBroadcastEditorDirty(false);
+      setBroadcastFormSourceId(null);
+      setBroadcastWorkspaceRefreshing(false);
       setNotice(null);
       return;
     }
@@ -1479,29 +1528,15 @@ export default function App() {
       setBroadcastTestResult(null);
       setBroadcastRuntimeComment("");
       setBroadcastScheduleAtInput("");
-      setBroadcastName("");
-      setBroadcastTitle("");
-      setBroadcastBodyHtml("");
-      setBroadcastContentType("text");
-      setBroadcastImageUrl("");
-      setBroadcastButtonDrafts([]);
-      setBroadcastAudienceSegment("all");
-      setBroadcastAudienceExcludeBlocked(true);
-      setBroadcastSendInApp(true);
-      setBroadcastSendTelegram(false);
+      resetBroadcastEditorForm();
       return;
     }
 
-    setBroadcastName(selectedBroadcast.name);
-    setBroadcastTitle(selectedBroadcast.title);
-    setBroadcastBodyHtml(selectedBroadcast.body_html);
-    setBroadcastContentType(selectedBroadcast.content_type);
-    setBroadcastImageUrl(selectedBroadcast.image_url || "");
-    setBroadcastButtonDrafts(selectedBroadcast.buttons.map((button) => createBroadcastButtonDraft(button)));
-    setBroadcastAudienceSegment(selectedBroadcast.audience.segment);
-    setBroadcastAudienceExcludeBlocked(selectedBroadcast.audience.exclude_blocked);
-    setBroadcastSendInApp(selectedBroadcast.channels.includes("in_app"));
-    setBroadcastSendTelegram(selectedBroadcast.channels.includes("telegram"));
+    if (broadcastFormSourceId === selectedBroadcast.id && broadcastEditorDirty) {
+      return;
+    }
+
+    hydrateBroadcastEditorForm(selectedBroadcast);
     setBroadcastEstimate({
       channels: selectedBroadcast.channels,
       audience: selectedBroadcast.audience,
@@ -1513,7 +1548,7 @@ export default function App() {
     setBroadcastTestResult(null);
     setBroadcastRuntimeComment("");
     setBroadcastScheduleAtInput(toMoscowDateTimeInputValue(selectedBroadcast.scheduled_at));
-  }, [selectedBroadcast]);
+  }, [broadcastEditorDirty, broadcastFormSourceId, selectedBroadcast]);
 
   useEffect(() => {
     if (!token || activeView !== "broadcasts") {
@@ -1585,36 +1620,6 @@ export default function App() {
 
     void loadBroadcastRuns(token);
   }, [activeView, broadcastRunChannelFilter, broadcastRunStatusFilter, broadcastRunTypeFilter, loadBroadcastRuns, token]);
-
-  useEffect(() => {
-    if (!token || activeView !== "broadcasts") {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      void loadBroadcasts(token);
-      void loadBroadcastRuns(token);
-      if (selectedBroadcastId !== null) {
-        void loadBroadcastDetail(selectedBroadcastId, token);
-      }
-      if (selectedBroadcastRunId !== null) {
-        void loadBroadcastRunDetail(selectedBroadcastRunId, token);
-      }
-    }, 10000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    activeView,
-    loadBroadcastDetail,
-    loadBroadcastRunDetail,
-    loadBroadcastRuns,
-    loadBroadcasts,
-    selectedBroadcastId,
-    selectedBroadcastRunId,
-    token,
-  ]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1701,6 +1706,9 @@ export default function App() {
     setBroadcastAudienceExcludeBlocked(true);
     setBroadcastSendInApp(true);
     setBroadcastSendTelegram(false);
+    setBroadcastEditorDirty(false);
+    setBroadcastFormSourceId(null);
+    setBroadcastWorkspaceRefreshing(false);
     setError(null);
     setNotice(null);
     setActiveView("dashboard");
@@ -1798,13 +1806,20 @@ export default function App() {
   }
 
   function handleNewBroadcastDraft() {
+    if (!confirmDiscardBroadcastEditorChanges()) {
+      return;
+    }
     setSelectedBroadcastId(null);
     setSelectedBroadcast(null);
+    resetBroadcastEditorForm();
     setError(null);
     setNotice(null);
   }
 
   function handleSelectBroadcast(broadcastId: number) {
+    if (broadcastId !== selectedBroadcastId && !confirmDiscardBroadcastEditorChanges()) {
+      return;
+    }
     setSelectedBroadcastId(broadcastId);
     setError(null);
     setNotice(null);
@@ -1815,12 +1830,14 @@ export default function App() {
     field: "text" | "url",
     value: string,
   ) {
+    markBroadcastEditorDirty();
     setBroadcastButtonDrafts((currentItems) =>
       currentItems.map((item) => (item.id === buttonId ? { ...item, [field]: value } : item)),
     );
   }
 
   function handleAddBroadcastButton() {
+    markBroadcastEditorDirty();
     setBroadcastButtonDrafts((currentItems) => {
       if (currentItems.length >= 3) {
         return currentItems;
@@ -1830,6 +1847,7 @@ export default function App() {
   }
 
   function handleRemoveBroadcastButton(buttonId: string) {
+    markBroadcastEditorDirty();
     setBroadcastButtonDrafts((currentItems) => currentItems.filter((item) => item.id !== buttonId));
   }
 
@@ -1909,6 +1927,7 @@ export default function App() {
           body: JSON.stringify(payload),
         },
       );
+      setBroadcastEditorDirty(false);
       setSelectedBroadcast(broadcast);
       setSelectedBroadcastId(broadcast.id);
       setBroadcastEstimate({
@@ -1936,6 +1955,10 @@ export default function App() {
     }
     if (!broadcastIsDraft) {
       setError("Test send доступен только для черновика рассылки");
+      return;
+    }
+    if (broadcastEditorDirty) {
+      setError("Сначала сохрани черновик, затем запускай test send.");
       return;
     }
 
@@ -2006,6 +2029,22 @@ export default function App() {
     }
   }
 
+  async function handleRefreshBroadcastWorkspace() {
+    if (!token) {
+      return;
+    }
+
+    setBroadcastWorkspaceRefreshing(true);
+    setError(null);
+    try {
+      await refreshBroadcastRuntimeState(token, selectedBroadcastId);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Не удалось обновить workspace рассылок");
+    } finally {
+      setBroadcastWorkspaceRefreshing(false);
+    }
+  }
+
   async function handleDeleteBroadcastDraft() {
     if (!token || selectedBroadcastId === null) {
       return;
@@ -2031,6 +2070,7 @@ export default function App() {
 
       setSelectedBroadcastId(null);
       setSelectedBroadcast(null);
+      resetBroadcastEditorForm();
       setSelectedBroadcastRunId(null);
       setSelectedBroadcastRun(null);
       setBroadcastRunDeliveries([]);
@@ -2049,6 +2089,10 @@ export default function App() {
     action: "send-now" | "schedule" | "pause" | "resume" | "cancel",
   ) {
     if (!token || selectedBroadcastId === null) {
+      return;
+    }
+    if (broadcastEditorDirty && (action === "send-now" || action === "schedule")) {
+      setError("Сначала сохрани черновик, затем запускай боевое действие.");
       return;
     }
 
@@ -2406,11 +2450,10 @@ export default function App() {
       <main className="admin-shell admin-shell--auth">
         <section className="auth-panel">
           <div className="auth-copy">
-            <span className="eyebrow">Remnastore Admin Command</span>
-            <h1>Тихий зал управления</h1>
+            <span className="eyebrow">Remnastore Admin</span>
+            <h1>Операционная панель проекта</h1>
             <p>
-              Отдельный операционный контур с темным интерфейсом, зелеными акцентами и быстрым
-              доступом к ключевым действиям. Для первого входа задай
+              Светлая админка для поддержки, платежей, выводов и рассылок. Для первого входа задай
               `ADMIN_BOOTSTRAP_USERNAME` и `ADMIN_BOOTSTRAP_PASSWORD` в `.env`.
             </p>
             <div className="scene-panel">
@@ -2424,11 +2467,10 @@ export default function App() {
                 <span className="energy-hilt" />
               </div>
               <div className="scene-copy">
-                <span className="scene-label">Боевой пост</span>
-                <strong>Темный мостик. Зеленый контур. Один источник истины.</strong>
+                <span className="scene-label">Рабочий контур</span>
+                <strong>Одна панель для пользователей, финансовых действий и кампаний.</strong>
                 <p>
-                  Без декоративного мусора: только вход, операционные сигналы и быстрый переход к
-                  следующим админским модулям.
+                  Сначала безопасный вход, затем единый интерфейс для ежедневной операционной работы.
                 </p>
               </div>
             </div>
@@ -2469,12 +2511,11 @@ export default function App() {
     <main className="admin-shell">
       <section className="dashboard-hero">
         <div className="hero-copy">
-          <span className="eyebrow">Фаза 7 · command deck</span>
-          <h1>Операционный мостик админки</h1>
+          <span className="eyebrow">Remnastore Admin</span>
+          <h1>Единая операционная панель</h1>
           <p>
-            Текущий контур уже держит bootstrap admin, auth, сводку, поиск пользователей и ручные
-            действия над балансом, подписками, статусом пользователя и очередью выводов. Дальше
-            сюда встают расширенная история, статистика и рассылки.
+            Здесь собраны сводка, пользователи, выводы и runtime рассылок. Приоритет интерфейса:
+            быстро читать состояние системы, безопасно выполнять действия и не терять контекст при работе.
           </p>
         </div>
         <div className="hero-side">
@@ -3142,39 +3183,54 @@ export default function App() {
           </div>
         </section>
       ) : activeView === "broadcasts" ? (
-        <section className="search-shell">
-          <aside className="search-column">
-            <section className="search-panel">
-              <span className="eyebrow">Broadcast Runtime</span>
-              <h2>Кампании рассылок</h2>
-              <p className="queue-panel__copy">
-                Здесь живут и черновики, и боевые кампании. Контент остается Telegram-first,
-                а runtime отдельно показывает schedule, delivery и историю запусков.
-              </p>
+        <section className="search-shell search-shell--broadcasts">
+          <aside className="search-column search-column--broadcasts">
+            <section className="search-panel search-panel--broadcasts">
+              <div className="panel-toolbar">
+                <div>
+                  <span className="eyebrow">Контур рассылок</span>
+                  <h2>Кампании и черновики</h2>
+                  <p className="queue-panel__copy">
+                    Список кампаний живет отдельно от редактора. Пока ты работаешь с черновиком, данные не
+                    перетираются автоматическими запросами.
+                  </p>
+                </div>
+                <div className="panel-toolbar__actions">
+                  <button className="ghost-button" type="button" onClick={handleNewBroadcastDraft}>
+                    Новый черновик
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void handleRefreshBroadcastWorkspace()}
+                    disabled={broadcastWorkspaceRefreshing}
+                  >
+                    {broadcastWorkspaceRefreshing ? "Обновляем..." : "Обновить"}
+                  </button>
+                </div>
+              </div>
+
               <div className="queue-summary">
                 <article className="queue-summary__item">
                   <span>Всего кампаний</span>
                   <strong>{broadcastTotal}</strong>
                 </article>
                 <article className="queue-summary__item">
-                  <span>Выделено</span>
-                  <strong>{selectedBroadcastId ? `#${selectedBroadcastId}` : "новый"}</strong>
+                  <span>В работе</span>
+                  <strong>{broadcastItems.filter((item) => item.status === "running").length}</strong>
                 </article>
                 <article className="queue-summary__item">
-                  <span>Run journal</span>
+                  <span>Журнал запусков</span>
                   <strong>{broadcastRunTotal}</strong>
                 </article>
               </div>
-              <button className="ghost-button detail-inline-button" type="button" onClick={handleNewBroadcastDraft}>
-                Новый черновик
-              </button>
             </section>
 
-            <div className="results-list">
+            <div className="results-list results-list--broadcasts">
               {broadcastsLoading ? (
-                <div className="empty-state">Загружаем черновики рассылок...</div>
+                <div className="empty-state">Загружаем кампании...</div>
               ) : broadcastItems.length === 0 ? (
-                <div className="empty-state">Черновиков пока нет. Создай первый справа.</div>
+                <div className="empty-state">Кампаний пока нет. Создай первый черновик.</div>
               ) : (
                 broadcastItems.map((item) => (
                   <button
@@ -3193,614 +3249,777 @@ export default function App() {
                         {humanizeBroadcastStatus(item.status)}
                       </span>
                     </div>
-                    <span>{item.title}</span>
-                    <span>{humanizeBroadcastChannels(item.channels)}</span>
-                    <span>
-                      {humanizeBroadcastAudienceSegment(item.audience.segment)} ·{" "}
-                      {item.estimated_total_accounts} акк.
-                    </span>
-                    {item.latest_run ? (
+                    <div className="broadcast-card-summary">
+                      <span className="broadcast-card-summary__title">{item.title}</span>
+                      <span>{humanizeBroadcastChannels(item.channels)}</span>
                       <span>
-                        {humanizeBroadcastRunType(item.latest_run.run_type)} · доставлено{" "}
-                        {item.latest_run.delivered_deliveries}/{item.latest_run.total_deliveries}
+                        {humanizeBroadcastAudienceSegment(item.audience.segment)} · {item.estimated_total_accounts} акк.
                       </span>
-                    ) : null}
+                    </div>
+                    <div className="broadcast-card-runtime">
+                      <span>
+                        {item.latest_run
+                          ? `${humanizeBroadcastRunType(item.latest_run.run_type)} · ${humanizeBroadcastRunStatus(
+                              item.latest_run.status,
+                            )}`
+                          : "Боевых запусков еще не было"}
+                      </span>
+                      <strong>
+                        {item.latest_run
+                          ? `Доставлено ${item.latest_run.delivered_deliveries}/${item.latest_run.total_deliveries}`
+                          : "Только черновик"}
+                      </strong>
+                    </div>
                   </button>
                 ))
               )}
             </div>
           </aside>
 
-          <div className="detail-column">
-            <section className="detail-section detail-section--action">
-              <div className="detail-section__header">
+          <div className="detail-column detail-column--broadcasts">
+            <section className="detail-header detail-header--broadcasts">
+              <div className="broadcast-toolbar">
                 <div>
-                  <span className="eyebrow">Редактор рассылки</span>
-                  <h3>{broadcastEditorMode === "edit" ? "Редактирование черновика" : "Новый черновик"}</h3>
+                  <span className="eyebrow">Редактор кампании</span>
+                  <h2>{selectedBroadcast ? selectedBroadcast.title : "Новый черновик"}</h2>
+                  <p>
+                    Рабочее место разделено на контент, превью, runtime и журнал запусков. Данные
+                    обновляются только вручную или после явного действия оператора.
+                  </p>
                 </div>
-                {!broadcastIsDraft && selectedBroadcast ? (
-                  <span className="form-hint">
-                    Контент зафиксирован. Для новой версии создай новый черновик.
-                  </span>
-                ) : null}
-                {selectedBroadcast ? (
-                  <span className={`status-pill status-pill--${selectedBroadcast.status}`}>
-                    {humanizeBroadcastStatus(selectedBroadcast.status)}
-                  </span>
-                ) : null}
               </div>
-              <form className="adjustment-form" onSubmit={handleSaveBroadcast}>
-                <label className="form-field">
-                  <span>Внутреннее название</span>
-                  <input
-                    value={broadcastName}
-                    onChange={(event) => setBroadcastName(event.target.value)}
-                    placeholder="Например: Spring promo 2026"
-                    required
-                    disabled={!broadcastIsDraft || broadcastSubmitting}
-                  />
-                </label>
-                <label className="form-field form-field--wide">
-                  <span>Заголовок</span>
-                  <input
-                    value={broadcastTitle}
-                    onChange={(event) => setBroadcastTitle(event.target.value)}
-                    placeholder="Что увидит пользователь в Telegram и in-app"
-                    required
-                    disabled={!broadcastIsDraft || broadcastSubmitting}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Тип контента</span>
-                  <select
-                    value={broadcastContentType}
-                    onChange={(event) => setBroadcastContentType(event.target.value as BroadcastContentType)}
-                    disabled={!broadcastIsDraft || broadcastSubmitting}
-                  >
-                    <option value="text">Только текст</option>
-                    <option value="photo">Текст + фото</option>
-                  </select>
-                </label>
-                <div className="broadcast-channel-grid">
-                  <label className="checkbox-card">
-                    <input
-                      type="checkbox"
-                      checked={broadcastSendInApp}
-                      onChange={(event) => setBroadcastSendInApp(event.target.checked)}
-                      disabled={!broadcastIsDraft || broadcastSubmitting}
-                    />
-                    <span>In-app</span>
-                  </label>
-                  <label className="checkbox-card">
-                    <input
-                      type="checkbox"
-                      checked={broadcastSendTelegram}
-                      onChange={(event) => setBroadcastSendTelegram(event.target.checked)}
-                      disabled={!broadcastIsDraft || broadcastSubmitting}
-                    />
-                    <span>Telegram</span>
-                  </label>
-                </div>
-                <label className="form-field">
-                  <span>Сегмент аудитории</span>
-                  <select
-                    value={broadcastAudienceSegment}
-                    onChange={(event) => setBroadcastAudienceSegment(event.target.value as BroadcastAudienceSegment)}
-                    disabled={!broadcastIsDraft || broadcastSubmitting}
-                  >
-                    {BROADCAST_AUDIENCE_SEGMENTS.map((segment) => (
-                      <option key={segment} value={segment}>
-                        {humanizeBroadcastAudienceSegment(segment)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="checkbox-card checkbox-card--inline">
-                  <input
-                    type="checkbox"
-                    checked={broadcastAudienceExcludeBlocked}
-                    onChange={(event) => setBroadcastAudienceExcludeBlocked(event.target.checked)}
-                    disabled={!broadcastIsDraft || broadcastSubmitting}
-                  />
-                  <span>Исключать полностью заблокированных</span>
-                </label>
-                {broadcastContentType === "photo" ? (
-                  <label className="form-field form-field--wide">
-                    <span>Image URL</span>
-                    <input
-                      value={broadcastImageUrl}
-                      onChange={(event) => setBroadcastImageUrl(event.target.value)}
-                      placeholder="https://..."
-                      required
-                      disabled={!broadcastIsDraft || broadcastSubmitting}
-                    />
-                  </label>
-                ) : null}
-                <label className="form-field form-field--wide">
-                  <span>HTML-текст</span>
-                  <textarea
-                    value={broadcastBodyHtml}
-                    onChange={(event) => setBroadcastBodyHtml(event.target.value)}
-                    placeholder={"<b>Жирный текст</b>, <a href=\"https://...\">ссылка</a>, emoji и обычные переносы строк"}
-                    rows={8}
-                    required
-                    disabled={!broadcastIsDraft || broadcastSubmitting}
-                  />
-                </label>
-
-                <div className="broadcast-buttons-section">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Telegram buttons</span>
-                      <h3>URL-кнопки</h3>
-                    </div>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={handleAddBroadcastButton}
-                      disabled={!broadcastIsDraft || broadcastSubmitting || broadcastButtonDrafts.length >= 3}
-                    >
-                      Добавить кнопку
-                    </button>
-                  </div>
-                  {broadcastButtonDrafts.length === 0 ? (
-                    <div className="activity-empty">
-                      Кнопки опциональны. В v1 поддерживаются до 3 URL-кнопок.
-                    </div>
-                  ) : (
-                    <div className="broadcast-buttons-list">
-                      {broadcastButtonDrafts.map((button, index) => (
-                        <div key={button.id} className="broadcast-button-editor">
-                          <label className="form-field">
-                            <span>Текст #{index + 1}</span>
-                            <input
-                              value={button.text}
-                              onChange={(event) =>
-                                handleBroadcastButtonChange(button.id, "text", event.target.value)
-                              }
-                              placeholder="Например: Открыть"
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                          <label className="form-field form-field--wide">
-                            <span>URL</span>
-                            <input
-                              value={button.url}
-                              onChange={(event) =>
-                                handleBroadcastButtonChange(button.id, "url", event.target.value)
-                              }
-                              placeholder="https://..."
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                          <button
-                            className="ghost-button"
-                            type="button"
-                            onClick={() => handleRemoveBroadcastButton(button.id)}
-                            disabled={!broadcastIsDraft || broadcastSubmitting}
-                          >
-                            Удалить
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="adjustment-form__footer">
-                  <span className="form-hint">
-                    Черновик сохраняется отдельно, а оценка аудитории пересчитывается на сервере в live-режиме без сохранения.
+              <div className="broadcast-toolbar__meta">
+                <div className="broadcast-badge-cluster">
+                  <span className={`status-pill ${broadcastEditorDirty ? "status-pill--warning" : "status-pill--active"}`}>
+                    {broadcastEditorDirty ? "Есть несохраненные изменения" : "Черновик синхронизирован"}
                   </span>
-                  <button className="action-button" type="submit" disabled={!broadcastIsDraft || broadcastSubmitting}>
-                    {broadcastSubmitting
-                      ? "Сохраняем..."
-                      : broadcastEditorMode === "edit"
-                        ? "Сохранить черновик"
-                        : "Создать черновик"}
+                  <span className={`status-pill ${selectedBroadcast ? `status-pill--${selectedBroadcast.status}` : "status-pill--draft"}`}>
+                    {selectedBroadcast ? humanizeBroadcastStatus(selectedBroadcast.status) : "Новый черновик"}
+                  </span>
+                </div>
+                <div className="broadcast-header-actions">
+                  <button className="ghost-button" type="button" onClick={handleNewBroadcastDraft}>
+                    Новый черновик
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void handleRefreshBroadcastWorkspace()}
+                    disabled={broadcastWorkspaceRefreshing}
+                  >
+                    {broadcastWorkspaceRefreshing ? "Обновляем..." : "Обновить данные"}
                   </button>
                 </div>
-              </form>
-            </section>
-
-            <section className="detail-section detail-section--action">
-              <div className="detail-section__header detail-section__header--stacked">
-                <div>
-                  <span className="eyebrow">Runtime</span>
-                  <h3>Запуск и управление кампанией</h3>
-                </div>
-                <span className="form-hint">
-                  Боевые действия доступны только superuser. Время schedule задается по Москве.
-                </span>
               </div>
-
-              <form
-                className="adjustment-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submitBroadcastRuntimeAction("schedule");
-                }}
-              >
-                <label className="form-field form-field--wide">
-                  <span>Комментарий runtime</span>
-                  <textarea
-                    value={broadcastRuntimeComment}
-                    onChange={(event) => setBroadcastRuntimeComment(event.target.value)}
-                    placeholder="Почему запускаем, ставим на паузу или отменяем кампанию"
-                    rows={3}
-                    disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                  />
-                </label>
-                <label className="form-field">
-                  <span>Schedule по Москве</span>
-                  <input
-                    type="datetime-local"
-                    value={broadcastScheduleAtInput}
-                    onChange={(event) => setBroadcastScheduleAtInput(event.target.value)}
-                    disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                  />
-                </label>
-                <div className="adjustment-form__footer">
-                  <span className="form-hint">
-                    {selectedBroadcast?.latest_run
-                      ? `${humanizeBroadcastRunType(selectedBroadcast.latest_run.run_type)} · ${humanizeBroadcastRunStatus(
-                          selectedBroadcast.latest_run.status,
-                        )}`
-                      : "У кампании еще нет боевого run."}
-                  </span>
-                  <div className="action-cluster">
-                    {selectedBroadcast?.status === "draft" ? (
-                      <>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void submitBroadcastRuntimeAction("send-now")}
-                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                        >
-                          Send now
-                        </button>
-                        <button
-                          className="action-button"
-                          type="submit"
-                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                        >
-                          Schedule
-                        </button>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void handleDeleteBroadcastDraft()}
-                          disabled={broadcastRuntimeSubmitting || selectedBroadcastId === null}
-                        >
-                          Удалить draft
-                        </button>
-                      </>
-                    ) : null}
-                    {selectedBroadcast?.status === "scheduled" || selectedBroadcast?.status === "running" ? (
-                      <>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void submitBroadcastRuntimeAction("pause")}
-                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                        >
-                          Pause
-                        </button>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void submitBroadcastRuntimeAction("cancel")}
-                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : null}
-                    {selectedBroadcast?.status === "paused" ? (
-                      <>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void submitBroadcastRuntimeAction("resume")}
-                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                        >
-                          Resume
-                        </button>
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => void submitBroadcastRuntimeAction("cancel")}
-                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                </div>
-              </form>
             </section>
 
-            <section className="detail-facts-grid detail-facts-grid--compact">
+            <section className="detail-facts-grid detail-facts-grid--compact detail-facts-grid--broadcast-overview">
+              <DetailFact label="Кампания" value={selectedBroadcastId ? `#${selectedBroadcastId}` : "Новая"} />
               <DetailFact
-                label="Estimate total"
-                value={
-                  broadcastEstimateSnapshot ? String(broadcastEstimateSnapshot.estimated_total_accounts) : "—"
-                }
+                label="Каналы"
+                value={broadcastChannels.length > 0 ? humanizeBroadcastChannels(broadcastChannels) : "Не выбраны"}
               />
               <DetailFact
-                label="Estimate in-app"
-                value={
-                  broadcastEstimateSnapshot
-                    ? String(broadcastEstimateSnapshot.estimated_in_app_recipients)
-                    : "—"
-                }
+                label="Аудитория"
+                value={humanizeBroadcastAudienceSegment(broadcastAudienceSegment)}
               />
               <DetailFact
-                label="Estimate Telegram"
-                value={
-                  broadcastEstimateSnapshot
-                    ? String(broadcastEstimateSnapshot.estimated_telegram_recipients)
-                    : "—"
-                }
-              />
-              <DetailFact
-                label="Источник"
-                value={broadcastEstimateLoading ? "Пересчет..." : broadcastEstimateError ? "Ошибка" : "Live"}
+                label="Обновлено"
+                value={selectedBroadcast ? formatDateMoscow(selectedBroadcast.updated_at) : "Пока не сохранено"}
               />
             </section>
-            <div className="section-footer">
-              <span className="form-hint">
-                {broadcastEstimateError ||
-                  "Live estimate считает текущий сегмент и каналы редактора без создания или обновления черновика."}
-              </span>
-            </div>
 
-            <section className="detail-sections-grid">
-              <article className="detail-section">
+            <section className="broadcast-workbench">
+              <section className="detail-section detail-section--action detail-section--editor">
                 <div className="detail-section__header">
                   <div>
-                    <span className="eyebrow">Telegram preview</span>
-                    <h3>Как это увидит пользователь</h3>
+                    <span className="eyebrow">Редактор</span>
+                    <h3>{broadcastEditorMode === "edit" ? "Контент кампании" : "Создание новой кампании"}</h3>
                   </div>
-                </div>
-                <div className="broadcast-preview broadcast-preview--telegram">
-                  {broadcastContentType === "photo" && broadcastImageUrl ? (
-                    <div className="broadcast-preview__media">
-                      <img src={broadcastImageUrl} alt="Broadcast preview" />
-                    </div>
+                  {!broadcastIsDraft && selectedBroadcast ? (
+                    <span className="form-hint">
+                      Контент зафиксирован. Для новой версии создай отдельный черновик.
+                    </span>
                   ) : null}
-                  <div className="broadcast-preview__body">
-                    <strong>{broadcastTitle || "Заголовок рассылки"}</strong>
+                </div>
+
+                <form className="broadcast-editor-form" onSubmit={handleSaveBroadcast}>
+                  <div className="broadcast-form-section">
+                    <div className="broadcast-form-section__header">
+                      <div>
+                        <span className="eyebrow">Блок 1</span>
+                        <h4>Основа кампании</h4>
+                      </div>
+                      <span className="form-hint">Название для команды и пользовательский заголовок сообщения.</span>
+                    </div>
+                    <div className="broadcast-form-grid">
+                      <label className="form-field">
+                        <span>Внутреннее название</span>
+                        <input
+                          value={broadcastName}
+                          onChange={(event) => {
+                            markBroadcastEditorDirty();
+                            setBroadcastName(event.target.value);
+                          }}
+                          placeholder="Например: Spring promo 2026"
+                          required
+                          disabled={!broadcastIsDraft || broadcastSubmitting}
+                        />
+                      </label>
+                      <label className="form-field form-field--wide">
+                        <span>Заголовок</span>
+                        <input
+                          value={broadcastTitle}
+                          onChange={(event) => {
+                            markBroadcastEditorDirty();
+                            setBroadcastTitle(event.target.value);
+                          }}
+                          placeholder="Что увидит пользователь в Telegram и in-app"
+                          required
+                          disabled={!broadcastIsDraft || broadcastSubmitting}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>Тип контента</span>
+                        <select
+                          value={broadcastContentType}
+                          onChange={(event) => {
+                            markBroadcastEditorDirty();
+                            setBroadcastContentType(event.target.value as BroadcastContentType);
+                          }}
+                          disabled={!broadcastIsDraft || broadcastSubmitting}
+                        >
+                          <option value="text">Только текст</option>
+                          <option value="photo">Текст + фото</option>
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="broadcast-form-section">
+                    <div className="broadcast-form-section__header">
+                      <div>
+                        <span className="eyebrow">Блок 2</span>
+                        <h4>Аудитория и каналы</h4>
+                      </div>
+                      <span className="form-hint">Состав аудитории и каналы доставки задаются отдельно от текста.</span>
+                    </div>
+                    <div className="broadcast-form-grid">
+                      <div className="broadcast-channel-grid">
+                        <label className="checkbox-card">
+                          <input
+                            type="checkbox"
+                            checked={broadcastSendInApp}
+                            onChange={(event) => {
+                              markBroadcastEditorDirty();
+                              setBroadcastSendInApp(event.target.checked);
+                            }}
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
+                          />
+                          <span>In-app</span>
+                        </label>
+                        <label className="checkbox-card">
+                          <input
+                            type="checkbox"
+                            checked={broadcastSendTelegram}
+                            onChange={(event) => {
+                              markBroadcastEditorDirty();
+                              setBroadcastSendTelegram(event.target.checked);
+                            }}
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
+                          />
+                          <span>Telegram</span>
+                        </label>
+                      </div>
+                      <label className="form-field">
+                        <span>Сегмент аудитории</span>
+                        <select
+                          value={broadcastAudienceSegment}
+                          onChange={(event) => {
+                            markBroadcastEditorDirty();
+                            setBroadcastAudienceSegment(event.target.value as BroadcastAudienceSegment);
+                          }}
+                          disabled={!broadcastIsDraft || broadcastSubmitting}
+                        >
+                          {BROADCAST_AUDIENCE_SEGMENTS.map((segment) => (
+                            <option key={segment} value={segment}>
+                              {humanizeBroadcastAudienceSegment(segment)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="checkbox-card checkbox-card--inline">
+                        <input
+                          type="checkbox"
+                          checked={broadcastAudienceExcludeBlocked}
+                          onChange={(event) => {
+                            markBroadcastEditorDirty();
+                            setBroadcastAudienceExcludeBlocked(event.target.checked);
+                          }}
+                          disabled={!broadcastIsDraft || broadcastSubmitting}
+                        />
+                        <span>Исключать полностью заблокированных</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="broadcast-form-section">
+                    <div className="broadcast-form-section__header">
+                      <div>
+                        <span className="eyebrow">Блок 3</span>
+                        <h4>Контент и визуал</h4>
+                      </div>
+                      <span className="form-hint">Telegram HTML и медиа для обеих клиентских поверхностей.</span>
+                    </div>
+                    <div className="broadcast-form-grid">
+                      {broadcastContentType === "photo" ? (
+                        <label className="form-field form-field--wide">
+                          <span>Image URL</span>
+                          <input
+                            value={broadcastImageUrl}
+                            onChange={(event) => {
+                              markBroadcastEditorDirty();
+                              setBroadcastImageUrl(event.target.value);
+                            }}
+                            placeholder="https://..."
+                            required
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
+                          />
+                        </label>
+                      ) : null}
+                      <label className="form-field form-field--wide">
+                        <span>HTML-текст</span>
+                        <textarea
+                          value={broadcastBodyHtml}
+                          onChange={(event) => {
+                            markBroadcastEditorDirty();
+                            setBroadcastBodyHtml(event.target.value);
+                          }}
+                          placeholder={"<b>Жирный текст</b>, <a href=\"https://...\">ссылка</a>, переносы строк и Telegram HTML"}
+                          rows={10}
+                          required
+                          disabled={!broadcastIsDraft || broadcastSubmitting}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="broadcast-form-section broadcast-buttons-section">
+                    <div className="broadcast-form-section__header">
+                      <div>
+                        <span className="eyebrow">Блок 4</span>
+                        <h4>CTA-кнопки</h4>
+                      </div>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={handleAddBroadcastButton}
+                        disabled={!broadcastIsDraft || broadcastSubmitting || broadcastButtonDrafts.length >= 3}
+                      >
+                        Добавить кнопку
+                      </button>
+                    </div>
+                    {broadcastButtonDrafts.length === 0 ? (
+                      <div className="activity-empty">Кнопки опциональны. Поддерживаются до 3 URL-кнопок.</div>
+                    ) : (
+                      <div className="broadcast-buttons-list">
+                        {broadcastButtonDrafts.map((button, index) => (
+                          <div key={button.id} className="broadcast-button-editor">
+                            <label className="form-field">
+                              <span>Текст #{index + 1}</span>
+                              <input
+                                value={button.text}
+                                onChange={(event) =>
+                                  handleBroadcastButtonChange(button.id, "text", event.target.value)
+                                }
+                                placeholder="Например: Открыть"
+                                disabled={!broadcastIsDraft || broadcastSubmitting}
+                              />
+                            </label>
+                            <label className="form-field form-field--wide">
+                              <span>URL</span>
+                              <input
+                                value={button.url}
+                                onChange={(event) =>
+                                  handleBroadcastButtonChange(button.id, "url", event.target.value)
+                                }
+                                placeholder="https://..."
+                                disabled={!broadcastIsDraft || broadcastSubmitting}
+                              />
+                            </label>
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => handleRemoveBroadcastButton(button.id)}
+                              disabled={!broadcastIsDraft || broadcastSubmitting}
+                            >
+                              Удалить
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="adjustment-form__footer">
+                    <span className="form-hint">
+                      Черновик сохраняется отдельно. Live estimate считает только текущие каналы и сегмент редактора
+                      без записи в БД.
+                    </span>
+                    <button className="action-button" type="submit" disabled={!broadcastIsDraft || broadcastSubmitting}>
+                      {broadcastSubmitting
+                        ? "Сохраняем..."
+                        : broadcastEditorMode === "edit"
+                          ? "Сохранить черновик"
+                          : "Создать черновик"}
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              <aside className="broadcast-preview-column">
+                <section className="detail-section detail-section--estimate">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">Оценка аудитории</span>
+                      <h3>Текущая аудитория</h3>
+                    </div>
+                  </div>
+                  <section className="detail-facts-grid detail-facts-grid--compact">
+                    <DetailFact
+                      label="Всего"
+                      value={
+                        broadcastEstimateSnapshot ? String(broadcastEstimateSnapshot.estimated_total_accounts) : "—"
+                      }
+                    />
+                    <DetailFact
+                      label="In-app"
+                      value={
+                        broadcastEstimateSnapshot
+                          ? String(broadcastEstimateSnapshot.estimated_in_app_recipients)
+                          : "—"
+                      }
+                    />
+                    <DetailFact
+                      label="Telegram"
+                      value={
+                        broadcastEstimateSnapshot
+                          ? String(broadcastEstimateSnapshot.estimated_telegram_recipients)
+                          : "—"
+                      }
+                    />
+                    <DetailFact
+                      label="Статус"
+                      value={broadcastEstimateLoading ? "Пересчет..." : broadcastEstimateError ? "Ошибка" : "Актуально"}
+                    />
+                  </section>
+                  <div className="section-footer">
+                    <span className="form-hint">
+                      {broadcastEstimateError ||
+                        "Estimate считает текущие сегмент и каналы редактора без сохранения кампании."}
+                    </span>
+                  </div>
+                </section>
+
+                <section className="detail-section detail-section--estimate">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">Срез runtime</span>
+                      <h3>Последний боевой запуск</h3>
+                    </div>
+                  </div>
+                  {selectedBroadcast?.latest_run ? (
+                    <>
+                      <section className="detail-facts-grid detail-facts-grid--compact">
+                        <DetailFact label="Запуск" value={`#${selectedBroadcast.latest_run.id}`} />
+                        <DetailFact
+                          label="Тип"
+                          value={humanizeBroadcastRunType(selectedBroadcast.latest_run.run_type)}
+                        />
+                        <DetailFact
+                          label="Статус"
+                          value={humanizeBroadcastRunStatus(selectedBroadcast.latest_run.status)}
+                        />
+                        <DetailFact
+                          label="Доставлено"
+                          value={`${selectedBroadcast.latest_run.delivered_deliveries}/${selectedBroadcast.latest_run.total_deliveries}`}
+                        />
+                      </section>
+                      <div className="section-footer">
+                        <span className="form-hint">
+                          {selectedBroadcast.latest_run.last_error
+                            ? selectedBroadcast.latest_run.last_error
+                            : `Старт: ${formatDateMoscow(selectedBroadcast.latest_run.started_at)}`}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="activity-empty">Кампания еще не запускалась в боевой контур.</div>
+                  )}
+                </section>
+
+                <article className="detail-section">
+                  <div className="detail-section__header">
+                    <div>
+                      <span className="eyebrow">Telegram preview</span>
+                      <h3>Сообщение в Telegram</h3>
+                    </div>
+                  </div>
+                  <div className="broadcast-preview broadcast-preview--telegram">
+                    {broadcastContentType === "photo" && broadcastImageUrl ? (
+                      <div className="broadcast-preview__media">
+                        <img src={broadcastImageUrl} alt="Broadcast preview" />
+                      </div>
+                    ) : null}
+                    <div className="broadcast-preview__body">
+                      <strong>{broadcastTitle || "Заголовок рассылки"}</strong>
+                      <div
+                        className="broadcast-preview__html"
+                        dangerouslySetInnerHTML={{
+                          __html: renderBroadcastPreviewHtml(
+                            broadcastBodyHtml || "HTML-текст рассылки появится здесь после ввода",
+                          ),
+                        }}
+                      />
+                    </div>
+                    {broadcastButtonDrafts.length > 0 ? (
+                      <div className="broadcast-preview__buttons">
+                        {broadcastButtonDrafts
+                          .filter((button) => button.text.trim() && button.url.trim())
+                          .map((button) => (
+                            <button key={button.id} className="broadcast-preview__button" type="button">
+                              {button.text}
+                            </button>
+                          ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </article>
+
+                <article className="detail-section">
+                  <div className="detail-section__header">
+                    <div>
+                      <span className="eyebrow">In-app preview</span>
+                      <h3>Карточка внутри приложения</h3>
+                    </div>
+                  </div>
+                  <div className="broadcast-preview broadcast-preview--app">
+                    <div className="broadcast-preview__header">
+                      <strong>{broadcastTitle || "Заголовок уведомления"}</strong>
+                      <span>{selectedBroadcast ? humanizeBroadcastStatus(selectedBroadcast.status) : "черновик"}</span>
+                    </div>
+                    {broadcastContentType === "photo" && broadcastImageUrl ? (
+                      <div className="broadcast-preview__media broadcast-preview__media--app">
+                        <img src={broadcastImageUrl} alt="Broadcast preview" />
+                      </div>
+                    ) : null}
                     <div
                       className="broadcast-preview__html"
                       dangerouslySetInnerHTML={{
                         __html: renderBroadcastPreviewHtml(
-                          broadcastBodyHtml || "HTML-текст рассылки появится здесь после ввода",
+                          broadcastBodyHtml || "Тело уведомления появится после заполнения формы",
                         ),
                       }}
                     />
+                    {broadcastButtonDrafts.length > 0 ? (
+                      <div className="broadcast-preview__actions">
+                        {broadcastButtonDrafts
+                          .filter((button) => button.text.trim() && button.url.trim())
+                          .map((button) => (
+                            <a
+                              key={button.id}
+                              className="detail-link"
+                              href={button.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {button.text}
+                            </a>
+                          ))}
+                      </div>
+                    ) : null}
                   </div>
-                  {broadcastButtonDrafts.length > 0 ? (
-                    <div className="broadcast-preview__buttons">
-                      {broadcastButtonDrafts
-                        .filter((button) => button.text.trim() && button.url.trim())
-                        .map((button) => (
-                          <button key={button.id} className="broadcast-preview__button" type="button">
-                            {button.text}
-                          </button>
-                        ))}
-                    </div>
-                  ) : null}
-                </div>
-              </article>
+                  <div className="section-footer">
+                    <span className="form-hint">
+                      {`${humanizeBroadcastAudienceSegment(broadcastAudienceSegment)} · ${
+                        broadcastChannels.length > 0
+                          ? humanizeBroadcastChannels(broadcastChannels)
+                          : "каналы не выбраны"
+                      }`}
+                    </span>
+                  </div>
+                </article>
+              </aside>
+            </section>
 
-              <article className="detail-section">
-                <div className="detail-section__header">
+            <section className="detail-sections-grid detail-sections-grid--runtime">
+              <section className="detail-section detail-section--action">
+                <div className="detail-section__header detail-section__header--stacked">
                   <div>
-                    <span className="eyebrow">In-app preview</span>
-                    <h3>Карточка внутри приложения</h3>
+                    <span className="eyebrow">Runtime</span>
+                    <h3>Запуск и управление кампанией</h3>
                   </div>
-                </div>
-                <div className="broadcast-preview broadcast-preview--app">
-                  <div className="broadcast-preview__header">
-                    <strong>{broadcastTitle || "Заголовок уведомления"}</strong>
-                    <span>{selectedBroadcast ? humanizeBroadcastStatus(selectedBroadcast.status) : "черновик"}</span>
-                  </div>
-                  {broadcastContentType === "photo" && broadcastImageUrl ? (
-                    <div className="broadcast-preview__media broadcast-preview__media--app">
-                      <img src={broadcastImageUrl} alt="Broadcast preview" />
-                    </div>
-                  ) : null}
-                  <div
-                    className="broadcast-preview__html"
-                    dangerouslySetInnerHTML={{
-                      __html: renderBroadcastPreviewHtml(
-                        broadcastBodyHtml || "Тело уведомления появится после заполнения формы",
-                      ),
-                    }}
-                  />
-                  {broadcastButtonDrafts.length > 0 ? (
-                    <div className="broadcast-preview__actions">
-                      {broadcastButtonDrafts
-                        .filter((button) => button.text.trim() && button.url.trim())
-                        .map((button) => (
-                          <a
-                            key={button.id}
-                            className="detail-link"
-                            href={button.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {button.text}
-                          </a>
-                        ))}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="section-footer">
                   <span className="form-hint">
-                    {`${humanizeBroadcastAudienceSegment(broadcastAudienceSegment)} · ${
-                      broadcastChannels.length > 0
-                        ? humanizeBroadcastChannels(broadcastChannels)
-                        : "каналы не выбраны"
-                    }`}
+                    Автообновление отключено. Боевые действия доступны только superuser. Все даты и время для
+                    расписания считаются по Москве.
                   </span>
                 </div>
-              </article>
+
+                <form
+                  className="adjustment-form adjustment-form--runtime"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitBroadcastRuntimeAction("schedule");
+                  }}
+                >
+                  <label className="form-field form-field--wide">
+                    <span>Комментарий runtime</span>
+                    <textarea
+                      value={broadcastRuntimeComment}
+                      onChange={(event) => setBroadcastRuntimeComment(event.target.value)}
+                      placeholder="Почему запускаем, ставим на паузу или отменяем кампанию"
+                      rows={3}
+                      disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Дата и время запуска</span>
+                    <input
+                      type="datetime-local"
+                      value={broadcastScheduleAtInput}
+                      onChange={(event) => setBroadcastScheduleAtInput(event.target.value)}
+                      disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                    />
+                  </label>
+                  <div className="adjustment-form__footer">
+                    <span className="form-hint">
+                      {selectedBroadcast?.latest_run
+                        ? `${humanizeBroadcastRunType(selectedBroadcast.latest_run.run_type)} · ${humanizeBroadcastRunStatus(
+                            selectedBroadcast.latest_run.status,
+                          )}`
+                        : "У кампании еще нет боевого запуска."}
+                    </span>
+                    <div className="action-cluster">
+                      {selectedBroadcast?.status === "draft" ? (
+                        <>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => void submitBroadcastRuntimeAction("send-now")}
+                            disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                          >
+                            Отправить сейчас
+                          </button>
+                          <button
+                            className="action-button"
+                            type="submit"
+                            disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                          >
+                            Поставить в расписание
+                          </button>
+                          <button
+                            className="ghost-button ghost-button--danger"
+                            type="button"
+                            onClick={() => void handleDeleteBroadcastDraft()}
+                            disabled={broadcastRuntimeSubmitting || selectedBroadcastId === null}
+                          >
+                            Удалить черновик
+                          </button>
+                        </>
+                      ) : null}
+                      {selectedBroadcast?.status === "scheduled" || selectedBroadcast?.status === "running" ? (
+                        <>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => void submitBroadcastRuntimeAction("pause")}
+                            disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                          >
+                            Пауза
+                          </button>
+                          <button
+                            className="ghost-button ghost-button--danger"
+                            type="button"
+                            onClick={() => void submitBroadcastRuntimeAction("cancel")}
+                            disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                          >
+                            Отменить кампанию
+                          </button>
+                        </>
+                      ) : null}
+                      {selectedBroadcast?.status === "paused" ? (
+                        <>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => void submitBroadcastRuntimeAction("resume")}
+                            disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                          >
+                            Возобновить
+                          </button>
+                          <button
+                            className="ghost-button ghost-button--danger"
+                            type="button"
+                            onClick={() => void submitBroadcastRuntimeAction("cancel")}
+                            disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                          >
+                            Отменить кампанию
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                </form>
+              </section>
+
+              <section className="detail-section detail-section--action">
+                <div className="detail-section__header detail-section__header--stacked">
+                  <div>
+                    <span className="eyebrow">Тестовая отправка</span>
+                    <h3>Контрольная отправка</h3>
+                  </div>
+                  <span className="form-hint">
+                    Контрольная отправка работает только по сохраненному черновику. Несохраненные правки сначала
+                    фиксируются, затем отправляются на тестовых адресатов.
+                  </span>
+                </div>
+
+                <form className="adjustment-form adjustment-form--runtime" onSubmit={handleBroadcastTestSend}>
+                  <label className="form-field form-field--wide">
+                    <span>Email получателей</span>
+                    <textarea
+                      value={broadcastTestEmailsInput}
+                      onChange={(event) => setBroadcastTestEmailsInput(event.target.value)}
+                      placeholder={"user@example.com\npartner@example.com"}
+                      rows={4}
+                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                    />
+                  </label>
+                  <label className="form-field form-field--wide">
+                    <span>Telegram ID получателей</span>
+                    <textarea
+                      value={broadcastTestTelegramIdsInput}
+                      onChange={(event) => setBroadcastTestTelegramIdsInput(event.target.value)}
+                      placeholder={"777000111\n999888777"}
+                      rows={4}
+                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                    />
+                  </label>
+                  <label className="form-field form-field--wide">
+                    <span>Комментарий</span>
+                    <textarea
+                      value={broadcastTestComment}
+                      onChange={(event) => setBroadcastTestComment(event.target.value)}
+                      placeholder="Что именно проверяем и кто подтверждает результат"
+                      rows={3}
+                      required
+                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                    />
+                  </label>
+                  <div className="adjustment-form__footer">
+                    <span className="form-hint">
+                      `email` ищет локальный аккаунт. `telegram_id` может быть как локальным, так и внешним Telegram-only адресатом.
+                    </span>
+                    <button
+                      className="action-button"
+                      type="submit"
+                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                    >
+                      {broadcastTestSubmitting ? "Отправляем..." : "Запустить test send"}
+                    </button>
+                  </div>
+                </form>
+
+                {broadcastTestResult ? (
+                  <>
+                    <section className="detail-facts-grid detail-facts-grid--compact">
+                      <DetailFact label="Получатели" value={String(broadcastTestResult.total_targets)} />
+                      <DetailFact label="Отправлено" value={String(broadcastTestResult.sent_targets)} />
+                      <DetailFact label="Частично" value={String(broadcastTestResult.partial_targets)} />
+                      <DetailFact label="Ошибки" value={String(broadcastTestResult.failed_targets)} />
+                    </section>
+                    <section className="detail-facts-grid detail-facts-grid--compact">
+                      <DetailFact label="Пропущено" value={String(broadcastTestResult.skipped_targets)} />
+                      <DetailFact label="In-app" value={String(broadcastTestResult.in_app_notifications_created)} />
+                      <DetailFact label="Telegram" value={String(broadcastTestResult.telegram_targets_sent)} />
+                      <DetailFact label="Audit ID" value={String(broadcastTestResult.audit_log_id)} />
+                    </section>
+
+                    <div className="activity-list">
+                      {broadcastTestResult.items.map((item) => (
+                        <article key={`${item.source}:${item.target}`} className="activity-item">
+                          <div>
+                            <strong>{item.target}</strong>
+                            <span>
+                              {item.source === "email" ? "email" : "telegram_id"} · {item.resolution}
+                            </span>
+                            <span>
+                              {item.channels_attempted.length > 0
+                                ? humanizeBroadcastChannels(item.channels_attempted)
+                                : "каналы не применялись"}
+                            </span>
+                            {item.detail ? <span>{item.detail}</span> : null}
+                          </div>
+                          <div className="activity-item__meta">
+                            <span
+                              className={`status-pill status-pill--${
+                                item.status === "sent"
+                                  ? "paid"
+                                  : item.status === "partial"
+                                    ? "in_progress"
+                                    : item.status === "failed"
+                                      ? "rejected"
+                                      : "new"
+                              }`}
+                            >
+                              {humanizeBroadcastTestSendStatus(item.status)}
+                            </span>
+                            {item.in_app_notification_id ? <span>In-app #{item.in_app_notification_id}</span> : null}
+                            {item.telegram_message_ids.length > 0 ? (
+                              <span>Telegram: {item.telegram_message_ids.join(", ")}</span>
+                            ) : null}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </section>
             </section>
 
             <section className="detail-section detail-section--action">
               <div className="detail-section__header detail-section__header--stacked">
                 <div>
-                  <span className="eyebrow">Test send</span>
-                  <h3>Реальная отправка на явный список получателей</h3>
-                </div>
-                <span className="form-hint">
-                  Работает только по сохраненному черновику. Если правки в редакторе не сохранены,
-                  в test send уйдет последняя сохраненная версия.
-                </span>
-              </div>
-
-              <form className="adjustment-form" onSubmit={handleBroadcastTestSend}>
-                <label className="form-field form-field--wide">
-                  <span>Email получателей</span>
-                  <textarea
-                    value={broadcastTestEmailsInput}
-                    onChange={(event) => setBroadcastTestEmailsInput(event.target.value)}
-                    placeholder={"user@example.com\npartner@example.com"}
-                    rows={4}
-                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                  />
-                </label>
-                <label className="form-field form-field--wide">
-                  <span>Telegram ID получателей</span>
-                  <textarea
-                    value={broadcastTestTelegramIdsInput}
-                    onChange={(event) => setBroadcastTestTelegramIdsInput(event.target.value)}
-                    placeholder={"777000111\n999888777"}
-                    rows={4}
-                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                  />
-                </label>
-                <label className="form-field form-field--wide">
-                  <span>Комментарий</span>
-                  <textarea
-                    value={broadcastTestComment}
-                    onChange={(event) => setBroadcastTestComment(event.target.value)}
-                    placeholder="Зачем делаем test send и кто должен проверить результат"
-                    rows={3}
-                    required
-                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                  />
-                </label>
-                <div className="adjustment-form__footer">
-                  <span className="form-hint">
-                    `email` используется как ключ поиска существующего локального аккаунта.
-                    `telegram_id` может быть как у локального аккаунта, так и внешним Telegram-only адресатом вне БД.
-                  </span>
-                  <button
-                    className="action-button"
-                    type="submit"
-                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                  >
-                    {broadcastTestSubmitting ? "Отправляем..." : "Запустить test send"}
-                  </button>
-                </div>
-              </form>
-
-              {broadcastTestResult ? (
-                <>
-                  <section className="detail-facts-grid detail-facts-grid--compact">
-                    <DetailFact label="Targets" value={String(broadcastTestResult.total_targets)} />
-                    <DetailFact label="Sent" value={String(broadcastTestResult.sent_targets)} />
-                    <DetailFact label="Partial" value={String(broadcastTestResult.partial_targets)} />
-                    <DetailFact label="Failed" value={String(broadcastTestResult.failed_targets)} />
-                  </section>
-                  <section className="detail-facts-grid detail-facts-grid--compact">
-                    <DetailFact
-                      label="Skipped"
-                      value={String(broadcastTestResult.skipped_targets)}
-                    />
-                    <DetailFact
-                      label="In-app"
-                      value={String(broadcastTestResult.in_app_notifications_created)}
-                    />
-                    <DetailFact
-                      label="Telegram"
-                      value={String(broadcastTestResult.telegram_targets_sent)}
-                    />
-                    <DetailFact
-                      label="Audit log"
-                      value={String(broadcastTestResult.audit_log_id)}
-                    />
-                  </section>
-
-                  <div className="activity-list">
-                    {broadcastTestResult.items.map((item) => (
-                      <article key={`${item.source}:${item.target}`} className="activity-item">
-                        <div>
-                          <strong>{item.target}</strong>
-                          <span>
-                            {item.source === "email" ? "email" : "telegram_id"} · {item.resolution}
-                          </span>
-                          <span>
-                            {item.channels_attempted.length > 0
-                              ? humanizeBroadcastChannels(item.channels_attempted)
-                              : "каналы не применялись"}
-                          </span>
-                          {item.detail ? <span>{item.detail}</span> : null}
-                        </div>
-                        <div className="activity-item__meta">
-                          <span
-                            className={`status-pill status-pill--${
-                              item.status === "sent"
-                                ? "paid"
-                                : item.status === "partial"
-                                  ? "in_progress"
-                                  : item.status === "failed"
-                                    ? "rejected"
-                                    : "new"
-                            }`}
-                          >
-                            {humanizeBroadcastTestSendStatus(item.status)}
-                          </span>
-                          {item.in_app_notification_id ? (
-                            <span>In-app #{item.in_app_notification_id}</span>
-                          ) : null}
-                          {item.telegram_message_ids.length > 0 ? (
-                            <span>Telegram: {item.telegram_message_ids.join(", ")}</span>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </section>
-
-            <section className="detail-section detail-section--action">
-              <div className="detail-section__header detail-section__header--stacked">
-                <div>
-                  <span className="eyebrow">Run journal</span>
+                  <span className="eyebrow">Журнал запусков</span>
                   <h3>История боевых запусков по всем кампаниям</h3>
                 </div>
-                <span className="form-hint">
-                  Журнал обновляется polling-ом. Test send остается отдельным контуром и не смешивается с боевыми run.
-                </span>
+                <div className="panel-toolbar__actions">
+                  <span className="form-hint">
+                    Журнал обновляется вручную. Test send живет отдельно и не смешивается с боевыми run.
+                  </span>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void handleRefreshBroadcastWorkspace()}
+                    disabled={broadcastWorkspaceRefreshing}
+                  >
+                    {broadcastWorkspaceRefreshing ? "Обновляем..." : "Обновить журнал"}
+                  </button>
+                </div>
               </div>
 
               <div className="detail-facts-grid detail-facts-grid--compact">
-                <DetailFact label="Runs" value={String(broadcastRunTotal)} />
+                <DetailFact label="Всего run" value={String(broadcastRunTotal)} />
                 <DetailFact
-                  label="Running"
+                  label="В работе"
                   value={String(broadcastRunItems.filter((item) => item.status === "running").length)}
                 />
                 <DetailFact
-                  label="Paused"
+                  label="На паузе"
                   value={String(broadcastRunItems.filter((item) => item.status === "paused").length)}
                 />
                 <DetailFact
-                  label="Selected"
+                  label="Выбран"
                   value={selectedBroadcastRun ? `#${selectedBroadcastRun.id}` : "—"}
                 />
               </div>
@@ -3810,12 +4029,12 @@ export default function App() {
                   <div className="detail-section__header detail-section__header--stacked">
                     <div>
                       <span className="eyebrow">Фильтры</span>
-                      <h3>Журнал запусков</h3>
+                      <h3>Список запусков</h3>
                     </div>
                   </div>
                   <div className="broadcast-channel-grid">
                     <label className="form-field">
-                      <span>Status</span>
+                      <span>Статус</span>
                       <select
                         value={broadcastRunStatusFilter}
                         onChange={(event) =>
@@ -3831,7 +4050,7 @@ export default function App() {
                       </select>
                     </label>
                     <label className="form-field">
-                      <span>Тип</span>
+                      <span>Тип запуска</span>
                       <select
                         value={broadcastRunTypeFilter}
                         onChange={(event) =>
@@ -3839,12 +4058,12 @@ export default function App() {
                         }
                       >
                         <option value="all">Все</option>
-                        <option value="send_now">Send now</option>
-                        <option value="scheduled">Schedule</option>
+                        <option value="send_now">Отправить сейчас</option>
+                        <option value="scheduled">По расписанию</option>
                       </select>
                     </label>
                     <label className="form-field">
-                      <span>Channel</span>
+                      <span>Канал</span>
                       <select
                         value={broadcastRunChannelFilter}
                         onChange={(event) =>
@@ -3867,14 +4086,15 @@ export default function App() {
                       broadcastRunItems.map((run) => (
                         <article
                           key={run.id}
-                          className="activity-item"
+                          className={
+                            selectedBroadcastRunId === run.id
+                              ? "activity-item activity-item--selectable activity-item--active"
+                              : "activity-item activity-item--selectable"
+                          }
                           onClick={() => setSelectedBroadcastRunId(run.id)}
-                          style={{ cursor: "pointer" }}
                         >
                           <div>
-                            <strong>
-                              Run #{run.id} · broadcast #{run.broadcast_id}
-                            </strong>
+                            <strong>Run #{run.id} · broadcast #{run.broadcast_id}</strong>
                             <span>
                               {humanizeBroadcastRunType(run.run_type)} · {formatDateMoscow(run.started_at)}
                             </span>

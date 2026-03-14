@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, TrendingUp, DollarSign, Copy, Check, Send } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { WithdrawalRequestsCard, type WithdrawalRequestItemView } from './WithdrawalRequestsCard';
 
 interface Referral {
   id: string;
@@ -15,8 +16,12 @@ interface ReferralPageProps {
   referrals: Referral[];
   totalEarnings: number;
   availableForWithdraw: number;
+  minimumWithdrawalAmount: number;
   rewardRate: number;
   isLoading?: boolean;
+  withdrawals: WithdrawalRequestItemView[];
+  withdrawalsTotal: number;
+  isLoadingWithdrawals?: boolean;
   copied: boolean;
   onCopyLink: () => void;
   onShareTelegram: () => void;
@@ -73,8 +78,12 @@ export function ReferralPage({
   referrals,
   totalEarnings,
   availableForWithdraw,
+  minimumWithdrawalAmount,
   rewardRate,
   isLoading = false,
+  withdrawals,
+  withdrawalsTotal,
+  isLoadingWithdrawals = false,
   copied,
   onCopyLink,
   onShareTelegram,
@@ -137,9 +146,18 @@ export function ReferralPage({
           onClick={onWithdraw}
           className="w-full py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity"
         >
-          Вывести на баланс {formatRubles(availableForWithdraw)} ₽
+          Вывести {formatRubles(availableForWithdraw)} ₽
         </button>
       )}
+
+      <WithdrawalRequestsCard
+        items={withdrawals}
+        total={withdrawalsTotal}
+        isLoading={isLoadingWithdrawals}
+        availableForWithdraw={availableForWithdraw}
+        minimumAmount={minimumWithdrawalAmount}
+        onCreate={onWithdraw}
+      />
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold text-[var(--tg-theme-text-color,#000000)]">

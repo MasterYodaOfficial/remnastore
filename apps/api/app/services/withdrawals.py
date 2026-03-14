@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import uuid
+import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,10 @@ class WithdrawalDestinationRequiredError(WithdrawalServiceError):
 
 
 class WithdrawalAmountTooLowError(WithdrawalServiceError):
+    pass
+
+
+class WithdrawalInvalidCardError(WithdrawalServiceError):
     pass
 
 
@@ -56,6 +61,60 @@ def _normalize_optional_text(value: str | None) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
+
+
+def _only_digits(value: str) -> str:
+    return re.sub(r"\D+", "", value)
+
+
+def _is_luhn_valid(card_number: str) -> bool:
+    checksum = 0
+    reversed_digits = list(reversed(card_number))
+    for index, digit_text in enumerate(reversed_digits):
+        digit = int(digit_text)
+        if index % 2 == 1:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        checksum += digit
+    return checksum % 10 == 0
+
+
+def normalize_withdrawal_destination_value(
+    *,
+    destination_type: WithdrawalDestinationType,
+    destination_value: str,
+) -> str:
+    normalized = _normalize_required_text(
+        destination_value,
+        error_type=WithdrawalDestinationRequiredError,
+        message="destination value is required",
+    )
+
+    if destination_type == WithdrawalDestinationType.CARD:
+        digits = _only_digits(normalized)
+        if len(digits) < 16 or len(digits) > 19 or not _is_luhn_valid(digits):
+            raise WithdrawalInvalidCardError("invalid bank card number")
+        return digits
+
+    return normalized
+
+
+def mask_withdrawal_destination_value(
+    *,
+    destination_type: WithdrawalDestinationType,
+    destination_value: str,
+) -> str:
+    if destination_type == WithdrawalDestinationType.CARD:
+        digits = _only_digits(destination_value)
+        if len(digits) >= 4:
+            return f"**** **** **** {digits[-4:]}"
+        return "****"
+
+    digits = _only_digits(destination_value)
+    if digits and len(digits) >= 4:
+        return f"{destination_value[:2]}••••{digits[-2:]}"
+    return destination_value
 
 
 def _get_minimum_withdrawal_amount_rub() -> int:
@@ -134,10 +193,9 @@ async def create_withdrawal_request(
             f"minimum withdrawal amount is {minimum_amount_rub} RUB"
         )
 
-    normalized_destination_value = _normalize_required_text(
-        destination_value,
-        error_type=WithdrawalDestinationRequiredError,
-        message="destination value is required",
+    normalized_destination_value = normalize_withdrawal_destination_value(
+        destination_type=destination_type,
+        destination_value=destination_value,
     )
     normalized_user_comment = _normalize_optional_text(user_comment)
 

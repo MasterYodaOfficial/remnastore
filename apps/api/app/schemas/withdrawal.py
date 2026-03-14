@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.db.models.withdrawal import WithdrawalDestinationType, WithdrawalStatus
 
@@ -13,8 +13,6 @@ class WithdrawalCreateRequest(BaseModel):
 
 
 class WithdrawalResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     amount: int
     destination_type: WithdrawalDestinationType

@@ -14,15 +14,37 @@ from app.services.withdrawals import (
     WithdrawalAccountBlockedError,
     WithdrawalAmountTooLowError,
     WithdrawalDestinationRequiredError,
+    WithdrawalInvalidCardError,
     WithdrawalInsufficientAvailableError,
     create_withdrawal_request,
     get_account_withdrawals,
     get_minimum_withdrawal_amount_rub,
     get_withdrawal_availability,
+    mask_withdrawal_destination_value,
 )
 
 
 router = APIRouter()
+
+
+def _build_withdrawal_response(item) -> WithdrawalResponse:
+    return WithdrawalResponse(
+        id=item.id,
+        amount=item.amount,
+        destination_type=item.destination_type,
+        destination_value=mask_withdrawal_destination_value(
+            destination_type=item.destination_type,
+            destination_value=item.destination_value,
+        ),
+        user_comment=item.user_comment,
+        admin_comment=item.admin_comment,
+        status=item.status,
+        reserved_ledger_entry_id=item.reserved_ledger_entry_id,
+        released_ledger_entry_id=item.released_ledger_entry_id,
+        processed_at=item.processed_at,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
 
 
 @router.get("", response_model=WithdrawalListResponse)
@@ -40,7 +62,7 @@ async def read_withdrawals(
     )
     availability = await get_withdrawal_availability(session, account=current_account)
     return WithdrawalListResponse(
-        items=[WithdrawalResponse.model_validate(item, from_attributes=True) for item in items],
+        items=[_build_withdrawal_response(item) for item in items],
         total=total,
         limit=limit,
         offset=offset,
@@ -66,6 +88,8 @@ async def create_withdrawal(
         )
     except WithdrawalDestinationRequiredError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except WithdrawalInvalidCardError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except WithdrawalAmountTooLowError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except WithdrawalInsufficientAvailableError as exc:
@@ -76,4 +100,4 @@ async def create_withdrawal(
     await session.commit()
     await session.refresh(withdrawal)
     await clear_account_cache(current_account.id)
-    return WithdrawalResponse.model_validate(withdrawal, from_attributes=True)
+    return _build_withdrawal_response(withdrawal)

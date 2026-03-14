@@ -141,6 +141,7 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["amount"], 40)
         self.assertEqual(body["status"], "new")
         self.assertEqual(body["destination_type"], "sbp")
+        self.assertEqual(body["destination_value"], "+7••••00")
         self.assertIsNotNone(body["reserved_ledger_entry_id"])
 
         stored_account = await self._get_account(account.id)
@@ -176,7 +177,7 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "amount": 20,
                 "destination_type": "card",
-                "destination_value": "2200123412341234",
+                "destination_value": "4242 4242 4242 4242",
             },
         )
         self.assertEqual(response.status_code, 400)
@@ -191,11 +192,27 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "amount": 40,
                 "destination_type": "card",
-                "destination_value": "2200123412341234",
+                "destination_value": "4242 4242 4242 4242",
             },
         )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"], "insufficient referral funds for withdrawal")
+
+    async def test_create_withdrawal_rejects_invalid_card_number(self) -> None:
+        account = await self._create_account(balance=120, referral_earnings=120)
+        self._current_account_id = account.id
+
+        response = await self.client.post(
+            "/api/v1/withdrawals",
+            json={
+                "amount": 40,
+                "destination_type": "card",
+                "destination_value": "4242 4242 4242 4241",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "invalid bank card number")
 
     async def test_list_withdrawals_returns_newest_first_with_availability(self) -> None:
         account = await self._create_account(balance=120, referral_earnings=120)
@@ -206,7 +223,7 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "amount": 30,
                 "destination_type": "card",
-                "destination_value": "1111222233334444",
+                "destination_value": "4242 4242 4242 4242",
             },
         )
         self.assertEqual(first_response.status_code, 201)
@@ -230,6 +247,7 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["minimum_amount_rub"], 30)
         self.assertEqual(body["items"][0]["amount"], 40)
         self.assertEqual(body["items"][1]["amount"], 30)
+        self.assertEqual(body["items"][1]["destination_value"], "**** **** **** 4242")
 
 
 if __name__ == "__main__":
