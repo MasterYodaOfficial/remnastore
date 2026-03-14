@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.db.models.account import AccountStatus, AuthProvider
 from app.db.models.broadcast import (
     BroadcastAudienceSegment,
     BroadcastChannel,
     BroadcastContentType,
+    BroadcastDeliveryStatus,
+    BroadcastRunStatus,
+    BroadcastRunType,
     BroadcastStatus,
 )
 from app.db.models.ledger import LedgerEntryType
@@ -142,6 +146,45 @@ class AdminAccountWithdrawalResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AdminReferralChainReferrerResponse(BaseModel):
+    account_id: UUID
+    email: str | None = None
+    display_name: str | None = None
+    telegram_id: int | None = None
+    username: str | None = None
+    referral_code: str | None = None
+    status: AccountStatus | None = None
+    attributed_at: datetime
+
+
+class AdminReferralChainItemResponse(BaseModel):
+    attribution_id: int
+    account_id: UUID
+    email: str | None = None
+    display_name: str | None = None
+    telegram_id: int | None = None
+    username: str | None = None
+    referral_code: str | None = None
+    status: AccountStatus | None = None
+    subscription_status: str | None = None
+    subscription_expires_at: datetime | None = None
+    attributed_at: datetime
+    reward_status: Literal["pending", "rewarded"]
+    reward_amount: int
+    reward_rate: float | None = None
+    purchase_amount: int | None = None
+    reward_created_at: datetime | None = None
+
+
+class AdminReferralChainResponse(BaseModel):
+    effective_reward_rate: float
+    referrer: AdminReferralChainReferrerResponse | None = None
+    direct_referrals: list[AdminReferralChainItemResponse]
+    direct_referrals_count: int
+    rewarded_direct_referrals_count: int
+    pending_direct_referrals_count: int
+
+
 class AdminAccountDetailResponse(BaseModel):
     id: UUID
     email: str | None = None
@@ -157,6 +200,7 @@ class AdminAccountDetailResponse(BaseModel):
     referral_earnings: int
     referrals_count: int
     referred_by_account_id: UUID | None = None
+    referral_chain: AdminReferralChainResponse
     remnawave_user_uuid: UUID | None = None
     subscription_url: str | None = None
     subscription_status: str | None = None
@@ -326,6 +370,191 @@ class AdminBroadcastAudienceResponse(BaseModel):
     exclude_blocked: bool
 
 
+class AdminBroadcastEstimateRequest(BaseModel):
+    channels: list[BroadcastChannel] = Field(default_factory=lambda: [BroadcastChannel.IN_APP])
+    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value: list[BroadcastChannel]) -> list[BroadcastChannel]:
+        if not value:
+            raise ValueError("at least one channel is required")
+
+        unique_channels: list[BroadcastChannel] = []
+        for channel in value:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+        return unique_channels
+
+
+class AdminBroadcastEstimateResponse(BaseModel):
+    channels: list[BroadcastChannel]
+    audience: AdminBroadcastAudienceResponse
+    estimated_total_accounts: int
+    estimated_in_app_recipients: int
+    estimated_telegram_recipients: int
+
+
+class AdminBroadcastTestSendRequest(BaseModel):
+    emails: list[str] = Field(default_factory=list)
+    telegram_ids: list[int] = Field(default_factory=list)
+    comment: str = Field(..., min_length=1, max_length=500)
+    idempotency_key: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("emails")
+    @classmethod
+    def validate_emails(cls, value: list[str]) -> list[str]:
+        normalized_items: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            normalized = item.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_items.append(normalized)
+        return normalized_items
+
+    @field_validator("telegram_ids")
+    @classmethod
+    def validate_telegram_ids(cls, value: list[int]) -> list[int]:
+        normalized_items: list[int] = []
+        seen: set[int] = set()
+        for item in value:
+            normalized = int(item)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_items.append(normalized)
+        return normalized_items
+
+    @field_validator("comment", "idempotency_key")
+    @classmethod
+    def validate_non_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_has_targets(self) -> "AdminBroadcastTestSendRequest":
+        if not self.emails and not self.telegram_ids:
+            raise ValueError("at least one email or telegram_id target is required")
+        return self
+
+
+class AdminBroadcastTestSendTargetResponse(BaseModel):
+    target: str
+    source: Literal["email", "telegram_id"]
+    resolution: Literal["account", "telegram_direct", "unresolved"]
+    status: Literal["sent", "partial", "failed", "skipped"]
+    account_id: UUID | None = None
+    telegram_id: int | None = None
+    channels_attempted: list[BroadcastChannel]
+    in_app_notification_id: int | None = None
+    telegram_message_ids: list[str]
+    detail: str | None = None
+
+
+class AdminBroadcastTestSendResponse(BaseModel):
+    broadcast_id: int
+    audit_log_id: int
+    total_targets: int
+    sent_targets: int
+    partial_targets: int
+    failed_targets: int
+    skipped_targets: int
+    resolved_account_targets: int
+    direct_telegram_targets: int
+    in_app_notifications_created: int
+    telegram_targets_sent: int
+    items: list[AdminBroadcastTestSendTargetResponse]
+
+
+class AdminBroadcastRuntimeActionRequest(BaseModel):
+    comment: str | None = Field(default=None, max_length=500)
+    idempotency_key: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("comment")
+    @classmethod
+    def validate_optional_comment(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
+
+
+class AdminBroadcastScheduleRequest(AdminBroadcastRuntimeActionRequest):
+    scheduled_at: datetime
+
+
+class AdminBroadcastRunResponse(BaseModel):
+    id: int
+    broadcast_id: int
+    run_type: BroadcastRunType
+    status: BroadcastRunStatus
+    triggered_by_admin_id: UUID
+    snapshot_total_accounts: int
+    snapshot_in_app_targets: int
+    snapshot_telegram_targets: int
+    total_deliveries: int
+    pending_deliveries: int
+    delivered_deliveries: int
+    failed_deliveries: int
+    skipped_deliveries: int
+    in_app_delivered: int
+    telegram_delivered: int
+    in_app_pending: int
+    telegram_pending: int
+    started_at: datetime
+    completed_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminBroadcastRunListResponse(BaseModel):
+    items: list[AdminBroadcastRunResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class AdminBroadcastRunDeliveryResponse(BaseModel):
+    id: int
+    account_id: UUID
+    account_email: str | None = None
+    account_display_name: str | None = None
+    account_telegram_id: int | None = None
+    account_username: str | None = None
+    channel: BroadcastChannel
+    status: BroadcastDeliveryStatus
+    provider_message_id: str | None = None
+    notification_id: int | None = None
+    attempts_count: int
+    last_attempt_at: datetime | None = None
+    next_retry_at: datetime | None = None
+    delivered_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminBroadcastRunDetailResponse(BaseModel):
+    run: AdminBroadcastRunResponse
+    deliveries: list[AdminBroadcastRunDeliveryResponse]
+    total_deliveries: int
+    limit: int
+    offset: int
+
+
 class AdminBroadcastUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     title: str = Field(..., min_length=1, max_length=255)
@@ -400,6 +629,7 @@ class AdminBroadcastResponse(BaseModel):
     completed_at: datetime | None = None
     cancelled_at: datetime | None = None
     last_error: str | None = None
+    latest_run: AdminBroadcastRunResponse | None = None
     created_at: datetime
     updated_at: datetime
 

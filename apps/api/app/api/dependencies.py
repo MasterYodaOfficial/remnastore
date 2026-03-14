@@ -153,3 +153,11 @@ async def get_current_admin(
     if not admin.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin disabled")
     return admin
+
+
+async def require_superuser_admin(
+    current_admin: Admin = Depends(get_current_admin),
+) -> Admin:
+    if not current_admin.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="superuser required")
+    return current_admin

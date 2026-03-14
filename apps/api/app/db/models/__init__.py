@@ -16,6 +16,9 @@ from app.db.models.broadcast import (
     BroadcastContentType,
     BroadcastDelivery,
     BroadcastDeliveryStatus,
+    BroadcastRun,
+    BroadcastRunStatus,
+    BroadcastRunType,
     BroadcastStatus,
 )
 from app.db.models.ledger import LedgerEntry, LedgerEntryType
@@ -44,6 +47,9 @@ __all__ = [
     "BroadcastContentType",
     "BroadcastDelivery",
     "BroadcastDeliveryStatus",
+    "BroadcastRun",
+    "BroadcastRunStatus",
+    "BroadcastRunType",
     "BroadcastStatus",
     "LoginSource",
     "AuthAccount",

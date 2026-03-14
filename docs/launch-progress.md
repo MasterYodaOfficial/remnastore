@@ -17,7 +17,7 @@
 - Фаза 4: `Завершена`
 - Фаза 5: `Завершена`
 - Фаза 6: `В работе`
-- Фаза 7: `В работе`
+- Фаза 7: `Завершена`
 - Фаза 8: `Не начато`
 - Фаза 9: `Не начато`
 
@@ -418,7 +418,7 @@
 - `apps/web: npm run build`
 
 ## Фаза 7. Отдельная админка
-Статус: `В работе`
+Статус: `Завершена`
 
 - [x] Создать `apps/admin`
 - [x] Добавить таблицу `admins`
@@ -431,9 +431,9 @@
 - [x] Добавить ручную выдачу подписки
 - [x] Добавить полную блокировку пользователя
 - [x] Добавить очередь выводов
-- [ ] Добавить рассылки
+- [x] Добавить рассылки
 - [x] Добавить базовую статистику
-- [ ] Добавить просмотр referral chain
+- [x] Добавить просмотр referral chain
 
 Реализовано 2026-03-12:
 - добавлена таблица `admins` и миграция `apps/api/alembic/versions/20260312_add_admins.py`
@@ -441,10 +441,6 @@
 - backend добавил контур `POST /api/v1/admin/auth/login`, `GET /api/v1/admin/auth/me`, `GET /api/v1/admin/dashboard/summary`
 - в `apps/admin` поднят отдельный Vite frontend для входа и базового dashboard summary
 - Docker Compose теперь поднимает отдельный сервис `admin` на порту `5174`
-
-Что дальше по Фазе 7:
-- рассылки
-- referral chain и дополнительная операционная аналитика
 
 Дополнено 2026-03-13:
 - backend добавил `GET /api/v1/admin/accounts/search` и `GET /api/v1/admin/accounts/{account_id}`
@@ -467,6 +463,29 @@
 - карточка пользователя теперь показывает полную ledger history с фильтром по типу записи и постраничной подгрузкой
 - `GET /api/v1/admin/dashboard/summary` расширен базовой статистикой по финансам и операционным метрикам: wallet balance, reserve withdrawals, успешные платежи, direct purchases, новые аккаунты, блокировки и referral earnings
 - dashboard в `apps/admin` теперь показывает отдельные snapshot-блоки по финансам и активности за 7/30 дней
+
+Закрыто 2026-03-14:
+- backend и `apps/admin` закрыли контур `broadcasts v1`: список черновиков, создание и редактирование, Telegram HTML subset validation, выбор каналов, live audience estimate без сохранения через `POST /api/v1/admin/broadcasts/estimate`, URL-кнопки, preview для `telegram`/`in_app` и реальный `test send` через `POST /api/v1/admin/broadcasts/{broadcast_id}/test-send`
+- `test send` работает по явному списку `email` и `telegram_id`: email резолвится только в локальный аккаунт, внешний `telegram_id` вне БД поддерживается как Telegram-only адресат, массовый launch по аудитории все еще остается следующим этапом
+- карточка пользователя в админке теперь показывает referral chain: апстрим-реферера, прямых рефералов, статус первой оплаты, начисленную награду, сумму покупки и эффективную referral rate
+- `tests.test_admin_accounts` дополнены проверкой referral chain, сборка `apps/admin` проходит с новым блоком карточки пользователя
+
+Дозавершено 2026-03-14:
+- backend перевел `broadcasts` из draft/test-send уровня в полноценный runtime: добавлены `broadcast_runs`, runtime API для `send now / schedule / pause / resume / cancel`, snapshot аудитории в момент фактического старта и запрет боевых действий для non-`superuser`
+- поднят отдельный `broadcast-worker` с scheduler loop, fan-out, retry/backoff и compose-конфигурацией под `Europe/Moscow`
+- `apps/admin` получил runtime-управление кампаниями, общий журнал запусков по всем рассылкам, delivery drill-down и polling активных кампаний
+- `apps/web` показывает `broadcast` как compact rich-card в списке уведомлений и открывает detail modal с фото, полным HTML-контентом и всеми CTA-кнопками
+- Telegram `photo broadcast` теперь отправляется одним сообщением через `sendPhoto` с `caption` и `reply_markup`; слишком длинный caption валидируется заранее
+- итоговые продуктовые решения и ограничения зафиксированы в `docs/decisions/2026-03-14-broadcast-runtime-and-ux.md`
+- проверка: `tests.test_admin_broadcasts`, `tests.test_admin_accounts`, `tests.test_notifications`, `apps/admin: npm run build`, `apps/web: npm run build`
+
+Следующие незакрытые пункты по рассылкам:
+- [x] Добавить `broadcast_runs` и runtime API для `send now / schedule / pause / resume / cancel`
+- [x] Реализовать `broadcast-worker` с scheduler loop, fan-out и retry policy
+- [x] Добавить общий журнал кампаний и запусков в `apps/admin`
+- [x] Добавить live polling статусов активных кампаний в админке
+- [x] Переработать web `broadcast` notification в compact rich-card с detail modal
+- [x] Перевести Telegram `photo broadcast` на single-message delivery
 
 ## Фаза 8. Миграция из старого бота
 Статус: `Не начато`

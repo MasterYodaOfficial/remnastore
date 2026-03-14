@@ -78,6 +78,38 @@ class Settings(BaseSettings):
         default=900,
         validation_alias="NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS",
     )
+    broadcast_timezone: str = Field(
+        default="Europe/Moscow",
+        validation_alias="BROADCAST_TIMEZONE",
+    )
+    broadcast_scheduler_interval_seconds: int = Field(
+        default=15,
+        validation_alias="BROADCAST_SCHEDULER_INTERVAL_SECONDS",
+    )
+    broadcast_delivery_interval_seconds: int = Field(
+        default=5,
+        validation_alias="BROADCAST_DELIVERY_INTERVAL_SECONDS",
+    )
+    broadcast_jobs_batch_size: int = Field(
+        default=100,
+        validation_alias="BROADCAST_JOBS_BATCH_SIZE",
+    )
+    broadcast_job_lock_ttl_seconds: int = Field(
+        default=60,
+        validation_alias="BROADCAST_JOB_LOCK_TTL_SECONDS",
+    )
+    broadcast_telegram_max_attempts: int = Field(
+        default=3,
+        validation_alias="BROADCAST_TELEGRAM_MAX_ATTEMPTS",
+    )
+    broadcast_telegram_retry_base_seconds: int = Field(
+        default=30,
+        validation_alias="BROADCAST_TELEGRAM_RETRY_BASE_SECONDS",
+    )
+    broadcast_telegram_retry_max_seconds: int = Field(
+        default=900,
+        validation_alias="BROADCAST_TELEGRAM_RETRY_MAX_SECONDS",
+    )
 
     # Auth
     jwt_secret: str = "change-me"

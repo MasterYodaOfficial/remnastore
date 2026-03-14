@@ -113,6 +113,45 @@ type AdminAccountWithdrawal = {
   processed_at: string | null;
 };
 
+type AdminReferralChainReferrer = {
+  account_id: string;
+  email: string | null;
+  display_name: string | null;
+  telegram_id: number | null;
+  username: string | null;
+  referral_code: string | null;
+  status: "active" | "blocked" | null;
+  attributed_at: string;
+};
+
+type AdminReferralChainItem = {
+  attribution_id: number;
+  account_id: string;
+  email: string | null;
+  display_name: string | null;
+  telegram_id: number | null;
+  username: string | null;
+  referral_code: string | null;
+  status: "active" | "blocked" | null;
+  subscription_status: string | null;
+  subscription_expires_at: string | null;
+  attributed_at: string;
+  reward_status: "pending" | "rewarded";
+  reward_amount: number;
+  reward_rate: number | null;
+  purchase_amount: number | null;
+  reward_created_at: string | null;
+};
+
+type AdminReferralChain = {
+  effective_reward_rate: number;
+  referrer: AdminReferralChainReferrer | null;
+  direct_referrals: AdminReferralChainItem[];
+  direct_referrals_count: number;
+  rewarded_direct_referrals_count: number;
+  pending_direct_referrals_count: number;
+};
+
 type AdminAccountDetail = {
   id: string;
   email: string | null;
@@ -128,6 +167,7 @@ type AdminAccountDetail = {
   referral_earnings: number;
   referrals_count: number;
   referred_by_account_id: string | null;
+  referral_chain: AdminReferralChain;
   remnawave_user_uuid: string | null;
   subscription_url: string | null;
   subscription_status: string | null;
@@ -250,6 +290,7 @@ type AdminBroadcast = {
   completed_at: string | null;
   cancelled_at: string | null;
   last_error: string | null;
+  latest_run: AdminBroadcastRun | null;
   created_at: string;
   updated_at: string;
 };
@@ -257,6 +298,104 @@ type AdminBroadcast = {
 type AdminBroadcastListResponse = {
   items: AdminBroadcast[];
   total: number;
+  limit: number;
+  offset: number;
+};
+
+type AdminBroadcastEstimate = {
+  channels: ("in_app" | "telegram")[];
+  audience: AdminBroadcastAudience;
+  estimated_total_accounts: number;
+  estimated_in_app_recipients: number;
+  estimated_telegram_recipients: number;
+};
+
+type AdminBroadcastTestSendTargetResult = {
+  target: string;
+  source: "email" | "telegram_id";
+  resolution: "account" | "telegram_direct" | "unresolved";
+  status: "sent" | "partial" | "failed" | "skipped";
+  account_id: string | null;
+  telegram_id: number | null;
+  channels_attempted: ("in_app" | "telegram")[];
+  in_app_notification_id: number | null;
+  telegram_message_ids: string[];
+  detail: string | null;
+};
+
+type AdminBroadcastTestSendResponse = {
+  broadcast_id: number;
+  audit_log_id: number;
+  total_targets: number;
+  sent_targets: number;
+  partial_targets: number;
+  failed_targets: number;
+  skipped_targets: number;
+  resolved_account_targets: number;
+  direct_telegram_targets: number;
+  in_app_notifications_created: number;
+  telegram_targets_sent: number;
+  items: AdminBroadcastTestSendTargetResult[];
+};
+
+type AdminBroadcastRun = {
+  id: number;
+  broadcast_id: number;
+  run_type: "send_now" | "scheduled";
+  status: "running" | "paused" | "completed" | "failed" | "cancelled";
+  triggered_by_admin_id: string;
+  snapshot_total_accounts: number;
+  snapshot_in_app_targets: number;
+  snapshot_telegram_targets: number;
+  total_deliveries: number;
+  pending_deliveries: number;
+  delivered_deliveries: number;
+  failed_deliveries: number;
+  skipped_deliveries: number;
+  in_app_delivered: number;
+  telegram_delivered: number;
+  in_app_pending: number;
+  telegram_pending: number;
+  started_at: string;
+  completed_at: string | null;
+  cancelled_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AdminBroadcastRunListResponse = {
+  items: AdminBroadcastRun[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type AdminBroadcastRunDelivery = {
+  id: number;
+  account_id: string;
+  account_email: string | null;
+  account_display_name: string | null;
+  account_telegram_id: number | null;
+  account_username: string | null;
+  channel: "in_app" | "telegram";
+  status: "pending" | "delivered" | "failed" | "skipped";
+  provider_message_id: string | null;
+  notification_id: number | null;
+  attempts_count: number;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  delivered_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type AdminBroadcastRunDetailResponse = {
+  run: AdminBroadcastRun;
+  deliveries: AdminBroadcastRunDelivery[];
+  total_deliveries: number;
   limit: number;
   offset: number;
 };
@@ -271,6 +410,8 @@ type BroadcastAudienceSegment = AdminBroadcastAudience["segment"];
 type BroadcastContentType = AdminBroadcast["content_type"];
 type BroadcastStatus = AdminBroadcast["status"];
 type BroadcastChannel = AdminBroadcast["channels"][number];
+type BroadcastRunStatus = AdminBroadcastRun["status"];
+type BroadcastRunType = AdminBroadcastRun["run_type"];
 
 type AdminView = "dashboard" | "accounts" | "broadcasts" | "withdrawals";
 
@@ -324,6 +465,47 @@ function formatDate(value: string | null): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatDateMoscow(value: string | null): string {
+  if (!value) {
+    return "Не было";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Некорректная дата";
+  }
+
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Europe/Moscow",
+  }).format(date);
+}
+
+function toMoscowDateTimeInputValue(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${lookup.year}-${lookup.month}-${lookup.day}T${lookup.hour}:${lookup.minute}`;
 }
 
 function formatMoney(value: number, currency = "RUB"): string {
@@ -524,6 +706,85 @@ function humanizeBroadcastChannels(channels: BroadcastChannel[]): string {
   return channels.map((channel) => humanizeBroadcastChannel(channel)).join(" + ");
 }
 
+function formatAccountIdentity(account: {
+  account_id?: string;
+  id?: string;
+  display_name?: string | null;
+  username?: string | null;
+  email?: string | null;
+}): string {
+  return account.display_name || account.username || account.email || account.account_id || account.id || "Безымянный аккаунт";
+}
+
+function formatRewardRate(value: number): string {
+  return `${new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: 2,
+  }).format(value)}%`;
+}
+
+function humanizeReferralRewardStatus(status: AdminReferralChainItem["reward_status"]): string {
+  return status === "rewarded" ? "Награда начислена" : "Ждет оплату";
+}
+
+function humanizeBroadcastTestSendStatus(status: AdminBroadcastTestSendTargetResult["status"]): string {
+  switch (status) {
+    case "sent":
+      return "Отправлено";
+    case "partial":
+      return "Частично";
+    case "failed":
+      return "Ошибка";
+    case "skipped":
+      return "Пропущено";
+    default:
+      return status;
+  }
+}
+
+function humanizeBroadcastRunType(runType: BroadcastRunType): string {
+  return runType === "scheduled" ? "По расписанию" : "Сразу";
+}
+
+function humanizeBroadcastRunStatus(status: BroadcastRunStatus): string {
+  switch (status) {
+    case "running":
+      return "В работе";
+    case "paused":
+      return "Пауза";
+    case "completed":
+      return "Завершен";
+    case "failed":
+      return "Ошибка";
+    case "cancelled":
+      return "Отменен";
+    default:
+      return status;
+  }
+}
+
+function humanizeBroadcastDeliveryStatus(status: AdminBroadcastRunDelivery["status"]): string {
+  switch (status) {
+    case "pending":
+      return "Ожидает";
+    case "delivered":
+      return "Доставлено";
+    case "failed":
+      return "Ошибка";
+    case "skipped":
+      return "Пропущено";
+    default:
+      return status;
+  }
+}
+
+function buildMoscowScheduleIso(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return normalized;
+  }
+  return `${normalized}:00+03:00`;
+}
+
 function renderBroadcastPreviewHtml(html: string): string {
   return html.replace(/\n/g, "<br />");
 }
@@ -591,6 +852,28 @@ export default function App() {
   const [selectedBroadcast, setSelectedBroadcast] = useState<AdminBroadcast | null>(null);
   const [broadcastsLoading, setBroadcastsLoading] = useState(false);
   const [broadcastSubmitting, setBroadcastSubmitting] = useState(false);
+  const [broadcastEstimate, setBroadcastEstimate] = useState<AdminBroadcastEstimate | null>(null);
+  const [broadcastEstimateLoading, setBroadcastEstimateLoading] = useState(false);
+  const [broadcastEstimateError, setBroadcastEstimateError] = useState<string | null>(null);
+  const [broadcastTestEmailsInput, setBroadcastTestEmailsInput] = useState("");
+  const [broadcastTestTelegramIdsInput, setBroadcastTestTelegramIdsInput] = useState("");
+  const [broadcastTestComment, setBroadcastTestComment] = useState("");
+  const [broadcastTestSubmitting, setBroadcastTestSubmitting] = useState(false);
+  const [broadcastTestResult, setBroadcastTestResult] = useState<AdminBroadcastTestSendResponse | null>(null);
+  const [broadcastRuntimeComment, setBroadcastRuntimeComment] = useState("");
+  const [broadcastScheduleAtInput, setBroadcastScheduleAtInput] = useState("");
+  const [broadcastRuntimeSubmitting, setBroadcastRuntimeSubmitting] = useState(false);
+  const [broadcastRunItems, setBroadcastRunItems] = useState<AdminBroadcastRun[]>([]);
+  const [broadcastRunTotal, setBroadcastRunTotal] = useState(0);
+  const [selectedBroadcastRunId, setSelectedBroadcastRunId] = useState<number | null>(null);
+  const [selectedBroadcastRun, setSelectedBroadcastRun] = useState<AdminBroadcastRun | null>(null);
+  const [broadcastRunsLoading, setBroadcastRunsLoading] = useState(false);
+  const [broadcastRunDetailLoading, setBroadcastRunDetailLoading] = useState(false);
+  const [broadcastRunDeliveries, setBroadcastRunDeliveries] = useState<AdminBroadcastRunDelivery[]>([]);
+  const [broadcastRunDeliveriesTotal, setBroadcastRunDeliveriesTotal] = useState(0);
+  const [broadcastRunStatusFilter, setBroadcastRunStatusFilter] = useState<BroadcastRunStatus | "all">("all");
+  const [broadcastRunTypeFilter, setBroadcastRunTypeFilter] = useState<BroadcastRunType | "all">("all");
+  const [broadcastRunChannelFilter, setBroadcastRunChannelFilter] = useState<BroadcastChannel | "all">("all");
   const [broadcastName, setBroadcastName] = useState("");
   const [broadcastTitle, setBroadcastTitle] = useState("");
   const [broadcastBodyHtml, setBroadcastBodyHtml] = useState("");
@@ -705,8 +988,34 @@ export default function App() {
     [withdrawalItems],
   );
   const hasMoreLedgerHistory = ledgerHistoryItems.length < ledgerHistoryTotal;
-  const broadcastEstimate = selectedBroadcastId ? selectedBroadcast : null;
   const broadcastEditorMode = selectedBroadcastId ? "edit" : "create";
+  const broadcastIsDraft = !selectedBroadcast || selectedBroadcast.status === "draft";
+  const canManageBroadcastRuntime = Boolean(profile?.is_superuser && selectedBroadcastId !== null);
+  const broadcastChannels = useMemo(() => {
+    const channels: BroadcastChannel[] = [];
+    if (broadcastSendInApp) {
+      channels.push("in_app");
+    }
+    if (broadcastSendTelegram) {
+      channels.push("telegram");
+    }
+    return channels;
+  }, [broadcastSendInApp, broadcastSendTelegram]);
+  const broadcastEstimateSnapshot = useMemo<AdminBroadcastEstimate | null>(() => {
+    if (broadcastEstimate) {
+      return broadcastEstimate;
+    }
+    if (!selectedBroadcast) {
+      return null;
+    }
+    return {
+      channels: selectedBroadcast.channels,
+      audience: selectedBroadcast.audience,
+      estimated_total_accounts: selectedBroadcast.estimated_total_accounts,
+      estimated_in_app_recipients: selectedBroadcast.estimated_in_app_recipients,
+      estimated_telegram_recipients: selectedBroadcast.estimated_telegram_recipients,
+    };
+  }, [broadcastEstimate, selectedBroadcast]);
 
   const loadDashboard = useCallback(
     async (activeToken: string) => {
@@ -878,11 +1187,91 @@ export default function App() {
           activeToken,
         );
         setSelectedBroadcast(broadcast);
+        setBroadcastEstimate({
+          channels: broadcast.channels,
+          audience: broadcast.audience,
+          estimated_total_accounts: broadcast.estimated_total_accounts,
+          estimated_in_app_recipients: broadcast.estimated_in_app_recipients,
+          estimated_telegram_recipients: broadcast.estimated_telegram_recipients,
+        });
+        setBroadcastEstimateError(null);
         return broadcast;
       } catch (fetchError) {
         setSelectedBroadcast(null);
+        setBroadcastEstimate(null);
         setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить черновик рассылки");
         return null;
+      }
+    },
+    [],
+  );
+
+  const loadBroadcastRuns = useCallback(
+    async (activeToken: string): Promise<AdminBroadcastRun[]> => {
+      setBroadcastRunsLoading(true);
+      try {
+        const params = new URLSearchParams({
+          limit: "20",
+          offset: "0",
+        });
+        if (broadcastRunStatusFilter !== "all") {
+          params.set("status", broadcastRunStatusFilter);
+        }
+        if (broadcastRunTypeFilter !== "all") {
+          params.set("run_type", broadcastRunTypeFilter);
+        }
+        if (broadcastRunChannelFilter !== "all") {
+          params.set("channel", broadcastRunChannelFilter);
+        }
+
+        const response = await adminFetch<AdminBroadcastRunListResponse>(
+          `/api/v1/admin/broadcasts/runs?${params.toString()}`,
+          activeToken,
+        );
+        setBroadcastRunItems(response.items);
+        setBroadcastRunTotal(response.total);
+        setSelectedBroadcastRunId((currentSelection) =>
+          response.items.some((item) => item.id === currentSelection)
+            ? currentSelection
+            : (response.items[0]?.id ?? null),
+        );
+        return response.items;
+      } catch (fetchError) {
+        setBroadcastRunItems([]);
+        setBroadcastRunTotal(0);
+        setSelectedBroadcastRunId(null);
+        setSelectedBroadcastRun(null);
+        setBroadcastRunDeliveries([]);
+        setBroadcastRunDeliveriesTotal(0);
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить журнал запусков");
+        return [];
+      } finally {
+        setBroadcastRunsLoading(false);
+      }
+    },
+    [broadcastRunChannelFilter, broadcastRunStatusFilter, broadcastRunTypeFilter],
+  );
+
+  const loadBroadcastRunDetail = useCallback(
+    async (runId: number, activeToken: string): Promise<AdminBroadcastRun | null> => {
+      setBroadcastRunDetailLoading(true);
+      try {
+        const response = await adminFetch<AdminBroadcastRunDetailResponse>(
+          `/api/v1/admin/broadcasts/runs/${runId}?limit=50&offset=0`,
+          activeToken,
+        );
+        setSelectedBroadcastRun(response.run);
+        setBroadcastRunDeliveries(response.deliveries);
+        setBroadcastRunDeliveriesTotal(response.total_deliveries);
+        return response.run;
+      } catch (fetchError) {
+        setSelectedBroadcastRun(null);
+        setBroadcastRunDeliveries([]);
+        setBroadcastRunDeliveriesTotal(0);
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить run-detail");
+        return null;
+      } finally {
+        setBroadcastRunDetailLoading(false);
       }
     },
     [],
@@ -922,6 +1311,28 @@ export default function App() {
       setBroadcastTotal(0);
       setSelectedBroadcastId(null);
       setSelectedBroadcast(null);
+      setBroadcastEstimate(null);
+      setBroadcastEstimateLoading(false);
+      setBroadcastEstimateError(null);
+      setBroadcastTestEmailsInput("");
+      setBroadcastTestTelegramIdsInput("");
+      setBroadcastTestComment("");
+      setBroadcastTestSubmitting(false);
+      setBroadcastTestResult(null);
+      setBroadcastRuntimeComment("");
+      setBroadcastScheduleAtInput("");
+      setBroadcastRuntimeSubmitting(false);
+      setBroadcastRunItems([]);
+      setBroadcastRunTotal(0);
+      setSelectedBroadcastRunId(null);
+      setSelectedBroadcastRun(null);
+      setBroadcastRunsLoading(false);
+      setBroadcastRunDetailLoading(false);
+      setBroadcastRunDeliveries([]);
+      setBroadcastRunDeliveriesTotal(0);
+      setBroadcastRunStatusFilter("all");
+      setBroadcastRunTypeFilter("all");
+      setBroadcastRunChannelFilter("all");
       setBroadcastName("");
       setBroadcastTitle("");
       setBroadcastBodyHtml("");
@@ -993,7 +1404,8 @@ export default function App() {
     }
 
     void loadBroadcasts(token);
-  }, [activeView, loadBroadcasts, token]);
+    void loadBroadcastRuns(token);
+  }, [activeView, loadBroadcastRuns, loadBroadcasts, token]);
 
   useEffect(() => {
     if (!token || activeView !== "broadcasts") {
@@ -1006,6 +1418,20 @@ export default function App() {
 
     void loadBroadcastDetail(selectedBroadcastId, token);
   }, [activeView, loadBroadcastDetail, selectedBroadcastId, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "broadcasts") {
+      return;
+    }
+    if (selectedBroadcastRunId === null) {
+      setSelectedBroadcastRun(null);
+      setBroadcastRunDeliveries([]);
+      setBroadcastRunDeliveriesTotal(0);
+      return;
+    }
+
+    void loadBroadcastRunDetail(selectedBroadcastRunId, token);
+  }, [activeView, loadBroadcastRunDetail, selectedBroadcastRunId, token]);
 
   useEffect(() => {
     if (!token || activeView !== "accounts" || !selectedAccountId) {
@@ -1048,6 +1474,11 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedBroadcast) {
+      setBroadcastEstimate(null);
+      setBroadcastEstimateError(null);
+      setBroadcastTestResult(null);
+      setBroadcastRuntimeComment("");
+      setBroadcastScheduleAtInput("");
       setBroadcastName("");
       setBroadcastTitle("");
       setBroadcastBodyHtml("");
@@ -1071,7 +1502,119 @@ export default function App() {
     setBroadcastAudienceExcludeBlocked(selectedBroadcast.audience.exclude_blocked);
     setBroadcastSendInApp(selectedBroadcast.channels.includes("in_app"));
     setBroadcastSendTelegram(selectedBroadcast.channels.includes("telegram"));
+    setBroadcastEstimate({
+      channels: selectedBroadcast.channels,
+      audience: selectedBroadcast.audience,
+      estimated_total_accounts: selectedBroadcast.estimated_total_accounts,
+      estimated_in_app_recipients: selectedBroadcast.estimated_in_app_recipients,
+      estimated_telegram_recipients: selectedBroadcast.estimated_telegram_recipients,
+    });
+    setBroadcastEstimateError(null);
+    setBroadcastTestResult(null);
+    setBroadcastRuntimeComment("");
+    setBroadcastScheduleAtInput(toMoscowDateTimeInputValue(selectedBroadcast.scheduled_at));
   }, [selectedBroadcast]);
+
+  useEffect(() => {
+    if (!token || activeView !== "broadcasts") {
+      return;
+    }
+
+    if (broadcastChannels.length === 0) {
+      setBroadcastEstimate(null);
+      setBroadcastEstimateLoading(false);
+      setBroadcastEstimateError("Выбери хотя бы один канал доставки, чтобы посчитать аудиторию.");
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setBroadcastEstimateLoading(true);
+        try {
+          const estimate = await adminFetch<AdminBroadcastEstimate>(
+            "/api/v1/admin/broadcasts/estimate",
+            token,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                channels: broadcastChannels,
+                audience: {
+                  segment: broadcastAudienceSegment,
+                  exclude_blocked: broadcastAudienceExcludeBlocked,
+                },
+              }),
+            },
+          );
+          if (cancelled) {
+            return;
+          }
+          setBroadcastEstimate(estimate);
+          setBroadcastEstimateError(null);
+        } catch (estimateError) {
+          if (cancelled) {
+            return;
+          }
+          setBroadcastEstimateError(
+            estimateError instanceof Error ? estimateError.message : "Не удалось пересчитать аудиторию",
+          );
+        } finally {
+          if (!cancelled) {
+            setBroadcastEstimateLoading(false);
+          }
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    activeView,
+    broadcastAudienceExcludeBlocked,
+    broadcastAudienceSegment,
+    broadcastChannels,
+    token,
+  ]);
+
+  useEffect(() => {
+    if (!token || activeView !== "broadcasts") {
+      return;
+    }
+
+    void loadBroadcastRuns(token);
+  }, [activeView, broadcastRunChannelFilter, broadcastRunStatusFilter, broadcastRunTypeFilter, loadBroadcastRuns, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "broadcasts") {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadBroadcasts(token);
+      void loadBroadcastRuns(token);
+      if (selectedBroadcastId !== null) {
+        void loadBroadcastDetail(selectedBroadcastId, token);
+      }
+      if (selectedBroadcastRunId !== null) {
+        void loadBroadcastRunDetail(selectedBroadcastRunId, token);
+      }
+    }, 10000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [
+    activeView,
+    loadBroadcastDetail,
+    loadBroadcastRunDetail,
+    loadBroadcastRuns,
+    loadBroadcasts,
+    selectedBroadcastId,
+    selectedBroadcastRunId,
+    token,
+  ]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1126,6 +1669,28 @@ export default function App() {
     setBroadcastTotal(0);
     setSelectedBroadcastId(null);
     setSelectedBroadcast(null);
+    setBroadcastEstimate(null);
+    setBroadcastEstimateLoading(false);
+    setBroadcastEstimateError(null);
+    setBroadcastTestEmailsInput("");
+    setBroadcastTestTelegramIdsInput("");
+    setBroadcastTestComment("");
+    setBroadcastTestSubmitting(false);
+    setBroadcastTestResult(null);
+    setBroadcastRuntimeComment("");
+    setBroadcastScheduleAtInput("");
+    setBroadcastRuntimeSubmitting(false);
+    setBroadcastRunItems([]);
+    setBroadcastRunTotal(0);
+    setSelectedBroadcastRunId(null);
+    setSelectedBroadcastRun(null);
+    setBroadcastRunsLoading(false);
+    setBroadcastRunDetailLoading(false);
+    setBroadcastRunDeliveries([]);
+    setBroadcastRunDeliveriesTotal(0);
+    setBroadcastRunStatusFilter("all");
+    setBroadcastRunTypeFilter("all");
+    setBroadcastRunChannelFilter("all");
     setBroadcastName("");
     setBroadcastTitle("");
     setBroadcastBodyHtml("");
@@ -1164,12 +1729,16 @@ export default function App() {
       }
       if (activeView === "broadcasts") {
         await loadBroadcasts(token);
+        await loadBroadcastRuns(token);
       }
       if (selectedAccountId) {
         await loadAccountDetail(selectedAccountId, token);
       }
       if (activeView === "broadcasts" && selectedBroadcastId !== null) {
         await loadBroadcastDetail(selectedBroadcastId, token);
+      }
+      if (activeView === "broadcasts" && selectedBroadcastRunId !== null) {
+        await loadBroadcastRunDetail(selectedBroadcastRunId, token);
       }
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "Не удалось обновить данные");
@@ -1264,9 +1833,20 @@ export default function App() {
     setBroadcastButtonDrafts((currentItems) => currentItems.filter((item) => item.id !== buttonId));
   }
 
+  function parseBroadcastTargetText(value: string): string[] {
+    return value
+      .split(/[\n,;]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
   async function handleSaveBroadcast(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token) {
+      return;
+    }
+    if (!broadcastIsDraft) {
+      setError("Редактирование доступно только для черновика. Для новой версии создай новый черновик.");
       return;
     }
 
@@ -1274,14 +1854,7 @@ export default function App() {
     const trimmedTitle = broadcastTitle.trim();
     const trimmedBody = broadcastBodyHtml.trim();
     const trimmedImageUrl = broadcastImageUrl.trim();
-    const channels: BroadcastChannel[] = [];
-
-    if (broadcastSendInApp) {
-      channels.push("in_app");
-    }
-    if (broadcastSendTelegram) {
-      channels.push("telegram");
-    }
+    const channels = broadcastChannels;
 
     if (!trimmedName || !trimmedTitle || !trimmedBody) {
       setError("Название, заголовок и текст рассылки обязательны");
@@ -1338,12 +1911,195 @@ export default function App() {
       );
       setSelectedBroadcast(broadcast);
       setSelectedBroadcastId(broadcast.id);
+      setBroadcastEstimate({
+        channels: broadcast.channels,
+        audience: broadcast.audience,
+        estimated_total_accounts: broadcast.estimated_total_accounts,
+        estimated_in_app_recipients: broadcast.estimated_in_app_recipients,
+        estimated_telegram_recipients: broadcast.estimated_telegram_recipients,
+      });
+      setBroadcastEstimateError(null);
       setNotice(isEditing ? "Черновик рассылки обновлен" : "Черновик рассылки создан");
       await loadBroadcasts(token);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Не удалось сохранить черновик рассылки");
     } finally {
       setBroadcastSubmitting(false);
+    }
+  }
+
+  async function handleBroadcastTestSend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || selectedBroadcastId === null) {
+      setError("Сначала сохрани черновик рассылки, затем запускай test send");
+      return;
+    }
+    if (!broadcastIsDraft) {
+      setError("Test send доступен только для черновика рассылки");
+      return;
+    }
+
+    const emails = parseBroadcastTargetText(broadcastTestEmailsInput).map((item) => item.toLowerCase());
+    const telegramIdTokens = parseBroadcastTargetText(broadcastTestTelegramIdsInput);
+    const telegramIds: number[] = [];
+    for (const token of telegramIdTokens) {
+      const normalized = token.replace(/^@/, "");
+      if (!/^-?\d+$/.test(normalized)) {
+        setError(`Некорректный telegram_id: ${token}`);
+        return;
+      }
+      telegramIds.push(Number.parseInt(normalized, 10));
+    }
+
+    const trimmedComment = broadcastTestComment.trim();
+    if (emails.length === 0 && telegramIds.length === 0) {
+      setError("Добавь хотя бы один email или telegram_id для test send");
+      return;
+    }
+    if (!trimmedComment) {
+      setError("Комментарий для test send обязателен");
+      return;
+    }
+
+    setBroadcastTestSubmitting(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const idempotencyKey =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `broadcast-test-${Date.now()}`;
+
+      const result = await adminFetch<AdminBroadcastTestSendResponse>(
+        `/api/v1/admin/broadcasts/${selectedBroadcastId}/test-send`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            emails,
+            telegram_ids: telegramIds,
+            comment: trimmedComment,
+            idempotency_key: idempotencyKey,
+          }),
+        },
+      );
+      setBroadcastTestResult(result);
+      setNotice(
+        `Test send завершен: отправлено ${result.sent_targets}, частично ${result.partial_targets}, ошибок ${result.failed_targets}, пропущено ${result.skipped_targets}.`,
+      );
+    } catch (testSendError) {
+      setError(testSendError instanceof Error ? testSendError.message : "Не удалось выполнить test send");
+    } finally {
+      setBroadcastTestSubmitting(false);
+    }
+  }
+
+  async function refreshBroadcastRuntimeState(activeToken: string, broadcastId?: number | null) {
+    await loadBroadcasts(activeToken);
+    await loadBroadcastRuns(activeToken);
+    if (broadcastId !== null && broadcastId !== undefined) {
+      await loadBroadcastDetail(broadcastId, activeToken);
+    }
+    if (selectedBroadcastRunId !== null) {
+      await loadBroadcastRunDetail(selectedBroadcastRunId, activeToken);
+    }
+  }
+
+  async function handleDeleteBroadcastDraft() {
+    if (!token || selectedBroadcastId === null) {
+      return;
+    }
+
+    if (!window.confirm("Удалить этот черновик рассылки?")) {
+      return;
+    }
+
+    setBroadcastRuntimeSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/admin/broadcasts/${selectedBroadcastId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+
+      setSelectedBroadcastId(null);
+      setSelectedBroadcast(null);
+      setSelectedBroadcastRunId(null);
+      setSelectedBroadcastRun(null);
+      setBroadcastRunDeliveries([]);
+      setBroadcastRunDeliveriesTotal(0);
+      await loadBroadcasts(token);
+      await loadBroadcastRuns(token);
+      setNotice("Черновик рассылки удален");
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Не удалось удалить черновик");
+    } finally {
+      setBroadcastRuntimeSubmitting(false);
+    }
+  }
+
+  async function submitBroadcastRuntimeAction(
+    action: "send-now" | "schedule" | "pause" | "resume" | "cancel",
+  ) {
+    if (!token || selectedBroadcastId === null) {
+      return;
+    }
+
+    const idempotencyKey =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `broadcast-runtime-${Date.now()}`;
+
+    const trimmedComment = broadcastRuntimeComment.trim();
+    const payload: Record<string, string | null> = {
+      comment: trimmedComment || null,
+      idempotency_key: idempotencyKey,
+    };
+    if (action === "schedule") {
+      if (!broadcastScheduleAtInput) {
+        setError("Для schedule укажи дату и время по Москве");
+        return;
+      }
+      payload.scheduled_at = buildMoscowScheduleIso(broadcastScheduleAtInput);
+    }
+
+    setBroadcastRuntimeSubmitting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await adminFetch<AdminBroadcast>(
+        `/api/v1/admin/broadcasts/${selectedBroadcastId}/${action}`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      );
+      setSelectedBroadcast(updated);
+      setSelectedBroadcastRunId(updated.latest_run?.id ?? selectedBroadcastRunId);
+      await refreshBroadcastRuntimeState(token, updated.id);
+      setNotice(
+        action === "send-now"
+          ? "Боевой запуск создан"
+          : action === "schedule"
+            ? "Рассылка поставлена в расписание"
+            : action === "pause"
+              ? "Рассылка поставлена на паузу"
+              : action === "resume"
+                ? "Рассылка возобновлена"
+                : "Рассылка отменена",
+      );
+    } catch (runtimeError) {
+      setError(runtimeError instanceof Error ? runtimeError.message : "Не удалось выполнить действие с рассылкой");
+    } finally {
+      setBroadcastRuntimeSubmitting(false);
     }
   }
 
@@ -2064,6 +2820,134 @@ export default function App() {
                 </section>
 
                 <section className="detail-section">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">Referral chain</span>
+                      <h3>Кто привел пользователя и кого привел он</h3>
+                    </div>
+                    <span className="form-hint">
+                      Эффективная ставка текущего аккаунта:{" "}
+                      {formatRewardRate(selectedAccount.referral_chain.effective_reward_rate)}
+                    </span>
+                  </div>
+
+                  <section className="detail-facts-grid detail-facts-grid--compact">
+                    <DetailFact
+                      label="Direct referrals"
+                      value={String(selectedAccount.referral_chain.direct_referrals_count)}
+                    />
+                    <DetailFact
+                      label="Rewarded"
+                      value={String(selectedAccount.referral_chain.rewarded_direct_referrals_count)}
+                    />
+                    <DetailFact
+                      label="Pending"
+                      value={String(selectedAccount.referral_chain.pending_direct_referrals_count)}
+                    />
+                    <DetailFact
+                      label="Referral earnings"
+                      value={formatMoney(selectedAccount.referral_earnings)}
+                    />
+                  </section>
+
+                  <section className="detail-sections-grid">
+                    <article className="detail-section">
+                      <span className="eyebrow">Апстрим</span>
+                      <div className="activity-list">
+                        {selectedAccount.referral_chain.referrer ? (
+                          <article className="activity-item">
+                            <div>
+                              <strong>{formatAccountIdentity(selectedAccount.referral_chain.referrer)}</strong>
+                              <span>
+                                {selectedAccount.referral_chain.referrer.email ||
+                                  selectedAccount.referral_chain.referrer.username ||
+                                  "Без email и username"}
+                              </span>
+                              <span>
+                                Подключил {formatDate(selectedAccount.referral_chain.referrer.attributed_at)} ·{" "}
+                                {selectedAccount.referral_chain.referrer.telegram_id
+                                  ? `Telegram ${selectedAccount.referral_chain.referrer.telegram_id}`
+                                  : "Telegram не привязан"}
+                              </span>
+                            </div>
+                            <div className="activity-item__meta">
+                              {selectedAccount.referral_chain.referrer.status ? (
+                                <span
+                                  className={`status-pill status-pill--${selectedAccount.referral_chain.referrer.status}`}
+                                >
+                                  {humanizeAccountStatus(selectedAccount.referral_chain.referrer.status)}
+                                </span>
+                              ) : null}
+                              <span>
+                                Код: {selectedAccount.referral_chain.referrer.referral_code || "не задан"}
+                              </span>
+                            </div>
+                          </article>
+                        ) : (
+                          <div className="activity-empty">Пользователь пришел без реферера.</div>
+                        )}
+                      </div>
+                    </article>
+
+                    <article className="detail-section">
+                      <span className="eyebrow">Даунстрим</span>
+                      <div className="activity-list">
+                        {selectedAccount.referral_chain.direct_referrals.length === 0 ? (
+                          <div className="activity-empty">Прямых рефералов пока нет.</div>
+                        ) : (
+                          selectedAccount.referral_chain.direct_referrals.map((referral) => (
+                            <article key={referral.attribution_id} className="activity-item">
+                              <div>
+                                <strong>{formatAccountIdentity(referral)}</strong>
+                                <span>
+                                  {referral.email || referral.username || "Без email и username"}
+                                </span>
+                                <span>
+                                  Подключился {formatDate(referral.attributed_at)} ·{" "}
+                                  {referral.telegram_id
+                                    ? `Telegram ${referral.telegram_id}`
+                                    : "Telegram не привязан"}
+                                </span>
+                                <span>
+                                  {referral.subscription_status
+                                    ? `Подписка ${referral.subscription_status} до ${formatDate(referral.subscription_expires_at)}`
+                                    : "Подписки пока нет"}
+                                </span>
+                              </div>
+                              <div className="activity-item__meta">
+                                <span
+                                  className={`status-pill status-pill--${
+                                    referral.reward_status === "rewarded" ? "paid" : "new"
+                                  }`}
+                                >
+                                  {humanizeReferralRewardStatus(referral.reward_status)}
+                                </span>
+                                <strong>
+                                  {referral.reward_amount > 0
+                                    ? `+${formatMoney(referral.reward_amount)}`
+                                    : "Награды нет"}
+                                </strong>
+                                <span>
+                                  {referral.reward_created_at
+                                    ? `Начислено ${formatDate(referral.reward_created_at)}`
+                                    : "Ждет первую успешную оплату"}
+                                </span>
+                                {referral.purchase_amount !== null && referral.reward_rate !== null ? (
+                                  <span>
+                                    Покупка {formatMoney(referral.purchase_amount)} · ставка{" "}
+                                    {formatRewardRate(referral.reward_rate)}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </article>
+                  </section>
+                </section>
+
+                <section className="detail-section">
                   <span className="eyebrow">Auth identities</span>
                   <div className="activity-list">
                     {selectedAccount.auth_accounts.length === 0 ? (
@@ -2261,20 +3145,24 @@ export default function App() {
         <section className="search-shell">
           <aside className="search-column">
             <section className="search-panel">
-              <span className="eyebrow">Broadcasts v1</span>
-              <h2>Черновики рассылок</h2>
+              <span className="eyebrow">Broadcast Runtime</span>
+              <h2>Кампании рассылок</h2>
               <p className="queue-panel__copy">
-                Канонический формат текста здесь Telegram HTML subset. В v1 доступны только
-                черновики, preview и оценка аудитории перед запуском.
+                Здесь живут и черновики, и боевые кампании. Контент остается Telegram-first,
+                а runtime отдельно показывает schedule, delivery и историю запусков.
               </p>
               <div className="queue-summary">
                 <article className="queue-summary__item">
-                  <span>Всего черновиков</span>
+                  <span>Всего кампаний</span>
                   <strong>{broadcastTotal}</strong>
                 </article>
                 <article className="queue-summary__item">
                   <span>Выделено</span>
                   <strong>{selectedBroadcastId ? `#${selectedBroadcastId}` : "новый"}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>Run journal</span>
+                  <strong>{broadcastRunTotal}</strong>
                 </article>
               </div>
               <button className="ghost-button detail-inline-button" type="button" onClick={handleNewBroadcastDraft}>
@@ -2311,6 +3199,12 @@ export default function App() {
                       {humanizeBroadcastAudienceSegment(item.audience.segment)} ·{" "}
                       {item.estimated_total_accounts} акк.
                     </span>
+                    {item.latest_run ? (
+                      <span>
+                        {humanizeBroadcastRunType(item.latest_run.run_type)} · доставлено{" "}
+                        {item.latest_run.delivered_deliveries}/{item.latest_run.total_deliveries}
+                      </span>
+                    ) : null}
                   </button>
                 ))
               )}
@@ -2324,6 +3218,11 @@ export default function App() {
                   <span className="eyebrow">Редактор рассылки</span>
                   <h3>{broadcastEditorMode === "edit" ? "Редактирование черновика" : "Новый черновик"}</h3>
                 </div>
+                {!broadcastIsDraft && selectedBroadcast ? (
+                  <span className="form-hint">
+                    Контент зафиксирован. Для новой версии создай новый черновик.
+                  </span>
+                ) : null}
                 {selectedBroadcast ? (
                   <span className={`status-pill status-pill--${selectedBroadcast.status}`}>
                     {humanizeBroadcastStatus(selectedBroadcast.status)}
@@ -2338,6 +3237,7 @@ export default function App() {
                     onChange={(event) => setBroadcastName(event.target.value)}
                     placeholder="Например: Spring promo 2026"
                     required
+                    disabled={!broadcastIsDraft || broadcastSubmitting}
                   />
                 </label>
                 <label className="form-field form-field--wide">
@@ -2347,6 +3247,7 @@ export default function App() {
                     onChange={(event) => setBroadcastTitle(event.target.value)}
                     placeholder="Что увидит пользователь в Telegram и in-app"
                     required
+                    disabled={!broadcastIsDraft || broadcastSubmitting}
                   />
                 </label>
                 <label className="form-field">
@@ -2354,6 +3255,7 @@ export default function App() {
                   <select
                     value={broadcastContentType}
                     onChange={(event) => setBroadcastContentType(event.target.value as BroadcastContentType)}
+                    disabled={!broadcastIsDraft || broadcastSubmitting}
                   >
                     <option value="text">Только текст</option>
                     <option value="photo">Текст + фото</option>
@@ -2365,6 +3267,7 @@ export default function App() {
                       type="checkbox"
                       checked={broadcastSendInApp}
                       onChange={(event) => setBroadcastSendInApp(event.target.checked)}
+                      disabled={!broadcastIsDraft || broadcastSubmitting}
                     />
                     <span>In-app</span>
                   </label>
@@ -2373,6 +3276,7 @@ export default function App() {
                       type="checkbox"
                       checked={broadcastSendTelegram}
                       onChange={(event) => setBroadcastSendTelegram(event.target.checked)}
+                      disabled={!broadcastIsDraft || broadcastSubmitting}
                     />
                     <span>Telegram</span>
                   </label>
@@ -2382,6 +3286,7 @@ export default function App() {
                   <select
                     value={broadcastAudienceSegment}
                     onChange={(event) => setBroadcastAudienceSegment(event.target.value as BroadcastAudienceSegment)}
+                    disabled={!broadcastIsDraft || broadcastSubmitting}
                   >
                     {BROADCAST_AUDIENCE_SEGMENTS.map((segment) => (
                       <option key={segment} value={segment}>
@@ -2395,6 +3300,7 @@ export default function App() {
                     type="checkbox"
                     checked={broadcastAudienceExcludeBlocked}
                     onChange={(event) => setBroadcastAudienceExcludeBlocked(event.target.checked)}
+                    disabled={!broadcastIsDraft || broadcastSubmitting}
                   />
                   <span>Исключать полностью заблокированных</span>
                 </label>
@@ -2406,6 +3312,7 @@ export default function App() {
                       onChange={(event) => setBroadcastImageUrl(event.target.value)}
                       placeholder="https://..."
                       required
+                      disabled={!broadcastIsDraft || broadcastSubmitting}
                     />
                   </label>
                 ) : null}
@@ -2417,6 +3324,7 @@ export default function App() {
                     placeholder={"<b>Жирный текст</b>, <a href=\"https://...\">ссылка</a>, emoji и обычные переносы строк"}
                     rows={8}
                     required
+                    disabled={!broadcastIsDraft || broadcastSubmitting}
                   />
                 </label>
 
@@ -2430,7 +3338,7 @@ export default function App() {
                       className="ghost-button"
                       type="button"
                       onClick={handleAddBroadcastButton}
-                      disabled={broadcastButtonDrafts.length >= 3}
+                      disabled={!broadcastIsDraft || broadcastSubmitting || broadcastButtonDrafts.length >= 3}
                     >
                       Добавить кнопку
                     </button>
@@ -2451,6 +3359,7 @@ export default function App() {
                                 handleBroadcastButtonChange(button.id, "text", event.target.value)
                               }
                               placeholder="Например: Открыть"
+                              disabled={!broadcastIsDraft || broadcastSubmitting}
                             />
                           </label>
                           <label className="form-field form-field--wide">
@@ -2461,12 +3370,14 @@ export default function App() {
                                 handleBroadcastButtonChange(button.id, "url", event.target.value)
                               }
                               placeholder="https://..."
+                              disabled={!broadcastIsDraft || broadcastSubmitting}
                             />
                           </label>
                           <button
                             className="ghost-button"
                             type="button"
                             onClick={() => handleRemoveBroadcastButton(button.id)}
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
                           >
                             Удалить
                           </button>
@@ -2478,9 +3389,9 @@ export default function App() {
 
                 <div className="adjustment-form__footer">
                   <span className="form-hint">
-                    Сейчас сохраняется только draft. Estimate аудитории пересчитывается на сервере при каждом сохранении.
+                    Черновик сохраняется отдельно, а оценка аудитории пересчитывается на сервере в live-режиме без сохранения.
                   </span>
-                  <button className="action-button" type="submit" disabled={broadcastSubmitting}>
+                  <button className="action-button" type="submit" disabled={!broadcastIsDraft || broadcastSubmitting}>
                     {broadcastSubmitting
                       ? "Сохраняем..."
                       : broadcastEditorMode === "edit"
@@ -2491,24 +3402,158 @@ export default function App() {
               </form>
             </section>
 
+            <section className="detail-section detail-section--action">
+              <div className="detail-section__header detail-section__header--stacked">
+                <div>
+                  <span className="eyebrow">Runtime</span>
+                  <h3>Запуск и управление кампанией</h3>
+                </div>
+                <span className="form-hint">
+                  Боевые действия доступны только superuser. Время schedule задается по Москве.
+                </span>
+              </div>
+
+              <form
+                className="adjustment-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitBroadcastRuntimeAction("schedule");
+                }}
+              >
+                <label className="form-field form-field--wide">
+                  <span>Комментарий runtime</span>
+                  <textarea
+                    value={broadcastRuntimeComment}
+                    onChange={(event) => setBroadcastRuntimeComment(event.target.value)}
+                    placeholder="Почему запускаем, ставим на паузу или отменяем кампанию"
+                    rows={3}
+                    disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Schedule по Москве</span>
+                  <input
+                    type="datetime-local"
+                    value={broadcastScheduleAtInput}
+                    onChange={(event) => setBroadcastScheduleAtInput(event.target.value)}
+                    disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                  />
+                </label>
+                <div className="adjustment-form__footer">
+                  <span className="form-hint">
+                    {selectedBroadcast?.latest_run
+                      ? `${humanizeBroadcastRunType(selectedBroadcast.latest_run.run_type)} · ${humanizeBroadcastRunStatus(
+                          selectedBroadcast.latest_run.status,
+                        )}`
+                      : "У кампании еще нет боевого run."}
+                  </span>
+                  <div className="action-cluster">
+                    {selectedBroadcast?.status === "draft" ? (
+                      <>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void submitBroadcastRuntimeAction("send-now")}
+                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                        >
+                          Send now
+                        </button>
+                        <button
+                          className="action-button"
+                          type="submit"
+                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                        >
+                          Schedule
+                        </button>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void handleDeleteBroadcastDraft()}
+                          disabled={broadcastRuntimeSubmitting || selectedBroadcastId === null}
+                        >
+                          Удалить draft
+                        </button>
+                      </>
+                    ) : null}
+                    {selectedBroadcast?.status === "scheduled" || selectedBroadcast?.status === "running" ? (
+                      <>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void submitBroadcastRuntimeAction("pause")}
+                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                        >
+                          Pause
+                        </button>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void submitBroadcastRuntimeAction("cancel")}
+                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : null}
+                    {selectedBroadcast?.status === "paused" ? (
+                      <>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void submitBroadcastRuntimeAction("resume")}
+                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                        >
+                          Resume
+                        </button>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void submitBroadcastRuntimeAction("cancel")}
+                          disabled={!canManageBroadcastRuntime || broadcastRuntimeSubmitting}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </form>
+            </section>
+
             <section className="detail-facts-grid detail-facts-grid--compact">
               <DetailFact
                 label="Estimate total"
-                value={broadcastEstimate ? String(broadcastEstimate.estimated_total_accounts) : "—"}
+                value={
+                  broadcastEstimateSnapshot ? String(broadcastEstimateSnapshot.estimated_total_accounts) : "—"
+                }
               />
               <DetailFact
                 label="Estimate in-app"
-                value={broadcastEstimate ? String(broadcastEstimate.estimated_in_app_recipients) : "—"}
+                value={
+                  broadcastEstimateSnapshot
+                    ? String(broadcastEstimateSnapshot.estimated_in_app_recipients)
+                    : "—"
+                }
               />
               <DetailFact
                 label="Estimate Telegram"
-                value={broadcastEstimate ? String(broadcastEstimate.estimated_telegram_recipients) : "—"}
+                value={
+                  broadcastEstimateSnapshot
+                    ? String(broadcastEstimateSnapshot.estimated_telegram_recipients)
+                    : "—"
+                }
               />
               <DetailFact
-                label="Updated"
-                value={broadcastEstimate ? formatDate(broadcastEstimate.updated_at) : "Сохрани черновик"}
+                label="Источник"
+                value={broadcastEstimateLoading ? "Пересчет..." : broadcastEstimateError ? "Ошибка" : "Live"}
               />
             </section>
+            <div className="section-footer">
+              <span className="form-hint">
+                {broadcastEstimateError ||
+                  "Live estimate считает текущий сегмент и каналы редактора без создания или обновления черновика."}
+              </span>
+            </div>
 
             <section className="detail-sections-grid">
               <article className="detail-section">
@@ -2559,7 +3604,7 @@ export default function App() {
                 <div className="broadcast-preview broadcast-preview--app">
                   <div className="broadcast-preview__header">
                     <strong>{broadcastTitle || "Заголовок уведомления"}</strong>
-                    <span>{broadcastEstimate ? humanizeBroadcastStatus(broadcastEstimate.status) : "черновик"}</span>
+                    <span>{selectedBroadcast ? humanizeBroadcastStatus(selectedBroadcast.status) : "черновик"}</span>
                   </div>
                   {broadcastContentType === "photo" && broadcastImageUrl ? (
                     <div className="broadcast-preview__media broadcast-preview__media--app">
@@ -2594,12 +3639,324 @@ export default function App() {
                 </div>
                 <div className="section-footer">
                   <span className="form-hint">
-                    {broadcastEstimate
-                      ? `${humanizeBroadcastAudienceSegment(broadcastEstimate.audience.segment)} · ${humanizeBroadcastChannels(broadcastEstimate.channels)}`
-                      : "Сегмент и каналы будут зафиксированы в черновике после сохранения."}
+                    {`${humanizeBroadcastAudienceSegment(broadcastAudienceSegment)} · ${
+                      broadcastChannels.length > 0
+                        ? humanizeBroadcastChannels(broadcastChannels)
+                        : "каналы не выбраны"
+                    }`}
                   </span>
                 </div>
               </article>
+            </section>
+
+            <section className="detail-section detail-section--action">
+              <div className="detail-section__header detail-section__header--stacked">
+                <div>
+                  <span className="eyebrow">Test send</span>
+                  <h3>Реальная отправка на явный список получателей</h3>
+                </div>
+                <span className="form-hint">
+                  Работает только по сохраненному черновику. Если правки в редакторе не сохранены,
+                  в test send уйдет последняя сохраненная версия.
+                </span>
+              </div>
+
+              <form className="adjustment-form" onSubmit={handleBroadcastTestSend}>
+                <label className="form-field form-field--wide">
+                  <span>Email получателей</span>
+                  <textarea
+                    value={broadcastTestEmailsInput}
+                    onChange={(event) => setBroadcastTestEmailsInput(event.target.value)}
+                    placeholder={"user@example.com\npartner@example.com"}
+                    rows={4}
+                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                  />
+                </label>
+                <label className="form-field form-field--wide">
+                  <span>Telegram ID получателей</span>
+                  <textarea
+                    value={broadcastTestTelegramIdsInput}
+                    onChange={(event) => setBroadcastTestTelegramIdsInput(event.target.value)}
+                    placeholder={"777000111\n999888777"}
+                    rows={4}
+                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                  />
+                </label>
+                <label className="form-field form-field--wide">
+                  <span>Комментарий</span>
+                  <textarea
+                    value={broadcastTestComment}
+                    onChange={(event) => setBroadcastTestComment(event.target.value)}
+                    placeholder="Зачем делаем test send и кто должен проверить результат"
+                    rows={3}
+                    required
+                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                  />
+                </label>
+                <div className="adjustment-form__footer">
+                  <span className="form-hint">
+                    `email` используется как ключ поиска существующего локального аккаунта.
+                    `telegram_id` может быть как у локального аккаунта, так и внешним Telegram-only адресатом вне БД.
+                  </span>
+                  <button
+                    className="action-button"
+                    type="submit"
+                    disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
+                  >
+                    {broadcastTestSubmitting ? "Отправляем..." : "Запустить test send"}
+                  </button>
+                </div>
+              </form>
+
+              {broadcastTestResult ? (
+                <>
+                  <section className="detail-facts-grid detail-facts-grid--compact">
+                    <DetailFact label="Targets" value={String(broadcastTestResult.total_targets)} />
+                    <DetailFact label="Sent" value={String(broadcastTestResult.sent_targets)} />
+                    <DetailFact label="Partial" value={String(broadcastTestResult.partial_targets)} />
+                    <DetailFact label="Failed" value={String(broadcastTestResult.failed_targets)} />
+                  </section>
+                  <section className="detail-facts-grid detail-facts-grid--compact">
+                    <DetailFact
+                      label="Skipped"
+                      value={String(broadcastTestResult.skipped_targets)}
+                    />
+                    <DetailFact
+                      label="In-app"
+                      value={String(broadcastTestResult.in_app_notifications_created)}
+                    />
+                    <DetailFact
+                      label="Telegram"
+                      value={String(broadcastTestResult.telegram_targets_sent)}
+                    />
+                    <DetailFact
+                      label="Audit log"
+                      value={String(broadcastTestResult.audit_log_id)}
+                    />
+                  </section>
+
+                  <div className="activity-list">
+                    {broadcastTestResult.items.map((item) => (
+                      <article key={`${item.source}:${item.target}`} className="activity-item">
+                        <div>
+                          <strong>{item.target}</strong>
+                          <span>
+                            {item.source === "email" ? "email" : "telegram_id"} · {item.resolution}
+                          </span>
+                          <span>
+                            {item.channels_attempted.length > 0
+                              ? humanizeBroadcastChannels(item.channels_attempted)
+                              : "каналы не применялись"}
+                          </span>
+                          {item.detail ? <span>{item.detail}</span> : null}
+                        </div>
+                        <div className="activity-item__meta">
+                          <span
+                            className={`status-pill status-pill--${
+                              item.status === "sent"
+                                ? "paid"
+                                : item.status === "partial"
+                                  ? "in_progress"
+                                  : item.status === "failed"
+                                    ? "rejected"
+                                    : "new"
+                            }`}
+                          >
+                            {humanizeBroadcastTestSendStatus(item.status)}
+                          </span>
+                          {item.in_app_notification_id ? (
+                            <span>In-app #{item.in_app_notification_id}</span>
+                          ) : null}
+                          {item.telegram_message_ids.length > 0 ? (
+                            <span>Telegram: {item.telegram_message_ids.join(", ")}</span>
+                          ) : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </section>
+
+            <section className="detail-section detail-section--action">
+              <div className="detail-section__header detail-section__header--stacked">
+                <div>
+                  <span className="eyebrow">Run journal</span>
+                  <h3>История боевых запусков по всем кампаниям</h3>
+                </div>
+                <span className="form-hint">
+                  Журнал обновляется polling-ом. Test send остается отдельным контуром и не смешивается с боевыми run.
+                </span>
+              </div>
+
+              <div className="detail-facts-grid detail-facts-grid--compact">
+                <DetailFact label="Runs" value={String(broadcastRunTotal)} />
+                <DetailFact
+                  label="Running"
+                  value={String(broadcastRunItems.filter((item) => item.status === "running").length)}
+                />
+                <DetailFact
+                  label="Paused"
+                  value={String(broadcastRunItems.filter((item) => item.status === "paused").length)}
+                />
+                <DetailFact
+                  label="Selected"
+                  value={selectedBroadcastRun ? `#${selectedBroadcastRun.id}` : "—"}
+                />
+              </div>
+
+              <div className="detail-sections-grid">
+                <article className="detail-section">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">Фильтры</span>
+                      <h3>Журнал запусков</h3>
+                    </div>
+                  </div>
+                  <div className="broadcast-channel-grid">
+                    <label className="form-field">
+                      <span>Status</span>
+                      <select
+                        value={broadcastRunStatusFilter}
+                        onChange={(event) =>
+                          setBroadcastRunStatusFilter(event.target.value as BroadcastRunStatus | "all")
+                        }
+                      >
+                        <option value="all">Все</option>
+                        <option value="running">В работе</option>
+                        <option value="paused">Пауза</option>
+                        <option value="completed">Завершен</option>
+                        <option value="failed">Ошибка</option>
+                        <option value="cancelled">Отменен</option>
+                      </select>
+                    </label>
+                    <label className="form-field">
+                      <span>Тип</span>
+                      <select
+                        value={broadcastRunTypeFilter}
+                        onChange={(event) =>
+                          setBroadcastRunTypeFilter(event.target.value as BroadcastRunType | "all")
+                        }
+                      >
+                        <option value="all">Все</option>
+                        <option value="send_now">Send now</option>
+                        <option value="scheduled">Schedule</option>
+                      </select>
+                    </label>
+                    <label className="form-field">
+                      <span>Channel</span>
+                      <select
+                        value={broadcastRunChannelFilter}
+                        onChange={(event) =>
+                          setBroadcastRunChannelFilter(event.target.value as BroadcastChannel | "all")
+                        }
+                      >
+                        <option value="all">Все</option>
+                        <option value="in_app">In-app</option>
+                        <option value="telegram">Telegram</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="activity-list">
+                    {broadcastRunsLoading ? (
+                      <div className="activity-empty">Загружаем журнал запусков...</div>
+                    ) : broadcastRunItems.length === 0 ? (
+                      <div className="activity-empty">Под текущие фильтры run-ов пока нет.</div>
+                    ) : (
+                      broadcastRunItems.map((run) => (
+                        <article
+                          key={run.id}
+                          className="activity-item"
+                          onClick={() => setSelectedBroadcastRunId(run.id)}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <div>
+                            <strong>
+                              Run #{run.id} · broadcast #{run.broadcast_id}
+                            </strong>
+                            <span>
+                              {humanizeBroadcastRunType(run.run_type)} · {formatDateMoscow(run.started_at)}
+                            </span>
+                            <span>
+                              delivered {run.delivered_deliveries}/{run.total_deliveries} · pending {run.pending_deliveries}
+                            </span>
+                            {run.last_error ? <span>{run.last_error}</span> : null}
+                          </div>
+                          <div className="activity-item__meta">
+                            <span className={`status-pill status-pill--${run.status}`}>
+                              {humanizeBroadcastRunStatus(run.status)}
+                            </span>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </article>
+
+                <article className="detail-section">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">Run detail</span>
+                      <h3>Delivery drill-down</h3>
+                    </div>
+                  </div>
+                  {broadcastRunDetailLoading ? (
+                    <div className="activity-empty">Загружаем delivery detail...</div>
+                  ) : !selectedBroadcastRun ? (
+                    <div className="activity-empty">Выбери run слева, чтобы посмотреть детали доставки.</div>
+                  ) : (
+                    <>
+                      <section className="detail-facts-grid detail-facts-grid--compact">
+                        <DetailFact label="Total" value={String(selectedBroadcastRun.total_deliveries)} />
+                        <DetailFact label="Delivered" value={String(selectedBroadcastRun.delivered_deliveries)} />
+                        <DetailFact label="Pending" value={String(selectedBroadcastRun.pending_deliveries)} />
+                        <DetailFact label="Failed" value={String(selectedBroadcastRun.failed_deliveries)} />
+                      </section>
+                      <section className="detail-facts-grid detail-facts-grid--compact">
+                        <DetailFact label="Skipped" value={String(selectedBroadcastRun.skipped_deliveries)} />
+                        <DetailFact label="In-app" value={String(selectedBroadcastRun.in_app_delivered)} />
+                        <DetailFact label="Telegram" value={String(selectedBroadcastRun.telegram_delivered)} />
+                        <DetailFact label="Started" value={formatDateMoscow(selectedBroadcastRun.started_at)} />
+                      </section>
+
+                      <div className="activity-list">
+                        {broadcastRunDeliveries.length === 0 ? (
+                          <div className="activity-empty">У выбранного run пока нет delivery-строк.</div>
+                        ) : (
+                          broadcastRunDeliveries.map((delivery) => (
+                            <article key={delivery.id} className="activity-item">
+                              <div>
+                                <strong>
+                                  {delivery.account_display_name ||
+                                    delivery.account_username ||
+                                    delivery.account_email ||
+                                    delivery.account_id}
+                                </strong>
+                                <span>
+                                  {humanizeBroadcastChannel(delivery.channel)} · {humanizeBroadcastDeliveryStatus(delivery.status)}
+                                </span>
+                                <span>
+                                  attempts {delivery.attempts_count}
+                                  {delivery.provider_message_id ? ` · provider ${delivery.provider_message_id}` : ""}
+                                  {delivery.notification_id ? ` · notification #${delivery.notification_id}` : ""}
+                                </span>
+                                {delivery.error_message ? <span>{delivery.error_message}</span> : null}
+                              </div>
+                              <div className="activity-item__meta">
+                                <span className={`status-pill status-pill--${delivery.status}`}>
+                                  {humanizeBroadcastDeliveryStatus(delivery.status)}
+                                </span>
+                                <span>{formatDateMoscow(delivery.updated_at)}</span>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                </article>
+              </div>
             </section>
           </div>
         </section>

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
 import uuid
@@ -21,6 +21,8 @@ from app.db.models import (
     LedgerEntry,
     LedgerEntryType,
     Payment,
+    ReferralAttribution,
+    ReferralReward,
     SubscriptionGrant,
     Withdrawal,
     WithdrawalDestinationType,
@@ -300,6 +302,132 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["recent_ledger_entries"][0]["comment"], "Пополнение")
         self.assertEqual(body["recent_payments"][0]["status"], PaymentStatus.PENDING.value)
         self.assertEqual(body["recent_withdrawals"][0]["status"], WithdrawalStatus.NEW.value)
+        self.assertEqual(body["referral_chain"]["direct_referrals_count"], 0)
+        self.assertEqual(body["referral_chain"]["rewarded_direct_referrals_count"], 0)
+        self.assertEqual(body["referral_chain"]["pending_direct_referrals_count"], 0)
+        self.assertEqual(body["referral_chain"]["direct_referrals"], [])
+        self.assertIsNone(body["referral_chain"]["referrer"])
+
+    async def test_account_detail_returns_referral_chain(self) -> None:
+        token = await self._create_admin_token()
+        now = datetime(2026, 3, 14, 12, 0, tzinfo=UTC)
+
+        async with self._session_factory() as session:
+            referrer = Account(
+                email="partner@example.com",
+                display_name="Partner User",
+                username="partner_user",
+                telegram_id=401001,
+                referral_code="PARTNER",
+                status=AccountStatus.ACTIVE,
+            )
+            account = Account(
+                email="ref-owner@example.com",
+                display_name="Referral Owner",
+                username="ref_owner",
+                telegram_id=402002,
+                referral_code="OWNER",
+                referral_earnings=180,
+                referrals_count=2,
+                referral_reward_rate=30,
+                status=AccountStatus.ACTIVE,
+            )
+            rewarded_referral = Account(
+                email="rewarded@example.com",
+                display_name="Rewarded Referral",
+                username="rewarded_ref",
+                telegram_id=403003,
+                referral_code="REWARDED",
+                referred_by_account_id=account.id,
+                subscription_status="ACTIVE",
+                subscription_expires_at=now + timedelta(days=30),
+                status=AccountStatus.ACTIVE,
+            )
+            pending_referral = Account(
+                email="pending@example.com",
+                display_name="Pending Referral",
+                username="pending_ref",
+                telegram_id=404004,
+                referral_code="PENDING",
+                referred_by_account_id=account.id,
+                status=AccountStatus.BLOCKED,
+            )
+            session.add_all([referrer, account, rewarded_referral, pending_referral])
+            await session.flush()
+
+            account.referred_by_account_id = referrer.id
+            rewarded_referral.referred_by_account_id = account.id
+            pending_referral.referred_by_account_id = account.id
+
+            account_referrer_attribution = ReferralAttribution(
+                referrer_account_id=referrer.id,
+                referred_account_id=account.id,
+                referral_code="PARTNER",
+                created_at=now - timedelta(days=14),
+            )
+            rewarded_attribution = ReferralAttribution(
+                referrer_account_id=account.id,
+                referred_account_id=rewarded_referral.id,
+                referral_code="OWNER",
+                created_at=now - timedelta(days=5),
+            )
+            pending_attribution = ReferralAttribution(
+                referrer_account_id=account.id,
+                referred_account_id=pending_referral.id,
+                referral_code="OWNER",
+                created_at=now - timedelta(days=2),
+            )
+            session.add_all(
+                [
+                    account_referrer_attribution,
+                    rewarded_attribution,
+                    pending_attribution,
+                ]
+            )
+            await session.flush()
+
+            session.add(
+                ReferralReward(
+                    attribution_id=rewarded_attribution.id,
+                    referrer_account_id=account.id,
+                    referred_account_id=rewarded_referral.id,
+                    subscription_grant_id=901,
+                    ledger_entry_id=801,
+                    purchase_amount_rub=600,
+                    reward_amount=180,
+                    reward_rate=30,
+                    currency="RUB",
+                    created_at=now - timedelta(days=4),
+                )
+            )
+            await session.commit()
+            account_id = str(account.id)
+
+        response = await self.client.get(
+            f"/api/v1/admin/accounts/{account_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        chain = response.json()["referral_chain"]
+        self.assertEqual(chain["effective_reward_rate"], 30.0)
+        self.assertEqual(chain["direct_referrals_count"], 2)
+        self.assertEqual(chain["rewarded_direct_referrals_count"], 1)
+        self.assertEqual(chain["pending_direct_referrals_count"], 1)
+        self.assertEqual(chain["referrer"]["username"], "partner_user")
+        self.assertEqual(chain["referrer"]["referral_code"], "PARTNER")
+        self.assertEqual(chain["referrer"]["status"], AccountStatus.ACTIVE.value)
+        self.assertEqual(chain["direct_referrals"][0]["username"], "pending_ref")
+        self.assertEqual(chain["direct_referrals"][0]["reward_status"], "pending")
+        self.assertEqual(chain["direct_referrals"][0]["reward_amount"], 0)
+        self.assertEqual(chain["direct_referrals"][0]["status"], AccountStatus.BLOCKED.value)
+        self.assertEqual(chain["direct_referrals"][1]["username"], "rewarded_ref")
+        self.assertEqual(chain["direct_referrals"][1]["reward_status"], "rewarded")
+        self.assertEqual(chain["direct_referrals"][1]["reward_amount"], 180)
+        self.assertEqual(chain["direct_referrals"][1]["reward_rate"], 30.0)
+        self.assertEqual(chain["direct_referrals"][1]["purchase_amount"], 600)
+        self.assertEqual(chain["direct_referrals"][1]["subscription_status"], "ACTIVE")
+        self.assertIsNotNone(chain["direct_referrals"][1]["reward_created_at"])
 
     async def test_account_ledger_entries_history_supports_pagination_and_entry_type_filter(self) -> None:
         token = await self._create_admin_token()

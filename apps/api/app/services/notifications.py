@@ -198,15 +198,11 @@ class TelegramNotificationClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def send_message(self, *, telegram_id: int, text: str) -> str:
+    async def _request(self, method: str, *, json: dict) -> dict:
         try:
             response = await self._client.post(
-                f"/bot{self._bot_token}/sendMessage",
-                json={
-                    "chat_id": telegram_id,
-                    "text": text,
-                    "disable_web_page_preview": True,
-                },
+                f"/bot{self._bot_token}/{method}",
+                json=json,
             )
         except httpx.HTTPError as exc:
             raise TelegramNotificationDeliveryError(
@@ -241,6 +237,63 @@ class TelegramNotificationClient:
             )
 
         result = payload.get("result") or {}
+        if not isinstance(result, dict):
+            raise TelegramNotificationDeliveryError(
+                "Telegram API did not return a valid result payload",
+                code="invalid_result",
+                retryable=True,
+            )
+        return result
+
+    async def send_message(
+        self,
+        *,
+        telegram_id: int,
+        text: str,
+        parse_mode: str | None = None,
+        disable_web_page_preview: bool | None = True,
+        reply_markup: dict | None = None,
+    ) -> str:
+        payload: dict[str, object] = {
+            "chat_id": telegram_id,
+            "text": text,
+        }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if disable_web_page_preview is not None:
+            payload["disable_web_page_preview"] = disable_web_page_preview
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        result = await self._request("sendMessage", json=payload)
+        message_id = result.get("message_id")
+        if message_id is None:
+            raise TelegramNotificationDeliveryError(
+                "Telegram API did not return message_id",
+                code="missing_message_id",
+                retryable=True,
+            )
+        return str(message_id)
+
+    async def send_photo(
+        self,
+        *,
+        telegram_id: int,
+        photo_url: str,
+        caption: str | None = None,
+        parse_mode: str | None = None,
+        reply_markup: dict | None = None,
+    ) -> str:
+        payload: dict[str, object] = {
+            "chat_id": telegram_id,
+            "photo": photo_url,
+        }
+        if caption:
+            payload["caption"] = caption
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        result = await self._request("sendPhoto", json=payload)
         message_id = result.get("message_id")
         if message_id is None:
             raise TelegramNotificationDeliveryError(

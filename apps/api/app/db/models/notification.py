@@ -18,6 +18,7 @@ notification_enum_kwargs = dict(
 
 
 class NotificationType(str, enum.Enum):
+    BROADCAST = "broadcast"
     PAYMENT_SUCCEEDED = "payment_succeeded"
     PAYMENT_FAILED = "payment_failed"
     SUBSCRIPTION_EXPIRING = "subscription_expiring"
