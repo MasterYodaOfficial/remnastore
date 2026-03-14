@@ -283,6 +283,7 @@ interface BackendReferralSummary {
 interface BackendNotificationItem {
   id: number;
   type:
+    | 'broadcast'
     | 'payment_succeeded'
     | 'payment_failed'
     | 'subscription_expiring'
@@ -294,7 +295,7 @@ interface BackendNotificationItem {
   title: string;
   body: string;
   priority: 'info' | 'success' | 'warning' | 'error';
-  payload?: Record<string, unknown> | null;
+  payload?: NotificationItemView['payload'];
   action_label?: string | null;
   action_url?: string | null;
   read_at?: string | null;
@@ -587,6 +588,7 @@ function mapBackendNotificationToView(
     title: notification.title,
     body: notification.body,
     priority: notification.priority,
+    payload: notification.payload ?? null,
     actionLabel: notification.action_label ?? null,
     actionUrl: notification.action_url ?? null,
     isRead: notification.is_read,
@@ -2197,8 +2199,12 @@ export default function App() {
     }
   };
 
-  const handleNotificationAction = (notification: NotificationItemView) => {
-    if (notification.actionUrl) {
+  const handleNotificationAction = (
+    notification: NotificationItemView,
+    action?: { label: string; url: string }
+  ) => {
+    const targetUrl = action?.url ?? notification.actionUrl;
+    if (targetUrl) {
       const internalTabByUrl: Partial<Record<string, AppTab>> = {
         '/': 'home',
         '/plans': 'plans',
@@ -2211,18 +2217,15 @@ export default function App() {
         '/privacy': 'privacy',
         '/terms': 'terms',
       };
-      const internalTab = internalTabByUrl[notification.actionUrl];
+      const internalTab = internalTabByUrl[targetUrl];
       if (internalTab) {
         setActiveTab(internalTab);
-      } else if (
-        notification.actionUrl.startsWith('https://t.me/') ||
-        notification.actionUrl.startsWith('tg://')
-      ) {
-        if (!openTelegramLink(notification.actionUrl)) {
-          window.open(notification.actionUrl, '_blank', 'noopener,noreferrer');
+      } else if (targetUrl.startsWith('https://t.me/') || targetUrl.startsWith('tg://')) {
+        if (!openTelegramLink(targetUrl)) {
+          window.open(targetUrl, '_blank', 'noopener,noreferrer');
         }
       } else {
-        window.open(notification.actionUrl, '_blank', 'noopener,noreferrer');
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
       }
     }
 

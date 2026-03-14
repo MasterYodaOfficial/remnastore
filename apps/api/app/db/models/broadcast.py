@@ -64,6 +64,19 @@ class BroadcastDeliveryStatus(str, enum.Enum):
     SKIPPED = "skipped"
 
 
+class BroadcastRunType(str, enum.Enum):
+    SEND_NOW = "send_now"
+    SCHEDULED = "scheduled"
+
+
+class BroadcastRunStatus(str, enum.Enum):
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class Broadcast(Base):
     __tablename__ = "broadcasts"
     __table_args__ = (
@@ -108,15 +121,54 @@ class Broadcast(Base):
     )
 
 
+class BroadcastRun(Base):
+    __tablename__ = "broadcast_runs"
+    __table_args__ = (
+        Index("ix_broadcast_runs_broadcast_created", "broadcast_id", "created_at"),
+        Index("ix_broadcast_runs_status_created", "status", "created_at"),
+        Index("ix_broadcast_runs_type_created", "run_type", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    broadcast_id: Mapped[int] = mapped_column(
+        ForeignKey("broadcasts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    run_type: Mapped[BroadcastRunType] = mapped_column(
+        Enum(BroadcastRunType, **broadcast_enum_kwargs, length=16),
+        nullable=False,
+    )
+    status: Mapped[BroadcastRunStatus] = mapped_column(
+        Enum(BroadcastRunStatus, **broadcast_enum_kwargs, length=16),
+        nullable=False,
+        default=BroadcastRunStatus.RUNNING,
+    )
+    triggered_by_admin_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    snapshot_total_accounts: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
+    snapshot_in_app_targets: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
+    snapshot_telegram_targets: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text())
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class BroadcastDelivery(Base):
     __tablename__ = "broadcast_deliveries"
     __table_args__ = (
         UniqueConstraint(
-            "broadcast_id",
+            "run_id",
             "account_id",
             "channel",
             name="uq_broadcast_deliveries_target_channel",
         ),
+        Index("ix_broadcast_deliveries_run_status", "run_id", "status"),
         Index("ix_broadcast_deliveries_broadcast_status", "broadcast_id", "status"),
         Index(
             "ix_broadcast_deliveries_channel_status_retry",
@@ -127,6 +179,10 @@ class BroadcastDelivery(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("broadcast_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     broadcast_id: Mapped[int] = mapped_column(
         ForeignKey("broadcasts.id", ondelete="CASCADE"),
         nullable=False,
@@ -142,6 +198,7 @@ class BroadcastDelivery(Base):
         default=BroadcastDeliveryStatus.PENDING,
     )
     provider_message_id: Mapped[str | None] = mapped_column(String(255))
+    notification_id: Mapped[int | None] = mapped_column(Integer())
     attempts_count: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

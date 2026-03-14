@@ -23,6 +23,13 @@ class AdminActionType(str, enum.Enum):
     ACCOUNT_STATUS_CHANGE = "account_status_change"
     WITHDRAWAL_STATUS_CHANGE = "withdrawal_status_change"
     BROADCAST_DRAFT_UPSERT = "broadcast_draft_upsert"
+    BROADCAST_DRAFT_DELETE = "broadcast_draft_delete"
+    BROADCAST_TEST_SEND = "broadcast_test_send"
+    BROADCAST_SEND_NOW = "broadcast_send_now"
+    BROADCAST_SCHEDULE = "broadcast_schedule"
+    BROADCAST_PAUSE = "broadcast_pause"
+    BROADCAST_RESUME = "broadcast_resume"
+    BROADCAST_CANCEL = "broadcast_cancel"
 
 
 class AdminActionLog(Base):

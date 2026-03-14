@@ -41,6 +41,19 @@ services:
       - ../../apps/api/app:/app/app
       - ../../ops/docker/python.watch-entrypoint.sh:/app/python.watch-entrypoint.sh:ro
 
+  broadcast-worker:
+    command:
+      [
+        "/bin/sh",
+        "/app/python.watch-entrypoint.sh",
+        "python -m app.tasks.broadcast_worker",
+        "/app/app",
+      ]
+    restart: unless-stopped
+    volumes:
+      - ../../apps/api/app:/app/app
+      - ../../ops/docker/python.watch-entrypoint.sh:/app/python.watch-entrypoint.sh:ro
+
   web:
     restart: unless-stopped
     volumes:
