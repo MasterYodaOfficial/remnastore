@@ -51,6 +51,7 @@ class RemnawaveProvisionGateway(Protocol):
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
     ) -> RemnawaveUser: ...
 
 

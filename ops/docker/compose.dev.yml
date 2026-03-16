@@ -13,6 +13,7 @@ services:
     restart: unless-stopped
     volumes:
       - ../../apps/bot/bot:/app/bot
+      - ../../packages/locales:/app/packages/locales
       - ../../ops/docker/python.watch-entrypoint.sh:/app/python.watch-entrypoint.sh:ro
 
   worker:
@@ -58,6 +59,7 @@ services:
     restart: unless-stopped
     volumes:
       - ../../apps/web:/app/apps/web
+      - ../../packages/locales:/app/packages/locales:ro
       - web-node-modules:/app/apps/web/node_modules
 
   admin:

@@ -1,12 +1,14 @@
 from aiogram import Router
+from aiogram.fsm.context import FSMContext
 from aiogram.filters import CommandStart
 from aiogram.types import Message
-from aiogram.exceptions import TelegramBadRequest
 import httpx
 
-from bot.keyboards.main import main_menu
 from bot.core.config import settings
 from bot.services.api import ApiClient
+from bot.services.i18n import translate
+from bot.services.menu_renderer import show_menu_for_message
+from bot.states.menu import MenuState
 
 router = Router()
 REFERRAL_START_PREFIX = "ref_"
@@ -20,11 +22,13 @@ def build_api_headers() -> dict[str, str]:
 
 
 @router.message(CommandStart())
-async def start_handler(message: Message) -> None:
+async def start_handler(message: Message, state: FSMContext) -> None:
     """Handle /start command with optional linking token parameter."""
+    api_client = ApiClient()
     if message.from_user is not None:
-        if await ApiClient().is_telegram_account_fully_blocked(telegram_id=message.from_user.id):
+        if await api_client.is_telegram_account_fully_blocked(telegram_id=message.from_user.id):
             return
+        await api_client.mark_telegram_account_reachable(telegram_id=message.from_user.id)
 
     args = message.text.split(maxsplit=1)
 
@@ -35,33 +39,34 @@ async def start_handler(message: Message) -> None:
         # Handle browser linking token (from OAuth to Telegram)
         if start_param.startswith("link_") and "_BROWSER" in start_param:
             await handle_browser_link(message, start_param)
+            await state.set_state(MenuState.idle)
+            await show_menu_for_message(message)
             return
 
         # Handle Telegram linking token (from Telegram to OAuth)
         if start_param.startswith("link_"):
             await handle_telegram_link(message, start_param)
+            await state.set_state(MenuState.idle)
+            await show_menu_for_message(message)
             return
 
         if start_param.startswith(REFERRAL_START_PREFIX):
             referral_code = start_param.removeprefix(REFERRAL_START_PREFIX).strip()
             await handle_referral_start(message, referral_code)
+            await state.set_state(MenuState.idle)
             return
 
     # Regular start without parameters
-    try:
-        await message.answer(
-            "Добро пожаловать! Откройте витрину через кнопку ниже.",
-            reply_markup=main_menu(),
-        )
-    except TelegramBadRequest:
-        await message.answer("Добро пожаловать! Кнопка недоступна, проверьте конфигурацию WebApp URL.")
+    await state.set_state(MenuState.idle)
+    await show_menu_for_message(message)
 
 
 async def handle_browser_link(message: Message, link_token: str) -> None:
     """Handle linking browser OAuth account to Telegram account."""
+    locale = message.from_user.language_code if message.from_user is not None else None
     try:
         telegram_id = message.from_user.id
-        
+
         # Call API to consume link token and bind accounts
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -70,37 +75,40 @@ async def handle_browser_link(message: Message, link_token: str) -> None:
                 headers=build_api_headers(),
                 timeout=10.0,
             )
-        
+
         if response.status_code == 200:
             await message.answer(
-                "✅ Ваш Telegram аккаунт успешно привязан к браузер-аккаунту!\n\n"
-                "Теперь вы можете использовать оба способа входа."
+                translate("bot.linking.success", locale=locale)
             )
         elif response.status_code == 400:
             error_data = response.json()
             await message.answer(
-                f"❌ Ошибка: {error_data.get('detail', 'Неизвестная ошибка')}\n\n"
-                "Проверьте ссылку или создайте новую."
+                translate(
+                    "bot.linking.error_with_detail",
+                    locale=locale,
+                    detail=error_data.get("detail", translate("common.errors.unknown", locale=locale)),
+                )
             )
         else:
             await message.answer(
-                "❌ Ошибка при привязке. Попробуйте снова позже."
+                translate("bot.linking.generic_error", locale=locale)
             )
     except Exception as e:
         await message.answer(
-            f"❌ Ошибка при привязке: {str(e)}"
+            translate("bot.linking.exception_error", locale=locale, error=str(e))
         )
 
 
 async def handle_telegram_link(message: Message, link_token: str) -> None:
     """Handle linking Telegram to browser OAuth account."""
+    locale = message.from_user.language_code if message.from_user is not None else None
     try:
         telegram_id = message.from_user.id
         first_name = message.from_user.first_name or ""
         last_name = message.from_user.last_name or ""
         username = message.from_user.username or ""
         is_premium = message.from_user.is_premium or False
-        
+
         # Call API to consume link token and bind accounts
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -116,35 +124,36 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
                 headers=build_api_headers(),
                 timeout=10.0,
             )
-        
+
         if response.status_code == 200:
             await message.answer(
-                "✅ Ваш Telegram аккаунт успешно привязан к браузер-аккаунту!\n\n"
-                "Теперь вы можете использовать оба способа входа."
+                translate("bot.linking.success", locale=locale)
             )
         elif response.status_code == 400:
             error_data = response.json()
             await message.answer(
-                f"❌ Ошибка: {error_data.get('detail', 'Неизвестная ошибка')}\n\n"
-                "Проверьте ссылку или создайте новую."
+                translate(
+                    "bot.linking.error_with_detail",
+                    locale=locale,
+                    detail=error_data.get("detail", translate("common.errors.unknown", locale=locale)),
+                )
             )
         else:
             await message.answer(
-                "❌ Ошибка при привязке. Попробуйте снова позже."
+                translate("bot.linking.generic_error", locale=locale)
             )
     except Exception as e:
         await message.answer(
-            f"❌ Ошибка при привязке: {str(e)}"
+            translate("bot.linking.exception_error", locale=locale, error=str(e))
         )
 
 
 async def handle_referral_start(message: Message, referral_code: str) -> None:
     """Handle referral deep link and preserve the code in the WebApp URL."""
+    locale = message.from_user.language_code if message.from_user is not None else None
     if not referral_code:
-        await message.answer(
-            "Ссылка приглашения повреждена. Откройте приложение через кнопку ниже.",
-            reply_markup=main_menu(),
-        )
+        await message.answer(translate("bot.referral.invalid_link", locale=locale))
+        await show_menu_for_message(message)
         return
 
     try:
@@ -160,17 +169,11 @@ async def handle_referral_start(message: Message, referral_code: str) -> None:
             )
 
         if response.status_code == 400:
-            await message.answer("Реферальная ссылка недействительна. Попросите отправить новую.")
+            await message.answer(translate("bot.referral.invalid_code", locale=locale))
+            await show_menu_for_message(message)
             return
     except Exception:
         pass
 
-    try:
-        await message.answer(
-            "Вы открыли приглашение. Нажмите кнопку ниже, чтобы открыть витрину и завершить вход с сохранением реферальной ссылки.",
-            reply_markup=main_menu(referral_code=referral_code),
-        )
-    except TelegramBadRequest:
-        await message.answer(
-            "Не удалось показать кнопку открытия приложения. Проверьте настройку WebApp URL."
-        )
+    await message.answer(translate("bot.referral.saved", locale=locale))
+    await show_menu_for_message(message, referral_code=referral_code)

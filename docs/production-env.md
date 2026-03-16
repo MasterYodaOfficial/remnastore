@@ -149,6 +149,26 @@
     - `user.expired`
   - backend уже принимает и другие scope/event combinations через общий dispatcher, но пока бизнес-логика подписочных уведомлений реализована только для этих `user.*` событий
 
+- `REMNAWAVE_USERNAME_PREFIX`
+  - короткий ASCII-prefix для `username` пользователя в панели Remnawave
+  - пример: `remna`, тогда username будет выглядеть как `remna_tg123456789`
+  - если не задан, backend попробует использовать `BOT_USERNAME`, затем `APP_NAME`, затем fallback `acc`
+
+- `REMNAWAVE_USER_LABEL`
+  - человекочитаемое имя бренда для `description` пользователя в панели Remnawave
+  - пример: `RemnaStore`
+  - если не задан, backend использует `BOT_USERNAME`, затем fallback `Remnastore`
+
+- `REMNAWAVE_DEFAULT_INTERNAL_SQUAD_UUID`
+  - предпочтительный способ указать squad для новых и обновляемых пользователей
+  - если задан, backend привязывает пользователя именно к этому `Internal Squad`
+  - рекомендовано для production, особенно если squad может переименовываться
+
+- `REMNAWAVE_DEFAULT_INTERNAL_SQUAD_NAME`
+  - fallback-конфиг для случаев, когда удобнее искать squad по имени
+  - если `UUID` не задан и в панели только один squad, backend автоматически использует его даже при смене имени
+  - если squad'ов несколько, лучше использовать `REMNAWAVE_DEFAULT_INTERNAL_SQUAD_UUID`
+
 - `MIN_WITHDRAWAL_AMOUNT_RUB`
   - минимальная сумма пользовательской заявки на вывод реферальных средств
   - если не задана, backend использует дефолт из `apps/api/app/core/config.py`

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from uuid import UUID
 import uuid
@@ -47,6 +47,36 @@ async def get_account_by_telegram_id(
 ) -> Account | None:
     result = await session.execute(select(Account).where(Account.telegram_id == telegram_id))
     return result.scalar_one_or_none()
+
+
+async def mark_telegram_bot_blocked(
+    session: AsyncSession,
+    *,
+    account: Account,
+    blocked_at: datetime | None = None,
+) -> None:
+    if account.telegram_bot_blocked_at is not None:
+        return
+
+    account.telegram_bot_blocked_at = blocked_at or datetime.now(UTC)
+    await session.flush()
+    await get_cache().delete(get_cache().account_response_key(str(account.id)))
+
+
+async def mark_telegram_account_reachable(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+) -> Account | None:
+    account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
+    if account is None:
+        return None
+
+    account.telegram_bot_blocked_at = None
+    account.last_seen_at = datetime.now(UTC)
+    await session.flush()
+    await get_cache().delete(get_cache().account_response_key(str(account.id)))
+    return account
 
 
 async def _get_auth_account(
@@ -267,6 +297,7 @@ async def upsert_telegram_account(
         account.display_name = display_name or account.display_name
         account.last_login_source = last_login_source
         account.last_seen_at = now
+        account.telegram_bot_blocked_at = None
 
     _ensure_referral_code(account)
 

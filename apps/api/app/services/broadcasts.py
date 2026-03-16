@@ -35,6 +35,7 @@ from app.db.models import (
     Payment,
 )
 from app.domain.payments import PaymentStatus
+from app.services.accounts import mark_telegram_bot_blocked
 from app.services.notifications import (
     TelegramNotificationConfigurationError,
     TelegramNotificationDeliveryError,
@@ -513,7 +514,10 @@ async def estimate_broadcast_audience(
                 select(func.count())
                 .select_from(base_query)
                 .join(Account, Account.id == base_query.c.id)
-                .where(Account.telegram_id.is_not(None))
+                .where(
+                    Account.telegram_id.is_not(None),
+                    Account.telegram_bot_blocked_at.is_(None),
+                )
             )
             or 0
         )
@@ -848,7 +852,11 @@ async def _create_runtime_run(
         exclude_blocked=exclude_blocked,
     )
     channels = normalize_broadcast_channels(broadcast.channels)
-    telegram_targets = [account for account in accounts if account.telegram_id is not None]
+    telegram_targets = [
+        account
+        for account in accounts
+        if account.telegram_id is not None and account.telegram_bot_blocked_at is None
+    ]
 
     run = BroadcastRun(
         broadcast_id=broadcast.id,
@@ -885,6 +893,7 @@ async def _create_runtime_run(
         if (
             BroadcastChannel.TELEGRAM.value in channels
             and account.telegram_id is not None
+            and account.telegram_bot_blocked_at is None
         ):
             session.add(
                 BroadcastDelivery(
@@ -1433,6 +1442,14 @@ async def process_pending_broadcast_deliveries(
             result.skipped += 1
             continue
 
+        if account.telegram_bot_blocked_at is not None:
+            delivery.status = BroadcastDeliveryStatus.SKIPPED
+            delivery.error_code = "telegram_bot_blocked"
+            delivery.error_message = "account previously blocked the Telegram bot"
+            delivery.next_retry_at = None
+            result.skipped += 1
+            continue
+
         try:
             provider_message_ids = await _send_broadcast_to_telegram(
                 telegram_id=int(account.telegram_id),
@@ -1470,6 +1487,12 @@ async def process_pending_broadcast_deliveries(
                 result.terminal_failed += 1
             run.last_error = str(exc)
         except TelegramNotificationDeliveryError as exc:
+            if exc.mark_telegram_bot_blocked:
+                await mark_telegram_bot_blocked(
+                    session,
+                    account=account,
+                    blocked_at=now_utc,
+                )
             retry_scheduled = await _mark_broadcast_delivery_failed(
                 delivery=delivery,
                 code=exc.code,
@@ -1907,6 +1930,8 @@ async def _send_broadcast_test_to_account(
         attempted_channels.append(BroadcastChannel.TELEGRAM.value)
         if account.telegram_id is None:
             detail_parts.append("account does not have telegram_id")
+        elif account.telegram_bot_blocked_at is not None:
+            detail_parts.append("account previously blocked the Telegram bot")
         else:
             try:
                 telegram_message_ids = await _send_broadcast_to_telegram(
@@ -1919,6 +1944,8 @@ async def _send_broadcast_test_to_account(
                 TelegramNotificationConfigurationError,
                 TelegramNotificationDeliveryError,
             ) as exc:
+                if isinstance(exc, TelegramNotificationDeliveryError) and exc.mark_telegram_bot_blocked:
+                    await mark_telegram_bot_blocked(session, account=account)
                 detail_parts.append(str(exc))
 
     status = "skipped"

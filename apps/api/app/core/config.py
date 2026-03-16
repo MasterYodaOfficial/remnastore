@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     remnawave_api_url: str = ""
     remnawave_api_token: str = ""
     remnawave_webhook_secret: str = ""
+    remnawave_username_prefix: str = ""
+    remnawave_user_label: str = ""
+    remnawave_default_internal_squad_uuid: str = ""
+    remnawave_default_internal_squad_name: str = ""
     trial_duration_days: int = 3
     default_referral_reward_rate: float = 20.0
     min_withdrawal_amount_rub: int = 300

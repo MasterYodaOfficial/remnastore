@@ -545,7 +545,7 @@ function mapSubscriptionToView(
   return {
     isActive,
     daysLeft: daysLeft ?? undefined,
-    totalDays: calculateTotalDays(trialUsedAt, trialEndsAt),
+    totalDays: isTrial ? calculateTotalDays(trialUsedAt, trialEndsAt) : undefined,
     hasTrial: trialUi?.can_start_now ?? !hasUsedTrial,
     hasUsedTrial,
     isTrial,

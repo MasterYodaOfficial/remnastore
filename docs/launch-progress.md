@@ -502,15 +502,92 @@
 ## Фаза 8. Миграция из старого бота
 Статус: `Не начато`
 
+Уточнено 2026-03-15:
+- старая таблица `users.balance` — это не wallet top-up, а накопленные реферальные начисления
+- при миграции старый `users.balance` нужно переносить в два места:
+  - в `accounts.referral_earnings` как историческую сумму заработанных реферальных начислений
+  - в `accounts.balance` через отдельный import entry в `ledger`, чтобы эта сумма оставалась реально доступной к выводу в новой модели
+- старые тарифы не переносим как отдельный каталог; mapping в новые `plan_code` строим по `tariff_id` / `duration_days`, но `amount` в истории платежей сохраняем исторический из legacy БД
+- legacy `users.referral_code` не нужно переписывать под Telegram transport prefix:
+  - в новой БД код можно хранить как есть
+  - префикс `ref_` нужен только для Telegram deep-link `/start`
+  - при генерации deep-link используем правило `start=ref_<stored_referral_code>`
+- в новой локальной БД на аккаунт должна остаться только одна подписка
+- до боевой миграции нужно расширить Remnawave integration / import flow так, чтобы он умел выставлять целевой `hwid device limit` для канонической подписки
+- если в старой БД у пользователя несколько `ACTIVE` подписок:
+  - импортируем только один итоговый subscription snapshot на аккаунт
+  - `subscription_expires_at` берем как максимальный `end_date` среди активных подписок пользователя
+  - канонической считаем активную подписку с максимальным `end_date`; из нее берем `remnawave_uuid`, `subscription_url` и остальные поля для локального snapshot
+  - `hwid device limit` в Remnawave для итоговой подписки увеличиваем по правилу `3 * количество активных legacy подписок пользователя`
+  - остальные активные legacy-подписки после успешной сверки должны быть удалены из Remnawave и не должны сохраняться как отдельные локальные записи
+- legacy-подписки со статусами `DISABLED` и `EXPIRED` не мигрируем как живые подписки и не держим в новой БД
+- для истории покупок переносим все legacy `payments_gateways`, которые можно однозначно сопоставить:
+  - `succeeded` и `canceled` импортируем в `payments` как исторические direct plan purchase payments
+  - старые зависшие `pending` не должны оживать в новой системе и просто пропускаются при импорте
+  - для успешных legacy-платежей, где есть достаточные данные по тарифу, создаем исторические `subscription_grants`, но не переиспользуем их для повторного начисления referral rewards
+- старую реферальную структуру переносим из `users.inviter_id` в новые referral-модели; reward history по старым покупкам отдельно не пересчитываем
+- legacy `users.is_active=0` не переносим в новую БД вообще, потому что в старом боте это был технический флаг Telegram-рассылки для пользователей, заблокировавших бота
+  - исключение: если у такого пользователя есть активная подписка или ненулевой referral balance, его нужно импортировать, но сразу помечать как `telegram_bot_blocked`, чтобы не потерять доступ и деньги
+
 - [ ] Получить схему старой БД
-- [ ] Описать mapping старых таблиц в новые модели
-- [ ] Подготовить dry-run migration script
+- [x] Описать mapping старых таблиц в новые модели
+- [x] Подготовить dry-run migration script
 - [ ] Перенести пользователей
 - [ ] Перенести балансы
 - [ ] Перенести рефералов
 - [ ] Перенести подписки
 - [ ] Сверить данные с Remnawave
 - [ ] Подготовить verification report после миграции
+
+Целевой mapping Фазы 8:
+- `legacy users.telegram_id` -> `accounts.telegram_id`
+- `legacy users.username` -> `accounts.username`
+- `legacy users.created_at` -> `accounts.created_at`
+- `legacy users.language_code` -> `accounts.locale`
+- `legacy users.is_active=0` -> не импортируем такого пользователя в новую БД, кроме кейсов с активной подпиской или ненулевым referral balance; такие аккаунты переносим и сразу помечаем как `telegram_bot_blocked`
+- `legacy users.referral_code` -> `accounts.referral_code`
+- `legacy users.inviter_id` -> `accounts.referred_by_account_id` + `referral_attributions`
+- `legacy users.balance` -> `accounts.balance` + `accounts.referral_earnings`
+- `legacy payments_gateways` -> `payments`
+- `legacy succeeded payments_gateways` c распознанным тарифом -> `subscription_grants`
+- `legacy active subscriptions` -> один итоговый subscription snapshot на аккаунт
+
+Практические правила dry-run migration script:
+- скрипт должен сначала строить staging summary по каждому `telegram_id`: user row, inviter, balance, active subscription count, canonical subscription, imported payment count
+- для пользователей без активных подписок локальный subscription snapshot не создается
+- для пользователей с несколькими активными подписками dry-run обязан отдельно выводить:
+  - список legacy subscription ids
+  - каноническую подписку
+  - целевой `subscription_expires_at`
+  - целевой `hwid device limit`
+- verification report должен отдельно показывать:
+  - сколько пользователей перенесено всего
+  - сколько legacy users было пропущено из-за `is_active=0`
+  - сколько пользователей получили referral balance import
+  - сколько referral links перенесено
+  - сколько аккаунтов получили активный subscription snapshot
+  - сколько legacy multi-subscription аккаунтов было схлопнуто
+  - сколько исторических платежей импортировано по статусам
+  - сколько legacy pending платежей было пропущено
+
+Рабочий dry-run command:
+- `uv run python scripts/legacy_migration.py --legacy-db old_db/db_2.sqlite3 --output-json /tmp/legacy-migration-report.json`
+
+Боевые команды importer:
+- `uv run python scripts/legacy_migration.py --apply-db --legacy-db old_db/db_2.sqlite3 --database-url <NEW_DATABASE_URL>`
+- `uv run python scripts/legacy_migration.py --report-remnawave --legacy-db old_db/db_2.sqlite3`
+- `uv run python scripts/legacy_migration.py --sync-remnawave --legacy-db old_db/db_2.sqlite3 --database-url <NEW_DATABASE_URL>`
+
+Поведение `--report-remnawave`:
+- только читает текущий инвентарь пользователей из Remnawave
+- ничего не меняет ни в новой БД, ни в панели
+- показывает `manual review` список пользователей панели, которых нет среди импортируемых активных аккаунтов
+- отдельно показывает, сколько legacy cleanup UUID из старой БД до сих пор реально присутствуют в панели
+
+Поведение `--sync-remnawave`:
+- upsert только канонических активных подписок из новой БД
+- удалить только известные legacy-хвосты: `EXPIRED`, `DISABLED` и лишние multi-sub UUID из старой БД
+- пользователей панели, которых нет среди импортированных активных аккаунтов, не удалять автоматически; выводить их в `manual review` список для ручной проверки, потому что в панели есть сервисные аккаунты
 
 ## Фаза 9. Production deployment и запуск
 Статус: `Не начато`

@@ -11,5 +11,6 @@ RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:${PATH}"
 
 COPY apps/bot/bot ./bot
+COPY packages/locales ./packages/locales
 EXPOSE 8080
 CMD ["python", "-m", "bot.main"]

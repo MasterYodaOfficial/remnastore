@@ -22,6 +22,7 @@ from app.db.models import (
 )
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.core.config import settings
+from app.services.accounts import mark_telegram_bot_blocked
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,13 @@ class TelegramNotificationDeliveryError(NotificationServiceError):
         code: str,
         retryable: bool,
         retry_after_seconds: int | None = None,
+        mark_telegram_bot_blocked: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.retryable = retryable
         self.retry_after_seconds = retry_after_seconds
+        self.mark_telegram_bot_blocked = mark_telegram_bot_blocked
 
 
 FINAL_FAILED_PAYMENT_STATUSES = {
@@ -83,6 +86,11 @@ def _format_amount(amount: int, currency: str) -> str:
     if currency == "RUB":
         return f"{amount} ₽"
     return f"{amount} {currency}"
+
+
+def _is_telegram_bot_blocked_error(*, status_code: int, description: str) -> bool:
+    normalized = description.strip().lower()
+    return status_code == 403 and "bot was blocked by the user" in normalized
 
 
 def _format_subscription_days_left(days_left: int) -> str:
@@ -148,8 +156,17 @@ async def _resolve_notification_channels(
     if not deliver_to_telegram or not is_telegram_notification_delivery_enabled():
         return tuple(resolved_channels)
 
-    telegram_id = await session.scalar(select(Account.telegram_id).where(Account.id == account_id))
-    if telegram_id is not None and NotificationChannel.TELEGRAM not in resolved_channels:
+    account_row = (
+        await session.execute(
+            select(Account.telegram_id, Account.telegram_bot_blocked_at).where(Account.id == account_id)
+        )
+    ).one_or_none()
+    if (
+        account_row is not None
+        and account_row[0] is not None
+        and account_row[1] is None
+        and NotificationChannel.TELEGRAM not in resolved_channels
+    ):
         resolved_channels.append(NotificationChannel.TELEGRAM)
     return tuple(resolved_channels)
 
@@ -230,6 +247,16 @@ class TelegramNotificationClient:
 
         if response.status_code >= 400 or payload.get("ok") is False:
             description = str(payload.get("description") or "Telegram API rejected the message")
+            if _is_telegram_bot_blocked_error(
+                status_code=response.status_code,
+                description=description,
+            ):
+                raise TelegramNotificationDeliveryError(
+                    description,
+                    code="telegram_bot_blocked",
+                    retryable=False,
+                    mark_telegram_bot_blocked=True,
+                )
             raise TelegramNotificationDeliveryError(
                 description,
                 code=f"http_{response.status_code}",
@@ -664,7 +691,7 @@ async def process_pending_telegram_deliveries(
     telegram_client = client or get_telegram_notification_client()
 
     query = (
-        select(NotificationDelivery, Notification, Account.telegram_id)
+        select(NotificationDelivery, Notification, Account)
         .join(Notification, Notification.id == NotificationDelivery.notification_id)
         .join(Account, Account.id == Notification.account_id)
         .where(
@@ -688,14 +715,14 @@ async def process_pending_telegram_deliveries(
     rows = await session.execute(query)
 
     try:
-        for delivery, notification, telegram_id in rows.all():
+        for delivery, notification, account in rows.all():
             result.processed += 1
             delivery.attempts_count += 1
             delivery.last_attempt_at = now
             delivery.error_code = None
             delivery.error_message = None
 
-            if telegram_id is None:
+            if account.telegram_id is None:
                 delivery.status = NotificationDeliveryStatus.FAILED
                 delivery.next_retry_at = None
                 delivery.error_code = "missing_telegram_id"
@@ -703,15 +730,29 @@ async def process_pending_telegram_deliveries(
                 result.terminal_failed += 1
                 continue
 
+            if account.telegram_bot_blocked_at is not None:
+                delivery.status = NotificationDeliveryStatus.FAILED
+                delivery.next_retry_at = None
+                delivery.error_code = "telegram_bot_blocked"
+                delivery.error_message = "account previously blocked the Telegram bot"
+                result.terminal_failed += 1
+                continue
+
             try:
                 provider_message_id = await telegram_client.send_message(
-                    telegram_id=telegram_id,
+                    telegram_id=int(account.telegram_id),
                     text=_format_telegram_notification_text(notification),
                 )
             except TelegramNotificationDeliveryError as exc:
                 delivery.status = NotificationDeliveryStatus.FAILED
                 delivery.error_code = exc.code
                 delivery.error_message = str(exc)
+                if exc.mark_telegram_bot_blocked:
+                    await mark_telegram_bot_blocked(
+                        session,
+                        account=account,
+                        blocked_at=now,
+                    )
 
                 max_attempts = max(1, int(settings.notification_telegram_max_attempts))
                 if exc.retryable and delivery.attempts_count < max_attempts:

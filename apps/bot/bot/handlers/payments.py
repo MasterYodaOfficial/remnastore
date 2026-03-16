@@ -5,6 +5,8 @@ from aiogram import F, Bot, Router
 from aiogram.types import Message, PreCheckoutQuery
 
 from bot.core.config import settings
+from bot.services.i18n import translate
+from bot.services.menu_renderer import refresh_menu_for_telegram_user
 
 router = Router()
 
@@ -98,4 +100,12 @@ async def handle_successful_payment(message: Message) -> None:
             f"Telegram Stars payment finalization failed: {response.status_code} {response.text}"
         )
 
-    await message.answer("Оплата получена. Подписка обновлена.")
+    locale = message.from_user.language_code if message.from_user is not None else None
+    await message.answer(translate("bot.payments.subscription_updated", locale=locale))
+    if message.from_user is not None:
+        await refresh_menu_for_telegram_user(
+            message.bot,
+            telegram_id=message.from_user.id,
+            locale=locale,
+            screen="subscription",
+        )

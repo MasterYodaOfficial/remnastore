@@ -1,0 +1,29 @@
+{
+  "common": {
+    "actions": {
+      "open_webapp": "Открыть личный кабинет",
+      "home": "Главное меню",
+      "back": "Назад",
+      "subscription": "Подписка",
+      "plans": "Тарифы",
+      "referrals": "Рефералы",
+      "help": "Помощь",
+      "get_config": "Получить конфиг",
+      "activate_trial": "Активировать пробный период",
+      "renew_subscription": "Продлить подписку",
+      "buy_in_telegram": "Купить в Telegram",
+      "pay_by_card": "Оплатить картой",
+      "pay_now": "Перейти к оплате",
+      "open_plans_in_webapp": "Открыть тарифы в ЛК",
+      "open_subscription_in_webapp": "Открыть подписку в ЛК",
+      "share_link": "Поделиться ссылкой",
+      "open_referrals_in_webapp": "Открыть рефералы в ЛК",
+      "instructions_channel": "Канал с инструкциями",
+      "support": "Поддержка",
+      "faq_in_webapp": "FAQ в ЛК"
+    },
+    "errors": {
+      "unknown": "Неизвестная ошибка"
+    }
+  }
+}

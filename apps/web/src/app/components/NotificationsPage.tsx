@@ -494,9 +494,9 @@ export function NotificationsPage({
           }
         }}
       >
-        <DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-hidden rounded-[30px] border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] p-0 text-[var(--tg-theme-text-color,#000000)] shadow-[0_28px_90px_rgba(15,23,42,0.28)]">
+        <DialogContent className="max-h-[min(calc(100dvh-2rem),calc(100svh-2rem))] max-w-2xl overflow-hidden rounded-[30px] border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] p-0 text-[var(--tg-theme-text-color,#000000)] shadow-[0_28px_90px_rgba(15,23,42,0.28)]">
           {selectedBroadcastNotification && selectedBroadcastPayload ? (
-            <div className="max-h-[calc(100vh-2rem)] overflow-y-auto">
+            <div className="max-h-[min(calc(100dvh-2rem),calc(100svh-2rem))] overflow-y-auto">
               {selectedBroadcastPayload.imageUrl ? (
                 <div className="overflow-hidden border-b border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(180deg,rgba(51,144,236,0.16)_0%,rgba(51,144,236,0.04)_100%)]">
                   <img

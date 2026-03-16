@@ -64,6 +64,7 @@ class Account(Base):
     last_name: Mapped[Optional[str]] = mapped_column(String(64))
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     locale: Mapped[Optional[str]] = mapped_column(String(16))
+    telegram_bot_blocked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     remnawave_user_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True))
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))

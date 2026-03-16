@@ -9,6 +9,7 @@ RUN npm install --no-progress --registry=$NPM_REGISTRY
 
 # Copy source
 COPY apps/web ./
+COPY packages/locales /app/packages/locales
 
 # Development server (vite)
 EXPOSE 5173

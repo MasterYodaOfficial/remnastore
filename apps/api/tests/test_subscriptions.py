@@ -440,6 +440,33 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grants[0].reference_id, "wallet-plan-1m")
         self.assertIsNotNone(grants[0].applied_at)
 
+    async def test_wallet_plan_purchase_after_trial_clears_current_trial_flag(self) -> None:
+        account = await self._create_account(email="trial-to-paid@example.com", balance=1000)
+        self._current_account_id = account.id
+
+        trial_response = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(trial_response.status_code, 200)
+        self.assertTrue(trial_response.json()["is_trial"])
+
+        paid_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "trial-to-paid-plan-1m"},
+        )
+        self.assertEqual(paid_response.status_code, 200)
+        paid_body = paid_response.json()
+
+        self.assertFalse(paid_body["is_trial"])
+        self.assertTrue(paid_body["has_used_trial"])
+        self.assertIsNotNone(paid_body["trial_used_at"])
+        self.assertIsNotNone(paid_body["trial_ends_at"])
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertFalse(stored_account.subscription_is_trial)
+        self.assertIsNotNone(stored_account.trial_used_at)
+        self.assertIsNotNone(stored_account.trial_ends_at)
+
     async def test_wallet_plan_purchase_same_idempotency_key_is_safe_to_repeat(self) -> None:
         account = await self._create_account(email="wallet-repeat@example.com", balance=1000)
         self._current_account_id = account.id
@@ -712,6 +739,51 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             "https://panel.test/sub/webhook",
         )
         self.assertTrue(stored_account.subscription_is_trial)
+
+    async def test_remnawave_webhook_with_null_tag_clears_trial_flag(self) -> None:
+        account = await self._create_account(
+            email="webhook-clear-trial@example.com",
+            subscription_status="ACTIVE",
+            subscription_is_trial=True,
+            trial_used_at=datetime.now(UTC) - timedelta(days=2),
+            trial_ends_at=datetime.now(UTC) + timedelta(days=1),
+        )
+        expires_at = datetime.now(UTC) + timedelta(days=30)
+
+        payload = {
+            "scope": "user",
+            "event": "user.modified",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {
+                "uuid": str(account.id),
+                "status": "ACTIVE",
+                "expireAt": expires_at.isoformat(),
+                "subscriptionUrl": "https://panel.test/sub/paid",
+                "email": account.email,
+                "tag": None,
+            },
+        }
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertFalse(stored_account.subscription_is_trial)
 
     async def test_remnawave_webhook_creates_subscription_expiring_notification(self) -> None:
         account = await self._create_account(

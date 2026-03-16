@@ -179,6 +179,10 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             return await session.get(Notification, notification_id)
 
+    async def _get_account(self, account_id: uuid.UUID) -> Account | None:
+        async with self._session_factory() as session:
+            return await session.get(Account, account_id)
+
     async def test_create_notification_creates_in_app_delivery_and_dedupes(self) -> None:
         account = await self._create_account(email="notify@example.com")
 
@@ -229,6 +233,26 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deliveries[1].status, NotificationDeliveryStatus.PENDING)
         self.assertEqual(deliveries[1].attempts_count, 0)
         self.assertIsNone(deliveries[1].next_retry_at)
+
+    async def test_create_notification_skips_telegram_delivery_for_bot_blocked_account(self) -> None:
+        account = await self._create_account(
+            email="notify-blocked@example.com",
+            telegram_id=758107031,
+            telegram_bot_blocked_at=datetime.now(UTC),
+        )
+
+        notification = await self._create_notification(
+            account_id=account.id,
+            type=NotificationType.PAYMENT_SUCCEEDED,
+            title="Оплата прошла",
+            body="Платеж успешно завершен.",
+            priority=NotificationPriority.SUCCESS,
+        )
+
+        deliveries = await self._get_deliveries(notification.id)
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].channel, NotificationChannel.IN_APP)
+        self.assertEqual(deliveries[0].status, NotificationDeliveryStatus.DELIVERED)
 
     async def test_process_pending_telegram_deliveries_marks_delivery_delivered(self) -> None:
         account = await self._create_account(
@@ -312,6 +336,59 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telegram_delivery.error_code, "http_error")
         self.assertEqual(telegram_delivery.error_message, "temporary network issue")
         self.assertIsNotNone(telegram_delivery.next_retry_at)
+
+    async def test_process_pending_telegram_deliveries_marks_account_bot_blocked(self) -> None:
+        account = await self._create_account(
+            email="telegram-blocked@example.com",
+            telegram_id=758107031,
+        )
+        notification = await self._create_notification(
+            account_id=account.id,
+            type=NotificationType.PAYMENT_FAILED,
+            title="Оплата не завершена",
+            body="Попробуйте еще раз.",
+            priority=NotificationPriority.ERROR,
+        )
+
+        client = FakeTelegramNotificationClient()
+        client.fail_with(
+            TelegramNotificationDeliveryError(
+                "Forbidden: bot was blocked by the user",
+                code="telegram_bot_blocked",
+                retryable=False,
+                mark_telegram_bot_blocked=True,
+            )
+        )
+
+        async with self._session_factory() as session:
+            result = await process_pending_telegram_deliveries(
+                session,
+                limit=10,
+                client=client,
+            )
+            await session.commit()
+
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.delivered, 0)
+        self.assertEqual(result.scheduled_retry, 0)
+        self.assertEqual(result.terminal_failed, 1)
+
+        deliveries = await self._get_deliveries(notification.id)
+        telegram_delivery = next(
+            delivery for delivery in deliveries if delivery.channel == NotificationChannel.TELEGRAM
+        )
+        self.assertEqual(telegram_delivery.status, NotificationDeliveryStatus.FAILED)
+        self.assertEqual(telegram_delivery.error_code, "telegram_bot_blocked")
+        self.assertEqual(
+            telegram_delivery.error_message,
+            "Forbidden: bot was blocked by the user",
+        )
+        self.assertIsNone(telegram_delivery.next_retry_at)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertIsNotNone(stored_account.telegram_bot_blocked_at)
 
     async def test_list_notifications_returns_unread_count_and_filter(self) -> None:
         account = await self._create_account(email="list@example.com")

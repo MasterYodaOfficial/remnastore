@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import tempfile
 import unittest
@@ -13,15 +14,39 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AdminActionLog,
+    AdminActionType,
     AuthAccount,
     AuthLinkToken,
     AuthProvider,
+    Broadcast,
+    BroadcastChannel,
+    BroadcastContentType,
+    BroadcastDelivery,
+    BroadcastDeliveryStatus,
+    BroadcastRun,
+    BroadcastRunStatus,
+    BroadcastRunType,
+    BroadcastStatus,
     LinkType,
+    LoginSource,
+    Notification,
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationDeliveryStatus,
+    NotificationPriority,
+    NotificationType,
+    Payment,
+    PaymentEvent,
+    SubscriptionGrant,
+    TelegramReferralIntent,
     Withdrawal,
     WithdrawalDestinationType,
     WithdrawalStatus,
 )
 from app.db.session import get_session
+from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
+from app.integrations.remnawave.client import RemnawaveUser
 from app.main import create_app
 from app.services import account_linking
 from app.services.account_linking import create_telegram_link_token
@@ -62,6 +87,50 @@ class DummyCache:
             self._values.pop(key, None)
 
 
+@dataclass
+class FakeRemnawaveGateway:
+    users: dict[uuid.UUID, RemnawaveUser]
+
+    def __post_init__(self) -> None:
+        self.deleted_user_ids: list[uuid.UUID] = []
+
+    async def get_user_by_uuid(self, user_uuid: uuid.UUID) -> RemnawaveUser | None:
+        return self.users.get(user_uuid)
+
+    async def get_users_by_email(self, email: str) -> list[RemnawaveUser]:
+        return [user for user in self.users.values() if user.email == email]
+
+    async def get_users_by_telegram_id(self, telegram_id: int) -> list[RemnawaveUser]:
+        return [user for user in self.users.values() if user.telegram_id == telegram_id]
+
+    async def upsert_user(
+        self,
+        *,
+        user_uuid: uuid.UUID,
+        expire_at: datetime,
+        email: str | None,
+        telegram_id: int | None,
+        status: str | None,
+        is_trial: bool,
+    ) -> RemnawaveUser:
+        user = RemnawaveUser(
+            uuid=user_uuid,
+            username=f"acc_{user_uuid.hex}",
+            status=status or "ACTIVE",
+            expire_at=expire_at,
+            subscription_url=f"https://panel.test/sub/{user_uuid.hex[:8]}",
+            telegram_id=telegram_id,
+            email=email,
+            tag="TRIAL" if is_trial else None,
+        )
+        self.users[user_uuid] = user
+        return user
+
+    async def delete_user(self, user_uuid: uuid.UUID) -> None:
+        self.deleted_user_ids.append(user_uuid)
+        self.users.pop(user_uuid, None)
+
+
 class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -69,6 +138,7 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         self._engine = create_async_engine(f"sqlite+aiosqlite:///{self._db_path}")
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
         self._current_account_id: uuid.UUID | None = None
+        self._fake_gateway = FakeRemnawaveGateway(users={})
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -86,6 +156,8 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self._original_utcnow = account_linking._utcnow
         account_linking._utcnow = lambda: datetime.now(UTC).replace(tzinfo=None)
+        self._original_gateway_factory = account_linking.get_remnawave_gateway
+        account_linking.get_remnawave_gateway = lambda: self._fake_gateway
 
         self.app = create_app()
 
@@ -116,6 +188,7 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         settings.webapp_url = self._original_webapp_url
         settings.telegram_bot_username = self._original_bot_username
         account_linking._utcnow = self._original_utcnow
+        account_linking.get_remnawave_gateway = self._original_gateway_factory
         self._cache_module._cache = self._original_cache
         await self._engine.dispose()
         self._tmpdir.cleanup()
@@ -192,6 +265,23 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
     async def _get_withdrawal(self, withdrawal_id: int) -> Withdrawal | None:
         async with self._session_factory() as session:
             return await session.get(Withdrawal, withdrawal_id)
+
+    async def _merge_accounts_direct(
+        self,
+        *,
+        source_account_id: uuid.UUID,
+        target_account_id: uuid.UUID,
+    ) -> Account:
+        async with self._session_factory() as session:
+            merged_account = await account_linking.merge_accounts(
+                session,
+                source_account_id=source_account_id,
+                target_account_id=target_account_id,
+                last_login_source=LoginSource.BROWSER_OAUTH,
+            )
+            await session.commit()
+            await session.refresh(merged_account)
+            return merged_account
 
     async def test_browser_to_telegram_flow_and_token_reuse(self) -> None:
         browser_account = await self._create_account(
@@ -313,6 +403,341 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(moved_withdrawal)
         assert moved_withdrawal is not None
         self.assertEqual(moved_withdrawal.account_id, browser_account.id)
+
+    async def test_merge_accounts_moves_business_records_and_resolves_duplicates(self) -> None:
+        now = datetime(2026, 3, 15, 12, 0)
+        browser_account = await self._create_account(
+            email="browser@example.com",
+            display_name="Browser User",
+            balance=11,
+            referral_earnings=4,
+        )
+        telegram_account = await self._create_account(
+            telegram_id=200200,
+            first_name="Existing Telegram",
+            balance=9,
+            referral_earnings=6,
+            referrals_count=3,
+        )
+        await self._create_auth_account(
+            account_id=telegram_account.id,
+            provider=AuthProvider.SUPABASE,
+            provider_uid="telegram-existing",
+        )
+        pending_withdrawal = await self._create_withdrawal(account_id=telegram_account.id, amount=5)
+
+        async with self._session_factory() as session:
+            payment = Payment(
+                account_id=telegram_account.id,
+                provider=PaymentProvider.YOOKASSA,
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                status=PaymentStatus.SUCCEEDED,
+                amount=990,
+                currency="RUB",
+                provider_payment_id="merge-pay-src-1",
+                external_reference="merge-pay-src-1",
+                plan_code="plan_1m",
+                description="merge payment",
+                raw_payload={"payment": "src"},
+            )
+            session.add(payment)
+            await session.flush()
+
+            payment_event = PaymentEvent(
+                payment_id=payment.id,
+                account_id=telegram_account.id,
+                provider=PaymentProvider.YOOKASSA,
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                status=PaymentStatus.SUCCEEDED,
+                provider_event_id="merge-evt-src-1",
+                provider_payment_id="merge-pay-src-1",
+                amount=990,
+                currency="RUB",
+                raw_payload={"event": "src"},
+                processed_at=now,
+            )
+            subscription_grant = SubscriptionGrant(
+                account_id=telegram_account.id,
+                payment_id=payment.id,
+                purchase_source="direct_payment",
+                reference_type="payment",
+                reference_id="merge-pay-src-1",
+                plan_code="plan_1m",
+                amount=990,
+                currency="RUB",
+                duration_days=30,
+                base_expires_at=now,
+                target_expires_at=datetime(2026, 4, 14, 12, 0),
+                applied_at=now,
+            )
+            target_notification = Notification(
+                account_id=browser_account.id,
+                type=NotificationType.PAYMENT_SUCCEEDED,
+                title="Target notification",
+                body="target",
+                priority=NotificationPriority.SUCCESS,
+                dedupe_key="payment-merge-dup",
+            )
+            source_notification = Notification(
+                account_id=telegram_account.id,
+                type=NotificationType.PAYMENT_SUCCEEDED,
+                title="Source notification",
+                body="source",
+                priority=NotificationPriority.SUCCESS,
+                dedupe_key="payment-merge-dup",
+            )
+            session.add_all([payment_event, subscription_grant, target_notification, source_notification])
+            await session.flush()
+
+            target_notification_delivery = NotificationDelivery(
+                notification_id=target_notification.id,
+                channel=NotificationChannel.IN_APP,
+                status=NotificationDeliveryStatus.DELIVERED,
+                attempts_count=1,
+                last_attempt_at=now,
+                delivered_at=now,
+            )
+            source_notification_delivery = NotificationDelivery(
+                notification_id=source_notification.id,
+                channel=NotificationChannel.TELEGRAM,
+                status=NotificationDeliveryStatus.PENDING,
+                attempts_count=0,
+            )
+
+            broadcast = Broadcast(
+                name="Merge broadcast",
+                title="Merge",
+                body_html="<b>merge</b>",
+                content_type=BroadcastContentType.TEXT,
+                channels=[BroadcastChannel.TELEGRAM.value],
+                buttons=[],
+                audience={},
+                status=BroadcastStatus.COMPLETED,
+                estimated_total_accounts=2,
+                estimated_in_app_recipients=0,
+                estimated_telegram_recipients=2,
+                created_by_admin_id=uuid.uuid4(),
+                updated_by_admin_id=uuid.uuid4(),
+                launched_at=now,
+                completed_at=now,
+            )
+            session.add(broadcast)
+            await session.flush()
+
+            broadcast_run = BroadcastRun(
+                broadcast_id=broadcast.id,
+                run_type=BroadcastRunType.SEND_NOW,
+                status=BroadcastRunStatus.COMPLETED,
+                triggered_by_admin_id=uuid.uuid4(),
+                snapshot_total_accounts=2,
+                snapshot_in_app_targets=0,
+                snapshot_telegram_targets=2,
+                started_at=now,
+                completed_at=now,
+            )
+            session.add(broadcast_run)
+            await session.flush()
+
+            target_delivery = BroadcastDelivery(
+                run_id=broadcast_run.id,
+                broadcast_id=broadcast.id,
+                account_id=browser_account.id,
+                channel=BroadcastChannel.TELEGRAM,
+                status=BroadcastDeliveryStatus.FAILED,
+                attempts_count=1,
+                last_attempt_at=now,
+                error_code="timeout",
+                error_message="timeout",
+            )
+            source_delivery = BroadcastDelivery(
+                run_id=broadcast_run.id,
+                broadcast_id=broadcast.id,
+                account_id=telegram_account.id,
+                channel=BroadcastChannel.TELEGRAM,
+                status=BroadcastDeliveryStatus.DELIVERED,
+                provider_message_id="message-1",
+                notification_id=source_notification.id,
+                attempts_count=2,
+                last_attempt_at=now,
+                delivered_at=now,
+            )
+            referral_intent = TelegramReferralIntent(
+                telegram_id=telegram_account.telegram_id,
+                referral_code="merge-ref-code",
+                status="applied",
+                account_id=telegram_account.id,
+                consumed_at=now,
+            )
+            admin_action_log = AdminActionLog(
+                admin_id=uuid.uuid4(),
+                action_type=AdminActionType.SUBSCRIPTION_GRANT,
+                target_account_id=telegram_account.id,
+                payload={"origin": "merge-test"},
+            )
+
+            session.add_all(
+                [
+                    target_notification_delivery,
+                    source_notification_delivery,
+                    target_delivery,
+                    source_delivery,
+                    referral_intent,
+                    admin_action_log,
+                ]
+            )
+            await session.commit()
+
+        merged_account = await self._merge_accounts_direct(
+            source_account_id=telegram_account.id,
+            target_account_id=browser_account.id,
+        )
+        self.assertEqual(merged_account.id, browser_account.id)
+        self.assertEqual(merged_account.balance, 20)
+        self.assertEqual(merged_account.referral_earnings, 10)
+        self.assertEqual(merged_account.referrals_count, 3)
+        self.assertEqual(merged_account.telegram_id, 200200)
+
+        async with self._session_factory() as session:
+            self.assertIsNone(await session.get(Account, telegram_account.id))
+
+            moved_payment = await session.scalar(select(Payment).where(Payment.provider_payment_id == "merge-pay-src-1"))
+            self.assertIsNotNone(moved_payment)
+            assert moved_payment is not None
+            self.assertEqual(moved_payment.account_id, browser_account.id)
+
+            moved_event = await session.scalar(
+                select(PaymentEvent).where(PaymentEvent.provider_event_id == "merge-evt-src-1")
+            )
+            self.assertIsNotNone(moved_event)
+            assert moved_event is not None
+            self.assertEqual(moved_event.account_id, browser_account.id)
+
+            moved_grant = await session.scalar(
+                select(SubscriptionGrant).where(SubscriptionGrant.reference_id == "merge-pay-src-1")
+            )
+            self.assertIsNotNone(moved_grant)
+            assert moved_grant is not None
+            self.assertEqual(moved_grant.account_id, browser_account.id)
+
+            moved_withdrawal = await session.get(Withdrawal, pending_withdrawal.id)
+            self.assertIsNotNone(moved_withdrawal)
+            assert moved_withdrawal is not None
+            self.assertEqual(moved_withdrawal.account_id, browser_account.id)
+
+            notifications = list(
+                (
+                    await session.execute(
+                        select(Notification)
+                        .where(Notification.account_id == browser_account.id)
+                        .order_by(Notification.id.asc())
+                    )
+                ).scalars().all()
+            )
+            self.assertEqual(len(notifications), 2)
+            self.assertEqual(
+                sum(1 for notification in notifications if notification.dedupe_key == "payment-merge-dup"),
+                1,
+            )
+            self.assertEqual(
+                sum(1 for notification in notifications if notification.dedupe_key is None),
+                1,
+            )
+
+            deliveries = list(
+                (
+                    await session.execute(
+                        select(BroadcastDelivery)
+                        .where(BroadcastDelivery.account_id == browser_account.id)
+                        .order_by(BroadcastDelivery.id.asc())
+                    )
+                ).scalars().all()
+            )
+            self.assertEqual(len(deliveries), 1)
+            self.assertEqual(deliveries[0].status, BroadcastDeliveryStatus.DELIVERED)
+            self.assertEqual(deliveries[0].provider_message_id, "message-1")
+            self.assertEqual(deliveries[0].notification_id, source_notification.id)
+
+            moved_referral_intent = await session.scalar(
+                select(TelegramReferralIntent).where(
+                    TelegramReferralIntent.referral_code == "merge-ref-code"
+                )
+            )
+            self.assertIsNotNone(moved_referral_intent)
+            assert moved_referral_intent is not None
+            self.assertEqual(moved_referral_intent.account_id, browser_account.id)
+
+            admin_logs = list((await session.execute(select(AdminActionLog))).scalars().all())
+            self.assertEqual(len(admin_logs), 1)
+            self.assertEqual(admin_logs[0].payload, {"origin": "merge-test"})
+            self.assertEqual(admin_logs[0].target_account_id, browser_account.id)
+
+    async def test_merge_accounts_reconciles_existing_remnawave_users(self) -> None:
+        browser_remote_uuid = uuid.uuid4()
+        telegram_remote_uuid = uuid.uuid4()
+        browser_account = await self._create_account(
+            email="browser@example.com",
+            display_name="Browser User",
+            remnawave_user_uuid=browser_remote_uuid,
+            subscription_url="https://panel.test/sub/browser",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 4, 10, 12, 0),
+            subscription_last_synced_at=datetime(2026, 3, 15, 10, 0),
+        )
+        telegram_account = await self._create_account(
+            telegram_id=777001,
+            first_name="Telegram User",
+            remnawave_user_uuid=telegram_remote_uuid,
+            subscription_url="https://panel.test/sub/telegram",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 5, 10, 12, 0),
+            subscription_last_synced_at=datetime(2026, 3, 15, 11, 0),
+        )
+
+        self._fake_gateway.users[browser_remote_uuid] = RemnawaveUser(
+            uuid=browser_remote_uuid,
+            username=f"acc_{browser_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 4, 10, 12, 0),
+            subscription_url="https://panel.test/sub/browser",
+            telegram_id=None,
+            email=browser_account.email,
+            tag=None,
+        )
+        self._fake_gateway.users[telegram_remote_uuid] = RemnawaveUser(
+            uuid=telegram_remote_uuid,
+            username=f"acc_{telegram_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 5, 10, 12, 0),
+            subscription_url="https://panel.test/sub/telegram",
+            telegram_id=telegram_account.telegram_id,
+            email=None,
+            tag=None,
+        )
+
+        merged_account = await self._merge_accounts_direct(
+            source_account_id=telegram_account.id,
+            target_account_id=browser_account.id,
+        )
+
+        self.assertEqual(merged_account.remnawave_user_uuid, browser_remote_uuid)
+        self.assertEqual(
+            merged_account.subscription_expires_at,
+            datetime(2026, 5, 10, 12, 0),
+        )
+        self.assertEqual(merged_account.telegram_id, telegram_account.telegram_id)
+        self.assertEqual(self._fake_gateway.deleted_user_ids, [telegram_remote_uuid])
+        self.assertNotIn(telegram_remote_uuid, self._fake_gateway.users)
+
+        kept_remote_user = self._fake_gateway.users[browser_remote_uuid]
+        self.assertEqual(
+            kept_remote_user.expire_at,
+            datetime(2026, 5, 10, 12, 0, tzinfo=UTC),
+        )
+        self.assertEqual(kept_remote_user.email, browser_account.email)
+        self.assertEqual(kept_remote_user.telegram_id, telegram_account.telegram_id)
+
+        removed_source_account = await self._get_account(telegram_account.id)
+        self.assertIsNone(removed_source_account)
 
     async def test_telegram_to_browser_flow_and_token_reuse(self) -> None:
         telegram_account = await self._create_account(

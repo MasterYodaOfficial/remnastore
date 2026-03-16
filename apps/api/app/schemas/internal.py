@@ -8,3 +8,4 @@ class TelegramAccountAccessResponse(BaseModel):
     exists: bool
     status: AccountStatus | None = None
     fully_blocked: bool
+    telegram_bot_blocked: bool = False

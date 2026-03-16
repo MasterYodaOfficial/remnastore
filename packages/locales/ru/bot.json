@@ -1,0 +1,88 @@
+{
+  "bot": {
+    "start": {
+      "welcome": "Добро пожаловать! Откройте витрину через кнопку ниже.",
+      "webapp_unavailable": "Добро пожаловать! Кнопка недоступна, проверьте конфигурацию WebApp URL."
+    },
+    "fallback": {
+      "use_webapp_for_purchase": "Используйте меню и кнопку WebApp."
+    },
+    "payments": {
+      "subscription_updated": "Оплата получена. Подписка обновлена."
+    },
+    "linking": {
+      "success": "✅ Ваш Telegram аккаунт успешно привязан к браузер-аккаунту!\n\nТеперь вы можете использовать оба способа входа.",
+      "error_with_detail": "❌ Ошибка: {detail}\n\nПроверьте ссылку или создайте новую.",
+      "generic_error": "❌ Ошибка при привязке. Попробуйте снова позже.",
+      "exception_error": "❌ Ошибка при привязке: {error}"
+    },
+    "referral": {
+      "invalid_link": "Ссылка приглашения повреждена. Откройте приложение через кнопку ниже.",
+      "invalid_code": "Реферальная ссылка недействительна. Попросите отправить новую.",
+      "saved": "Вы открыли приглашение. Нажмите кнопку ниже, чтобы открыть витрину и завершить вход с сохранением реферальной ссылки.",
+      "webapp_unavailable": "Не удалось показать кнопку открытия приложения. Проверьте настройку WebApp URL."
+    },
+    "menu": {
+      "home": {
+        "caption": "Наш веб апп\n\nБаланс: {balance_rub} ₽\nПодписка: {subscription_status}\nРефералы: {referrals_count}\nДоступно к выводу: {available_for_withdraw_rub} ₽\n\nВыберите нужный раздел ниже.",
+        "guest_caption": "Наш веб апп\n\nАккаунт еще не подготовлен для бота.\nОткройте личный кабинет, чтобы завершить вход через Telegram и получить доступ к подписке, тарифам и рефералам."
+      },
+      "subscription": {
+        "caption": "Подписка\n\nСтатус: {status}\nДействует до: {expires_at}\nОсталось дней: {days_left}\nТип доступа: {access_type}\nКонфиг: {config_status}\nПробный период: {trial_status}",
+        "guest_caption": "Подписка\n\nВ боте пока нет данных по вашему аккаунту. Откройте личный кабинет и завершите вход через Telegram, после этого статус подписки будет доступен и здесь."
+      },
+      "plans": {
+        "caption": "Тарифы\n\n{plans_overview}\n\nВыберите тариф, чтобы посмотреть варианты оплаты.",
+        "empty": "Список тарифов временно недоступен."
+      },
+      "plan_detail": {
+        "caption": "Тариф: {plan_name}\nСрок: {duration_days} дн.\nЦена: {price_rub} ₽\nTelegram Stars: {price_stars}\n\n{features_block}\n\nВ боте доступна покупка тарифа через Telegram Stars и YooKassa.\nПополнение баланса остается в WebApp.",
+        "guest_caption": "Тариф: {plan_name}\nСрок: {duration_days} дн.\nЦена: {price_rub} ₽\nTelegram Stars: {price_stars}\n\nЧтобы купить тариф в боте, сначала откройте личный кабинет и завершите вход через Telegram."
+      },
+      "referrals": {
+        "caption": "Рефералы\n\nКод: {referral_code}\nПриглашено: {referrals_count}\nНачислено: {total_earnings_rub} ₽\nДоступно к выводу: {available_for_withdraw_rub} ₽\nСтавка вознаграждения: {reward_rate_percent}%\n\nНаграда начисляется после первой успешной платной покупки приглашенного пользователя.\nДетальная статистика и вывод средств доступны в WebApp.",
+        "guest_caption": "Рефералы\n\nСтатистика появится после того, как вы откроете личный кабинет и завершите вход через Telegram."
+      },
+      "help": {
+        "caption": "Помощь\n\nВ канале с инструкциями собраны базовые материалы по сервису.\nЕсли вопрос не решается, переходите в поддержку.\nПодробный FAQ и остальные действия доступны в WebApp."
+      },
+      "payment_ready": {
+        "caption": "Покупка почти готова\n\nТариф: {plan_name}\nСпособ оплаты: {provider_label}\nСумма: {amount_label}\n\nНажмите кнопку ниже, чтобы перейти к оплате."
+      },
+      "messages": {
+        "processing": "Обрабатываю действие, попробуйте еще раз через пару секунд.",
+        "trial_activated": "Пробный период активирован.",
+        "account_required": "Сначала откройте личный кабинет и завершите вход через Telegram.",
+        "payment_ready": "Ссылка на оплату готова.",
+        "payment_failed": "Не удалось подготовить оплату. Попробуйте позже.",
+        "generic_error": "Не удалось выполнить действие. Попробуйте позже."
+      },
+      "values": {
+        "not_available": "не указано",
+        "no": "нет",
+        "yes": "есть",
+        "days_unknown": "не указано",
+        "not_connected": "не подключена",
+        "active": "активна",
+        "active_until": "активна до {date}",
+        "trial_active_until": "активен до {date}",
+        "trial_available": "доступен",
+        "trial_used": "уже использован",
+        "trial_unavailable": "недоступен",
+        "paid_access": "платный доступ",
+        "trial_access": "пробный доступ",
+        "stars_not_available": "не поддерживается"
+      },
+      "providers": {
+        "telegram_stars": "Telegram Stars",
+        "yookassa": "YooKassa"
+      },
+      "plan_line": "{name} · {price_rub} ₽ · {duration_days} дн. · {price_stars}",
+      "feature_line": "• {feature}"
+    },
+    "errors": {
+      "api_http_error": "{detail}",
+      "api_invalid_response": "Сервис вернул некорректный ответ."
+    }
+  }
+}

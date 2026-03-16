@@ -95,6 +95,7 @@ docker builder prune -a -f
 ## Основные документы
 
 - [`docs/architecture.md`](docs/architecture.md) - общая архитектура системы
+- [`docs/bot-inline-menu-v1.md`](docs/bot-inline-menu-v1.md) - целевой UX и технический план inline-бота
 - [`docs/account-linking.md`](docs/account-linking.md) - логика связки Telegram и browser-аккаунтов
 - [`docs/launch-roadmap.md`](docs/launch-roadmap.md) - путь до первого коммерческого запуска
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска

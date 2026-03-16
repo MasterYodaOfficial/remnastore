@@ -19,11 +19,15 @@ export default defineConfig({
     port: 5173,
     host: true,
     allowedHosts: ['relentlessly-logical-turaco.cloudpub.ru', ...extraAllowedHosts],
+    fs: {
+      allow: [path.resolve(__dirname, '../../packages')],
+    },
   },
   resolve: {
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
+      '@locales': path.resolve(__dirname, '../../packages/locales'),
     },
   },
 

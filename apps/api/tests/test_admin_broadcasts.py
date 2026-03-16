@@ -212,6 +212,44 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await session.scalar(select(func.count()).select_from(Broadcast)), 1)
             self.assertEqual(await session.scalar(select(func.count()).select_from(AdminActionLog)), 1)
 
+    async def test_create_broadcast_draft_excludes_telegram_bot_blocked_accounts_from_telegram_estimate(self) -> None:
+        token = await self._create_admin_token()
+        now = datetime.now(UTC)
+
+        async with self._session_factory() as session:
+            session.add_all(
+                [
+                    Account(email="active@example.com", status=AccountStatus.ACTIVE, telegram_id=111001),
+                    Account(
+                        email="bot-blocked@example.com",
+                        status=AccountStatus.ACTIVE,
+                        telegram_id=222002,
+                        telegram_bot_blocked_at=now,
+                    ),
+                ]
+            )
+            await session.commit()
+
+        response = await self.client.post(
+            "/api/v1/admin/broadcasts",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Telegram reachability",
+                "title": "Проверка Telegram",
+                "body_html": "Только доступным в Telegram",
+                "content_type": "text",
+                "channels": ["in_app", "telegram"],
+                "buttons": [],
+                "audience": {"segment": "all", "exclude_blocked": True},
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["estimated_total_accounts"], 2)
+        self.assertEqual(body["estimated_in_app_recipients"], 2)
+        self.assertEqual(body["estimated_telegram_recipients"], 1)
+
     async def test_estimate_broadcast_audience_does_not_create_draft(self) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
@@ -429,7 +467,8 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
                         email="second@example.com",
                         display_name="Второй",
                         status=AccountStatus.ACTIVE,
-                        telegram_id=None,
+                        telegram_id=222002,
+                        telegram_bot_blocked_at=datetime.now(UTC),
                     ),
                 ]
             )
@@ -466,6 +505,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(body["latest_run"])
         self.assertEqual(body["latest_run"]["run_type"], "send_now")
         self.assertEqual(body["latest_run"]["snapshot_total_accounts"], 2)
+        self.assertEqual(body["latest_run"]["snapshot_telegram_targets"], 1)
         self.assertEqual(body["latest_run"]["total_deliveries"], 3)
 
         async with self._session_factory() as session:
@@ -555,11 +595,13 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(create_response.status_code, 201)
         broadcast_id = create_response.json()["id"]
 
+        scheduled_at = datetime.now(UTC) + timedelta(days=1)
+
         schedule_response = await self.client.post(
             f"/api/v1/admin/broadcasts/{broadcast_id}/schedule",
             headers={"Authorization": f"Bearer {token}"},
             json={
-                "scheduled_at": "2026-03-14T23:59:00+03:00",
+                "scheduled_at": scheduled_at.isoformat(),
                 "comment": "Поставить на вечер",
                 "idempotency_key": "broadcast-schedule-1",
             },

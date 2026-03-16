@@ -123,7 +123,7 @@ def _apply_user_webhook_snapshot(
     if subscription_url is not None:
         account.subscription_url = subscription_url
 
-    if user.tag is not None:
+    if "tag" in user.model_fields_set:
         account.subscription_is_trial = user.tag == "TRIAL"
     if not account.email and user.email:
         account.email = user.email
