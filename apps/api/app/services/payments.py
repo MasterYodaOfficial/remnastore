@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import httpx
 import requests
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from yookassa import Configuration as YooKassaConfiguration
@@ -889,11 +889,15 @@ def _should_reconcile_pending_yookassa_payment(
     expires_at = _normalize_datetime(payment.expires_at)
     if payment.provider != PaymentProvider.YOOKASSA:
         return False
-    if payment.status not in STALE_PENDING_PAYMENT_STATUSES:
-        return False
     if payment.finalized_at is not None:
         return False
     if created_at is not None and created_at > now - timedelta(seconds=max(1, min_age_seconds)):
+        return False
+
+    if payment.status == PaymentStatus.SUCCEEDED:
+        return payment.flow_type in SUCCESS_EFFECT_FLOWS
+
+    if payment.status not in STALE_PENDING_PAYMENT_STATUSES:
         return False
     if expires_at is not None and expires_at <= now:
         return False
@@ -956,9 +960,15 @@ async def reconcile_pending_yookassa_payments(
         select(Payment.id)
         .where(
             Payment.provider == PaymentProvider.YOOKASSA,
-            Payment.status.in_(tuple(STALE_PENDING_PAYMENT_STATUSES)),
             Payment.finalized_at.is_(None),
             Payment.created_at <= created_before - timedelta(seconds=reconcile_min_age_seconds),
+            or_(
+                Payment.status.in_(tuple(STALE_PENDING_PAYMENT_STATUSES)),
+                and_(
+                    Payment.status == PaymentStatus.SUCCEEDED,
+                    Payment.flow_type.in_(tuple(SUCCESS_EFFECT_FLOWS)),
+                ),
+            ),
         )
         .order_by(Payment.created_at.asc(), Payment.id.asc())
         .limit(limit)

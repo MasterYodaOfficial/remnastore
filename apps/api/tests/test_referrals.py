@@ -433,6 +433,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
                 "exists": True,
                 "status": "blocked",
                 "fully_blocked": True,
+                "telegram_bot_blocked": False,
             },
         )
 

@@ -164,6 +164,13 @@ def _response_error_message(response: httpx.Response) -> str:
     return f"Remnawave request failed with status {response.status_code}"
 
 
+def _dedupe_users_by_uuid(users: list[RemnawaveUser]) -> list[RemnawaveUser]:
+    deduped: dict[UUID, RemnawaveUser] = {}
+    for user in users:
+        deduped[user.uuid] = user
+    return list(deduped.values())
+
+
 class RemnawaveGateway:
     def __init__(self) -> None:
         if not settings.remnawave_api_url or not settings.remnawave_api_token:
@@ -185,6 +192,48 @@ class RemnawaveGateway:
             raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
         return _to_user_snapshot(response)
+
+    async def get_user_by_username(self, username: str) -> RemnawaveUser | None:
+        try:
+            response = await self._sdk.users.get_user_by_username(username)
+        except NotFoundError:
+            return None
+        except (ApiError, httpx.HTTPError) as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+
+        return _to_user_snapshot(response)
+
+    async def _find_existing_user_for_upsert(
+        self,
+        *,
+        user_uuid: UUID,
+        username: str,
+        email: str | None,
+        telegram_id: int | None,
+    ) -> RemnawaveUser | None:
+        existing_user = await self.get_user_by_uuid(user_uuid)
+        if existing_user is not None:
+            return existing_user
+
+        existing_user = await self.get_user_by_username(username)
+        if existing_user is not None:
+            return existing_user
+
+        candidates: list[RemnawaveUser] = []
+        if telegram_id is not None:
+            candidates.extend(await self.get_users_by_telegram_id(telegram_id))
+        if email:
+            candidates.extend(await self.get_users_by_email(email))
+
+        deduped_candidates = _dedupe_users_by_uuid(candidates)
+        if not deduped_candidates:
+            return None
+        if len(deduped_candidates) == 1:
+            return deduped_candidates[0]
+
+        raise RemnawaveRequestError(
+            "Multiple Remnawave users match this account identity"
+        )
 
     async def _update_user(
         self,
@@ -225,7 +274,12 @@ class RemnawaveGateway:
         )
         tag = "TRIAL" if is_trial else None
         active_internal_squads = await self._resolve_active_internal_squads()
-        existing_user = await self.get_user_by_uuid(user_uuid)
+        existing_user = await self._find_existing_user_for_upsert(
+            user_uuid=user_uuid,
+            username=username,
+            email=email,
+            telegram_id=telegram_id,
+        )
         clear_tag = existing_user is not None and existing_user.tag is not None and tag is None
 
         try:
@@ -247,7 +301,7 @@ class RemnawaveGateway:
             else:
                 response = await self._update_user(
                     UpdateUserRequestDto(
-                        uuid=user_uuid,
+                        uuid=existing_user.uuid,
                         expire_at=expire_at,
                         status=UserStatus.ACTIVE,
                         email=email,
@@ -284,7 +338,12 @@ class RemnawaveGateway:
         tag = "TRIAL" if is_trial else None
         resolved_status = _resolve_user_status(status, expire_at=expire_at)
         active_internal_squads = await self._resolve_active_internal_squads()
-        existing_user = await self.get_user_by_uuid(user_uuid)
+        existing_user = await self._find_existing_user_for_upsert(
+            user_uuid=user_uuid,
+            username=username,
+            email=email,
+            telegram_id=telegram_id,
+        )
         clear_tag = existing_user is not None and existing_user.tag is not None and tag is None
 
         try:
@@ -306,7 +365,7 @@ class RemnawaveGateway:
             else:
                 response = await self._update_user(
                     UpdateUserRequestDto(
-                        uuid=user_uuid,
+                        uuid=existing_user.uuid,
                         expire_at=expire_at,
                         status=resolved_status,
                         email=email,

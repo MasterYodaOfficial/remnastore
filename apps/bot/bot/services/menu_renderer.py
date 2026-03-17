@@ -33,6 +33,9 @@ SCREEN_PAYMENT_READY = "payment_ready"
 
 ASSET_WELCOME = "welcome"
 ASSET_LOGO = "logo"
+BUTTON_STYLE_SUCCESS = "success"
+BUTTON_STYLE_DANGER = "danger"
+YOOKASSA_IDEMPOTENCY_KEY_MAX_LENGTH = 64
 
 
 @dataclass(slots=True)
@@ -117,9 +120,24 @@ def _top_webapp_row(*, locale: str | None, referral_code: str | None) -> list[In
     return [
         InlineKeyboardButton(
             text=translate("common.actions.open_webapp", locale=locale),
+            style=BUTTON_STYLE_SUCCESS,
             web_app=WebAppInfo(url=build_webapp_url(referral_code)),
         )
     ]
+
+
+def _back_button(*, locale: str | None, callback_data: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text=translate("common.actions.back", locale=locale),
+        style=BUTTON_STYLE_DANGER,
+        callback_data=callback_data,
+    )
+
+
+def _build_bot_payment_idempotency_key(*, provider: str, telegram_id: int) -> str:
+    # YooKassa rejects Idempotence-Key values longer than 64 chars.
+    key = f"bot:{provider}:{telegram_id}:{uuid4().hex}"
+    return key[:YOOKASSA_IDEMPOTENCY_KEY_MAX_LENGTH]
 
 
 def _subscription_status(subscription: dict[str, Any], *, locale: str | None) -> str:
@@ -344,10 +362,7 @@ def _build_subscription_keyboard(
     )
     rows.append(
         [
-            InlineKeyboardButton(
-                text=translate("common.actions.back", locale=locale),
-                callback_data=nav(SCREEN_HOME),
-            )
+            _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
         ]
     )
 
@@ -385,10 +400,7 @@ def _build_plans_keyboard(
     )
     rows.append(
         [
-            InlineKeyboardButton(
-                text=translate("common.actions.back", locale=locale),
-                callback_data=nav(SCREEN_HOME),
-            )
+            _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
         ]
     )
 
@@ -435,10 +447,7 @@ def _build_plan_detail_keyboard(
     )
     rows.append(
         [
-            InlineKeyboardButton(
-                text=translate("common.actions.back", locale=locale),
-                callback_data=nav(SCREEN_PLANS),
-            )
+            _back_button(locale=locale, callback_data=nav(SCREEN_PLANS))
         ]
     )
 
@@ -456,10 +465,7 @@ def _build_referrals_keyboard(*, locale: str | None, referral_code: str | None) 
                 )
             ],
             [
-                InlineKeyboardButton(
-                    text=translate("common.actions.back", locale=locale),
-                    callback_data=nav(SCREEN_HOME),
-                )
+                _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
             ],
         ]
     )
@@ -498,10 +504,7 @@ def _build_help_keyboard(*, locale: str | None, referral_code: str | None) -> In
     )
     rows.append(
         [
-            InlineKeyboardButton(
-                text=translate("common.actions.back", locale=locale),
-                callback_data=nav(SCREEN_HOME),
-            )
+            _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
         ]
     )
 
@@ -528,10 +531,7 @@ def _build_payment_ready_keyboard(
     if plan_code:
         rows.append(
             [
-                InlineKeyboardButton(
-                    text=translate("common.actions.back", locale=locale),
-                    callback_data=action("plan", "open", plan_code),
-                )
+                _back_button(locale=locale, callback_data=action("plan", "open", plan_code))
             ]
         )
     else:
@@ -769,6 +769,7 @@ async def present_menu(
     screen_params: dict[str, str] | None = None,
     referral_code: str | None = None,
     api_client: ApiClient | None = None,
+    force_new: bool = False,
 ) -> Message | None:
     session_store = get_menu_session_store()
     existing_session = await session_store.get(telegram_id)
@@ -786,7 +787,7 @@ async def present_menu(
     )
 
     media_registry = get_media_registry()
-    if existing_session is not None:
+    if existing_session is not None and not force_new:
         target_chat_id = existing_session.chat_id
         try:
             if existing_session.asset_name == rendered.asset_name:
@@ -844,6 +845,15 @@ async def present_menu(
         reply_markup=rendered.reply_markup,
     )
     await media_registry.remember_message_media(rendered.asset_name, sent_message)
+    if force_new and existing_session is not None:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=existing_session.chat_id,
+                message_id=existing_session.menu_message_id,
+                reply_markup=None,
+            )
+        except TelegramBadRequest:
+            pass
     await session_store.save(
         MenuSession(
             telegram_id=telegram_id,
@@ -865,6 +875,7 @@ async def show_menu_for_message(
     screen_params: dict[str, str] | None = None,
     referral_code: str | None = None,
     api_client: ApiClient | None = None,
+    force_new: bool = False,
 ) -> Message | None:
     if message.from_user is None:
         return None
@@ -877,6 +888,7 @@ async def show_menu_for_message(
         screen_params=screen_params,
         referral_code=referral_code,
         api_client=api_client,
+        force_new=force_new,
     )
 
 
@@ -947,19 +959,25 @@ async def create_plan_payment_and_render(
 ) -> tuple[Message | None, str | None]:
     client = api_client or ApiClient()
     try:
+        idempotency_key = _build_bot_payment_idempotency_key(
+            provider=provider,
+            telegram_id=telegram_id,
+        )
         if provider == "telegram_stars":
             payment = await client.create_bot_telegram_stars_payment(
                 telegram_id=telegram_id,
                 plan_code=plan_code,
-                idempotency_key=f"bot:{provider}:{telegram_id}:{plan_code}:{uuid4()}",
+                idempotency_key=idempotency_key,
             )
         else:
             payment = await client.create_bot_yookassa_payment(
                 telegram_id=telegram_id,
                 plan_code=plan_code,
-                idempotency_key=f"bot:{provider}:{telegram_id}:{plan_code}:{uuid4()}",
+                idempotency_key=idempotency_key,
             )
     except httpx.HTTPStatusError as exc:
+        if exc.response.status_code >= 500:
+            return None, translate("bot.menu.messages.payment_failed", locale=locale)
         return None, _extract_http_error_detail(exc, locale=locale)
 
     payment_data = _safe_dict(payment)

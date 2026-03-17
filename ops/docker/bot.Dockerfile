@@ -13,4 +13,4 @@ ENV PATH="/app/.venv/bin:${PATH}"
 COPY apps/bot/bot ./bot
 COPY packages/locales ./packages/locales
 EXPOSE 8080
-CMD ["python", "-m", "bot.main"]
+CMD ["uv", "run", "--no-sync", "python", "-m", "bot.main"]

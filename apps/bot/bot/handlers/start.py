@@ -40,14 +40,14 @@ async def start_handler(message: Message, state: FSMContext) -> None:
         if start_param.startswith("link_") and "_BROWSER" in start_param:
             await handle_browser_link(message, start_param)
             await state.set_state(MenuState.idle)
-            await show_menu_for_message(message)
+            await show_menu_for_message(message, force_new=True)
             return
 
         # Handle Telegram linking token (from Telegram to OAuth)
         if start_param.startswith("link_"):
             await handle_telegram_link(message, start_param)
             await state.set_state(MenuState.idle)
-            await show_menu_for_message(message)
+            await show_menu_for_message(message, force_new=True)
             return
 
         if start_param.startswith(REFERRAL_START_PREFIX):
@@ -58,7 +58,7 @@ async def start_handler(message: Message, state: FSMContext) -> None:
 
     # Regular start without parameters
     await state.set_state(MenuState.idle)
-    await show_menu_for_message(message)
+    await show_menu_for_message(message, force_new=True)
 
 
 async def handle_browser_link(message: Message, link_token: str) -> None:
@@ -153,7 +153,7 @@ async def handle_referral_start(message: Message, referral_code: str) -> None:
     locale = message.from_user.language_code if message.from_user is not None else None
     if not referral_code:
         await message.answer(translate("bot.referral.invalid_link", locale=locale))
-        await show_menu_for_message(message)
+        await show_menu_for_message(message, force_new=True)
         return
 
     try:
@@ -170,10 +170,10 @@ async def handle_referral_start(message: Message, referral_code: str) -> None:
 
         if response.status_code == 400:
             await message.answer(translate("bot.referral.invalid_code", locale=locale))
-            await show_menu_for_message(message)
+            await show_menu_for_message(message, force_new=True)
             return
     except Exception:
         pass
 
     await message.answer(translate("bot.referral.saved", locale=locale))
-    await show_menu_for_message(message, referral_code=referral_code)
+    await show_menu_for_message(message, referral_code=referral_code, force_new=True)

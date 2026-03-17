@@ -9,7 +9,7 @@ services:
       - ../../ops/docker/api.dev.entrypoint.sh:/app/api.dev.entrypoint.sh:ro
 
   bot:
-    command: ["/bin/sh", "/app/python.watch-entrypoint.sh", "python -m bot.main", "/app/bot"]
+    command: ["/bin/sh", "/app/python.watch-entrypoint.sh", "uv run --no-sync python -m bot.main", "/app/bot"]
     restart: unless-stopped
     volumes:
       - ../../apps/bot/bot:/app/bot
@@ -21,7 +21,7 @@ services:
       [
         "/bin/sh",
         "/app/python.watch-entrypoint.sh",
-        "python -m app.tasks.payments_worker",
+        "uv run --no-sync python -m app.tasks.payments_worker",
         "/app/app",
       ]
     restart: unless-stopped
@@ -34,7 +34,7 @@ services:
       [
         "/bin/sh",
         "/app/python.watch-entrypoint.sh",
-        "python -m app.tasks.notifications_worker",
+        "uv run --no-sync python -m app.tasks.notifications_worker",
         "/app/app",
       ]
     restart: unless-stopped
@@ -47,7 +47,7 @@ services:
       [
         "/bin/sh",
         "/app/python.watch-entrypoint.sh",
-        "python -m app.tasks.broadcast_worker",
+        "uv run --no-sync python -m app.tasks.broadcast_worker",
         "/app/app",
       ]
     restart: unless-stopped

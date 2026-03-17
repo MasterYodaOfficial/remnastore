@@ -17,3 +17,20 @@ dependencies = [
     "yookassa==3.10.0",
     "aiosqlite>=0.22.1",
 ]
+
+[dependency-groups]
+dev = [
+    "coverage[toml]>=7.10.0,<8",
+]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+skip_empty = true
+omit = [
+    "*/__init__.py",
+]

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
@@ -20,7 +20,11 @@ export default defineConfig({
     host: true,
     allowedHosts: ['relentlessly-logical-turaco.cloudpub.ru', ...extraAllowedHosts],
     fs: {
-      allow: [path.resolve(__dirname, '../../packages')],
+      allow: [
+        searchForWorkspaceRoot(process.cwd()),
+        path.resolve(__dirname),
+        path.resolve(__dirname, '../../packages'),
+      ],
     },
   },
   resolve: {

@@ -24,12 +24,38 @@ from bot.services.session_store import get_menu_session_store
 from bot.states.menu import MenuState
 
 router = Router()
+CALLBACK_ANSWER_TEXT_LIMIT = 200
+
+
+def _normalize_callback_answer_text(text: str | None, *, locale: str | None) -> str:
+    normalized = " ".join((text or "").split())
+    if not normalized:
+        return translate("bot.menu.messages.generic_error", locale=locale)
+    if len(normalized) <= CALLBACK_ANSWER_TEXT_LIMIT:
+        return normalized
+    return normalized[: CALLBACK_ANSWER_TEXT_LIMIT - 3].rstrip() + "..."
+
+
+async def _answer_callback(
+    callback: CallbackQuery,
+    *,
+    locale: str | None,
+    text: str | None = None,
+    show_alert: bool = False,
+) -> None:
+    if text is None:
+        await callback.answer()
+        return
+    await callback.answer(
+        _normalize_callback_answer_text(text, locale=locale),
+        show_alert=show_alert,
+    )
 
 
 @router.callback_query(F.data.startswith("m1:"))
 async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.from_user is None or callback.message is None:
-        await callback.answer()
+        await _answer_callback(callback, locale=None)
         return
 
     locale = callback.from_user.language_code
@@ -38,16 +64,17 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
         callback.from_user.id,
         ttl_seconds=settings.bot_callback_lock_ttl_seconds,
     ):
-        await callback.answer(
-            translate("bot.menu.messages.processing", locale=locale),
-            show_alert=False,
+        await _answer_callback(
+            callback,
+            locale=locale,
+            text=translate("bot.menu.messages.processing", locale=locale),
         )
         return
 
     try:
         parsed = parse_menu_callback(callback.data)
         if parsed is None:
-            await callback.answer()
+            await _answer_callback(callback, locale=locale)
             return
 
         session = await session_store.get(callback.from_user.id)
@@ -69,7 +96,7 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
                 screen=parsed.action,
                 referral_code=referral_code,
             )
-            await callback.answer()
+            await _answer_callback(callback, locale=locale)
             return
 
         if parsed.scope == "plan" and parsed.action == "open" and parsed.value:
@@ -82,7 +109,7 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
                 screen_params={"plan_code": parsed.value},
                 referral_code=referral_code,
             )
-            await callback.answer()
+            await _answer_callback(callback, locale=locale)
             return
 
         if parsed.scope == "trial" and parsed.action == "activate":
@@ -94,11 +121,17 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
                 referral_code=referral_code,
             )
             if error_text:
-                await callback.answer(error_text, show_alert=True)
+                await _answer_callback(
+                    callback,
+                    locale=locale,
+                    text=error_text,
+                    show_alert=True,
+                )
             else:
-                await callback.answer(
-                    translate("bot.menu.messages.trial_activated", locale=locale),
-                    show_alert=False,
+                await _answer_callback(
+                    callback,
+                    locale=locale,
+                    text=translate("bot.menu.messages.trial_activated", locale=locale),
                 )
             return
 
@@ -114,17 +147,25 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
                 plan_code=parsed.value,
             )
             if error_text:
-                await callback.answer(error_text, show_alert=True)
+                await _answer_callback(
+                    callback,
+                    locale=locale,
+                    text=error_text,
+                    show_alert=True,
+                )
             else:
-                await callback.answer(
-                    translate("bot.menu.messages.payment_ready", locale=locale),
-                    show_alert=False,
+                await _answer_callback(
+                    callback,
+                    locale=locale,
+                    text=translate("bot.menu.messages.payment_ready", locale=locale),
                 )
             return
-        await callback.answer()
+        await _answer_callback(callback, locale=locale)
     except (httpx.HTTPError, RuntimeError):
-        await callback.answer(
-            translate("bot.menu.messages.generic_error", locale=locale),
+        await _answer_callback(
+            callback,
+            locale=locale,
+            text=translate("bot.menu.messages.generic_error", locale=locale),
             show_alert=True,
         )
     finally:

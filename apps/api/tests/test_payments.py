@@ -295,8 +295,10 @@ class FakeYooKassaGateway:
     def __init__(self) -> None:
         self._events: dict[str, PaymentWebhookEvent] = {}
         self._status_snapshots: dict[str, PaymentIntentSnapshot] = {}
+        self.created_commands: list[CreatePaymentIntentCommand] = []
 
     async def create_payment_intent(self, command: CreatePaymentIntentCommand):
+        self.created_commands.append(command)
         return SimpleNamespace(
             provider=PaymentProvider.YOOKASSA,
             flow_type=command.flow_type,
@@ -546,6 +548,30 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["detail"], "blocked accounts cannot create payments")
         self.assertIsNone(await self._get_payment("yoopay-blocked-topup-500"))
+
+    async def test_create_bot_yookassa_plan_payment_uses_telegram_return_url(self) -> None:
+        await self._create_account(
+            balance=0,
+            email="bot-payer@example.com",
+            telegram_id=758107031,
+        )
+
+        with patch("app.services.bot_menu.settings.telegram_bot_username", "@test_bot"):
+            response = await self.client.post(
+                "/api/v1/internal/bot/payments/yookassa/plans/plan_1m",
+                json={
+                    "telegram_id": 758107031,
+                    "idempotency_key": "bot-plan-1m",
+                },
+                headers={"Authorization": "Bearer internal-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self._fake_gateway.created_commands), 1)
+        self.assertEqual(
+            self._fake_gateway.created_commands[0].success_url,
+            "https://t.me/test_bot",
+        )
 
     async def test_list_subscription_plans_returns_backend_catalog(self) -> None:
         account = await self._create_account(email="plans@example.com")
@@ -1245,6 +1271,92 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_reconcile_succeeded_plan_payment_resumes_pending_finalization(self) -> None:
+        account = await self._create_account(balance=0, email="resume-reconcile@example.com")
+        self._current_account_id = account.id
+
+        async def fake_apply_paid_purchase(
+            account_obj: Account,
+            *,
+            source,
+            target_expires_at: datetime,
+        ):
+            self.assertEqual(source.value, "direct_payment")
+            account_obj.remnawave_user_uuid = account_obj.id
+            account_obj.subscription_status = "ACTIVE"
+            account_obj.subscription_expires_at = target_expires_at
+            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_is_trial = False
+            return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
+
+        await self._create_direct_plan_payment(account)
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Payment).where(Payment.provider_payment_id == "yoopay-plan-1m")
+            )
+            payment = result.scalar_one()
+            payment.status = PaymentStatus.SUCCEEDED
+            payment.finalized_at = None
+            payment.created_at = datetime.now(UTC) - timedelta(minutes=10)
+            session.add(
+                SubscriptionGrant(
+                    account_id=account.id,
+                    payment_id=payment.id,
+                    plan_code="plan_1m",
+                    amount=payment.amount,
+                    currency=payment.currency,
+                    duration_days=30,
+                    base_expires_at=datetime.now(UTC),
+                    target_expires_at=datetime.now(UTC) + timedelta(days=30),
+                )
+            )
+            await session.commit()
+
+        self._fake_gateway.put_status_snapshot(
+            PaymentIntentSnapshot(
+                provider=PaymentProvider.YOOKASSA,
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                account_id=account.id,
+                status=PaymentStatus.SUCCEEDED,
+                amount=299,
+                currency="RUB",
+                provider_payment_id="yoopay-plan-1m",
+                external_reference="plan-1m",
+                confirmation_url="https://yookassa.test/confirm",
+                expires_at=datetime.now(UTC) + timedelta(minutes=20),
+                raw_payload={"status": "succeeded"},
+            )
+        )
+
+        with patch(
+            "app.services.payments.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
+        ):
+            async with self._session_factory() as session:
+                summary = await reconcile_pending_yookassa_payments(
+                    session,
+                    limit=10,
+                    min_age_seconds=0,
+                )
+
+        self.assertEqual(summary.succeeded, 1)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        stored_payment = await self._get_payment("yoopay-plan-1m")
+        self.assertIsNotNone(stored_payment)
+        assert stored_payment is not None
+        self.assertEqual(stored_payment.status, PaymentStatus.SUCCEEDED)
+        self.assertIsNotNone(stored_payment.finalized_at)
 
         grants = await self._get_subscription_grants(account.id)
         self.assertEqual(len(grants), 1)

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.schemas.bot import (
     BotDashboardAccountSummary,
     BotDashboardReferralSummary,
@@ -34,6 +35,13 @@ class BotMenuAccountNotFoundError(BotMenuServiceError):
 @dataclass(frozen=True, slots=True)
 class BotMenuContext:
     telegram_id: int
+
+
+def _build_telegram_bot_return_url() -> str | None:
+    username = settings.telegram_bot_username.strip().removeprefix("@")
+    if not username:
+        return None
+    return f"https://t.me/{username}"
 
 
 async def get_bot_dashboard(
@@ -150,11 +158,12 @@ async def create_yookassa_plan_payment_for_telegram_account(
     if account is None:
         raise BotMenuAccountNotFoundError(f"telegram account not found: {telegram_id}")
 
+    resolved_success_url = success_url or _build_telegram_bot_return_url()
     snapshot = await create_yookassa_plan_purchase_payment(
         session,
         account=account,
         plan_code=plan_code,
-        success_url=success_url,
+        success_url=resolved_success_url,
         cancel_url=cancel_url,
         idempotency_key=idempotency_key,
     )

@@ -19,6 +19,11 @@ async def _async_none(*args, **kwargs):
     return None
 
 
+async def _async_empty_list(*args, **kwargs):
+    del args, kwargs
+    return []
+
+
 class _FakeUsersController:
     def __init__(self) -> None:
         self.created_bodies = []
@@ -143,6 +148,9 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         gateway._default_internal_squad_uuid_cache = None
         gateway._default_internal_squad_uuid_resolved = False
         gateway.get_user_by_uuid = _async_none
+        gateway.get_user_by_username = _async_none
+        gateway.get_users_by_email = _async_empty_list
+        gateway.get_users_by_telegram_id = _async_empty_list
         return gateway
 
     def test_build_remnawave_username_uses_configured_prefix_and_telegram_id(self) -> None:
@@ -281,6 +289,86 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(patch_call["url"], "users")
         self.assertIn("tag", patch_call["json"])
         self.assertIsNone(patch_call["json"]["tag"])
+
+    async def test_provision_user_reuses_existing_remote_user_found_by_username(self) -> None:
+        settings.remnawave_username_prefix = "acc"
+        squad_uuid = uuid.UUID("88888888-8888-8888-8888-888888888888")
+        gateway = self._make_gateway(
+            squads=[SimpleNamespace(uuid=squad_uuid, name="DEFAULT")]
+        )
+        requested_uuid = uuid.UUID("99999999-9999-9999-9999-999999999999")
+        existing_uuid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+        async def _existing_by_username(username):
+            self.assertEqual(username, "acc_tg700005")
+            return SimpleNamespace(
+                uuid=existing_uuid,
+                username=username,
+                status="ACTIVE",
+                expire_at=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+                subscription_url="https://panel.test/sub/existing-username",
+                telegram_id=700005,
+                email="existing-username@example.com",
+                tag=None,
+                hwid_device_limit=3,
+            )
+
+        gateway.get_user_by_username = _existing_by_username
+
+        user = await gateway.provision_user(
+            user_uuid=requested_uuid,
+            expire_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
+            email="existing-username@example.com",
+            telegram_id=700005,
+            is_trial=False,
+            hwid_device_limit=3,
+        )
+
+        self.assertEqual(gateway._sdk.users.created_bodies, [])
+        self.assertEqual(len(gateway._sdk.users.updated_bodies), 1)
+        self.assertEqual(gateway._sdk.users.updated_bodies[0].uuid, existing_uuid)
+        self.assertEqual(user.uuid, existing_uuid)
+
+    async def test_provision_user_reuses_unique_remote_user_found_by_telegram_id(self) -> None:
+        settings.remnawave_username_prefix = "acc"
+        squad_uuid = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+        gateway = self._make_gateway(
+            squads=[SimpleNamespace(uuid=squad_uuid, name="DEFAULT")]
+        )
+        requested_uuid = uuid.UUID("12121212-3434-5656-7878-909090909090")
+        existing_uuid = uuid.UUID("13131313-3535-5757-7979-919191919191")
+
+        async def _existing_by_telegram(telegram_id):
+            self.assertEqual(telegram_id, 700006)
+            return [
+                SimpleNamespace(
+                    uuid=existing_uuid,
+                    username="legacy_prefix_tg700006",
+                    status="ACTIVE",
+                    expire_at=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+                    subscription_url="https://panel.test/sub/existing-telegram",
+                    telegram_id=700006,
+                    email="existing-telegram@example.com",
+                    tag=None,
+                    hwid_device_limit=2,
+                )
+            ]
+
+        gateway.get_users_by_telegram_id = _existing_by_telegram
+
+        user = await gateway.provision_user(
+            user_uuid=requested_uuid,
+            expire_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
+            email="existing-telegram@example.com",
+            telegram_id=700006,
+            is_trial=False,
+            hwid_device_limit=2,
+        )
+
+        self.assertEqual(gateway._sdk.users.created_bodies, [])
+        self.assertEqual(len(gateway._sdk.users.updated_bodies), 1)
+        self.assertEqual(gateway._sdk.users.updated_bodies[0].uuid, existing_uuid)
+        self.assertEqual(user.uuid, existing_uuid)
 
 
 if __name__ == "__main__":

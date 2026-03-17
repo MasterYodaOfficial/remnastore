@@ -5,7 +5,7 @@ from bot.services.i18n import translate
 
 class BotI18nTests(unittest.TestCase):
     def test_returns_russian_translation_by_default(self) -> None:
-        self.assertEqual(translate("common.actions.open_webapp"), "Открыть личный кабинет")
+        self.assertEqual(translate("common.actions.open_webapp"), "🚀 Открыть кабинет")
 
     def test_falls_back_to_russian_for_unknown_locale(self) -> None:
         self.assertEqual(

@@ -29,7 +29,8 @@ packages/ Общие пакеты
 ### 1. Подготовить окружение
 
 ```bash
-cp .env_old.example .env_old
+cp .env.example .env
+uv sync --frozen
 ```
 
 Минимально заполни в `.env`:
@@ -50,6 +51,34 @@ cp .env_old.example .env_old
 
 Подробный production-контракт по env-переменным: [`docs/production-env.md`](docs/production-env.md)
 
+### Python workflow через uv
+
+- основной Python environment в репозитории: `.venv`
+- локально запускать Python-команды нужно через `uv run ...`
+- интерпретатор PyCharm вида `/home/yoda/PycharmProjects/remnastore/.venv/bin/python` нормальный, это uv-managed virtualenv
+- `web` и `admin` не переводятся на `uv`, потому что это Node/Vite приложения и для них остаются `npm`/`package-lock.json`
+
+Примеры:
+
+```bash
+uv run --no-sync python -m unittest discover -s apps/bot/tests -p 'test_*.py'
+uv run --no-sync python -m unittest discover -s apps/api/tests -p 'test_*.py'
+./scripts/test.sh bot
+./scripts/test.sh api
+./scripts/test.sh all
+./scripts/coverage.sh api
+./scripts/coverage.sh bot --html
+./scripts/coverage.sh all --fail-under 30
+```
+
+Coverage считается отдельно для:
+- `apps/api/app`
+- `apps/bot/bot`
+
+HTML-отчеты сохраняются в:
+- `.coverage_html/api`
+- `.coverage_html/bot`
+
 ### 2. Поднять dev-стек
 
 ```bash
@@ -68,6 +97,7 @@ cp .env_old.example .env_old
 - исходники для dev примонтированы в контейнеры, поэтому изменения в коде не требуют `docker compose up --build`
 - если меняешь зависимости или Dockerfile, тогда запускай `./scripts/dev.sh rebuild` или `./scripts/dev.sh rebuild api`
 - все основные действия теперь доступны через один helper: `./scripts/dev.sh help`
+- Python-сервисы внутри контейнеров запускаются через `uv run --no-sync`, то есть dev/prod стек использует тот же dependency lock и тот же `.venv`-workflow
 
 ## Полезные команды
 
