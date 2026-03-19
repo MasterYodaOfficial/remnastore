@@ -35,6 +35,7 @@ from app.integrations.remnawave import (
     RemnawaveUser,
     get_remnawave_gateway,
 )
+from app.services.account_events import append_account_event
 from app.services.cache import get_cache
 from app.services.ledger import transfer_balance_for_merge
 
@@ -272,6 +273,18 @@ async def create_telegram_link_token(
     
     session.add(token)
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=account_id,
+        actor_account_id=account_id,
+        event_type="account.link.telegram_token.created",
+        source="api",
+        payload={
+            "token_id": token.id,
+            "link_type": token.link_type.value if token.link_type is not None else None,
+            "expires_at": token.expires_at.isoformat(),
+        },
+    )
     
     # Return token and URL template (bot username will be set in config)
     return link_token, f"https://t.me/{{bot_username}}?start={link_token}"
@@ -305,6 +318,18 @@ async def create_browser_link_token(
 
     session.add(token)
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=account_id,
+        actor_account_id=account_id,
+        event_type="account.link.browser_token.created",
+        source="api",
+        payload={
+            "token_id": token.id,
+            "link_type": token.link_type.value if token.link_type is not None else None,
+            "expires_at": token.expires_at.isoformat(),
+        },
+    )
 
     webapp_base_url = webapp_url.rstrip("/")
     return (
@@ -340,13 +365,13 @@ async def get_link_token(
     token = result.scalar_one_or_none()
 
     if token is None:
-        raise LinkTokenNotFoundError(f"Link token not found: {link_token}")
+        raise LinkTokenNotFoundError("link token not found")
 
     if token.consumed_at is not None:
-        raise LinkTokenAlreadyConsumedError(f"Link token already consumed: {link_token}")
+        raise LinkTokenAlreadyConsumedError("link token already consumed")
 
     if _utcnow() >= token.expires_at:
-        raise LinkTokenExpiredError(f"Link token expired: {link_token}")
+        raise LinkTokenExpiredError("link token expired")
 
     if expected_link_type is not None and token.link_type != expected_link_type:
         raise LinkTokenTypeMismatchError(
@@ -1012,8 +1037,10 @@ async def link_telegram_to_account(
         select(Account).where(Account.telegram_id == telegram_id).with_for_update()
     )
     telegram_account = result.scalar_one_or_none()
+    merged_account_id: uuid.UUID | None = None
 
     if telegram_account is not None and telegram_account.id != account.id:
+        merged_account_id = telegram_account.id
         account = await merge_accounts(
             session,
             source_account_id=telegram_account.id,
@@ -1030,6 +1057,17 @@ async def link_telegram_to_account(
     account.last_seen_at = _utcnow()
 
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_account_id=account.id,
+        event_type="account.link.telegram_confirmed",
+        source="api",
+        payload={
+            "telegram_id": telegram_id,
+            "merged_account_id": merged_account_id,
+        },
+    )
     await _clear_account_cache(account.id)
     return account
 
@@ -1050,6 +1088,16 @@ async def link_browser_oauth_to_telegram_account(
         last_login_source=LoginSource.BROWSER_OAUTH,
     )
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_account_id=browser_account_id,
+        event_type="account.link.browser_completed",
+        source="api",
+        payload={
+            "merged_account_id": browser_account_id,
+        },
+    )
     return account
 
 

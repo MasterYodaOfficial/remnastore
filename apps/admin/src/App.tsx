@@ -88,6 +88,65 @@ type AdminAccountLedgerHistoryResponse = {
   offset: number;
 };
 
+type AdminAccountEventLog = {
+  id: number;
+  account_id: string | null;
+  actor_account_id: string | null;
+  actor_admin_id: string | null;
+  event_type: string;
+  outcome: string;
+  source: string | null;
+  request_id: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
+type AdminAccountEventLogHistoryResponse = {
+  items: AdminAccountEventLog[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+type AdminEventAccountSnapshot = {
+  id: string | null;
+  email: string | null;
+  display_name: string | null;
+  telegram_id: number | null;
+  username: string | null;
+  status: "active" | "blocked" | null;
+};
+
+type AdminEventAdminSnapshot = {
+  id: string | null;
+  username: string | null;
+  email: string | null;
+  full_name: string | null;
+};
+
+type AdminGlobalAccountEventLog = {
+  id: number;
+  account_id: string | null;
+  actor_account_id: string | null;
+  actor_admin_id: string | null;
+  event_type: string;
+  outcome: string;
+  source: string | null;
+  request_id: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+  account: AdminEventAccountSnapshot | null;
+  actor_account: AdminEventAccountSnapshot | null;
+  actor_admin: AdminEventAdminSnapshot | null;
+};
+
+type AdminGlobalAccountEventLogHistoryResponse = {
+  items: AdminGlobalAccountEventLog[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 type AdminAccountPayment = {
   id: number;
   provider: string;
@@ -626,11 +685,23 @@ type PromoCampaignFilter = PromoCampaignStatus | "all";
 type PromoRedemptionStatusFilter = PromoRedemptionStatus | "all";
 type PromoRedemptionContextFilter = PromoRedemptionContext | "all";
 
-type AdminView = "dashboard" | "accounts" | "broadcasts" | "withdrawals" | "promos";
+type GlobalEventSearchFilters = {
+  eventType: AccountEventTypeFilterOption;
+  outcome: AccountEventOutcomeFilterOption;
+  source: AccountEventSourceFilterOption;
+  requestId: string;
+  accountId: string;
+  actorAccountId: string;
+  actorAdminId: string;
+  telegramId: string;
+};
+
+type AdminView = "dashboard" | "accounts" | "events" | "broadcasts" | "withdrawals" | "promos";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000";
 const TOKEN_KEY = "remnastore_admin_token";
 const ADMIN_LEDGER_HISTORY_PAGE_SIZE = 20;
+const ADMIN_ACCOUNT_EVENT_HISTORY_PAGE_SIZE = 20;
 const BROADCAST_AUDIENCE_SEGMENTS = [
   "all",
   "active",
@@ -679,8 +750,58 @@ const LEDGER_ENTRY_FILTER_OPTIONS = [
   "merge_credit",
   "merge_debit",
 ] as const;
+const ACCOUNT_EVENT_TYPE_FILTER_OPTIONS = [
+  "all",
+  "auth.telegram_webapp",
+  "account.link.telegram_token.created",
+  "account.link.browser_token.created",
+  "account.link.telegram_confirmed",
+  "account.link.browser_completed",
+  "admin.account_status_change",
+  "admin.balance_adjustment",
+  "admin.subscription_grant",
+  "admin.withdrawal.status_change",
+  "payment.intent.created",
+  "payment.topup.applied",
+  "payment.finalized",
+  "subscription.trial.activated",
+  "subscription.remnawave.webhook",
+  "subscription.wallet_purchase.staged",
+  "subscription.wallet_purchase.applied",
+  "subscription.direct_payment.staged",
+  "subscription.direct_payment.applied",
+  "withdrawal.created",
+  "referral.claim",
+  "referral.attributed",
+  "referral.intent.apply",
+  "referral.reward.granted",
+] as const;
+const ACCOUNT_EVENT_OUTCOME_FILTER_OPTIONS = ["all", "success", "failure", "denied", "error"] as const;
+const ACCOUNT_EVENT_SOURCE_FILTER_OPTIONS = [
+  "all",
+  "api",
+  "bot",
+  "admin",
+  "system",
+  "webhook",
+  "reconcile",
+  "maintenance",
+] as const;
 
 type LedgerEntryFilterOption = (typeof LEDGER_ENTRY_FILTER_OPTIONS)[number];
+type AccountEventTypeFilterOption = (typeof ACCOUNT_EVENT_TYPE_FILTER_OPTIONS)[number];
+type AccountEventOutcomeFilterOption = (typeof ACCOUNT_EVENT_OUTCOME_FILTER_OPTIONS)[number];
+type AccountEventSourceFilterOption = (typeof ACCOUNT_EVENT_SOURCE_FILTER_OPTIONS)[number];
+const EMPTY_GLOBAL_EVENT_SEARCH_FILTERS: GlobalEventSearchFilters = {
+  eventType: "all",
+  outcome: "all",
+  source: "all",
+  requestId: "",
+  accountId: "",
+  actorAccountId: "",
+  actorAdminId: "",
+  telegramId: "",
+};
 
 function createBroadcastButtonDraft(button?: AdminBroadcastButton): BroadcastButtonDraft {
   const draftId =
@@ -858,6 +979,16 @@ function humanizeLedgerEntryFilter(entryType: LedgerEntryFilterOption): string {
   return humanizeLedgerType(entryType);
 }
 
+function formatCompactId(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  if (value.length <= 14) {
+    return value;
+  }
+  return `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
 function describeLedgerEntryContext(entry: AdminAccountLedgerEntry): string {
   const context: string[] = [];
 
@@ -874,6 +1005,232 @@ function describeLedgerEntryContext(entry: AdminAccountLedgerEntry): string {
   }
 
   return context.join(" · ");
+}
+
+function humanizeAccountEventType(eventType: string): string {
+  switch (eventType) {
+    case "auth.telegram_webapp":
+      return "Вход через Telegram WebApp";
+    case "account.link.telegram_token.created":
+      return "Создан Telegram link token";
+    case "account.link.browser_token.created":
+      return "Создан browser link token";
+    case "account.link.telegram_confirmed":
+      return "Подтвержден Telegram link";
+    case "account.link.browser_completed":
+      return "Завершен browser link";
+    case "admin.account_status_change":
+      return "Смена статуса аккаунта";
+    case "admin.balance_adjustment":
+      return "Ручная корректировка баланса";
+    case "admin.subscription_grant":
+      return "Ручная выдача подписки";
+    case "admin.withdrawal.status_change":
+      return "Смена статуса вывода";
+    case "payment.intent.created":
+      return "Создан payment intent";
+    case "payment.topup.applied":
+      return "Пополнение применено";
+    case "payment.finalized":
+      return "Финализация платежа";
+    case "subscription.trial.activated":
+      return "Активирован trial";
+    case "subscription.remnawave.webhook":
+      return "Обработан Remnawave webhook";
+    case "subscription.wallet_purchase.staged":
+      return "Подготовлена покупка с баланса";
+    case "subscription.wallet_purchase.applied":
+      return "Покупка с баланса применена";
+    case "subscription.direct_payment.staged":
+      return "Подготовлена покупка по платежу";
+    case "subscription.direct_payment.applied":
+      return "Покупка по платежу применена";
+    case "withdrawal.created":
+      return "Создан вывод";
+    case "referral.claim":
+      return "Применен referral code";
+    case "referral.attributed":
+      return "Начислено referral attribution";
+    case "referral.intent.apply":
+      return "Применение referral intent";
+    case "referral.reward.granted":
+      return "Выдана referral награда";
+    default:
+      return eventType;
+  }
+}
+
+function humanizeAccountEventOutcome(outcome: string): string {
+  switch (outcome) {
+    case "success":
+      return "Успех";
+    case "failure":
+      return "Ошибка";
+    case "denied":
+      return "Запрещено";
+    case "error":
+      return "Сбой";
+    default:
+      return outcome;
+  }
+}
+
+function humanizeAccountEventSource(source: string | null): string {
+  switch (source) {
+    case null:
+      return "Не указан";
+    case "api":
+      return "API";
+    case "bot":
+      return "Bot";
+    case "admin":
+      return "Admin";
+    case "system":
+      return "System";
+    case "webhook":
+      return "Webhook";
+    case "reconcile":
+      return "Reconcile";
+    case "maintenance":
+      return "Maintenance";
+    default:
+      return source;
+  }
+}
+
+function getAccountEventOutcomePillClass(outcome: string): string {
+  switch (outcome) {
+    case "success":
+      return "status-pill--paid";
+    case "failure":
+    case "denied":
+    case "error":
+      return "status-pill--failed";
+    default:
+      return "status-pill--pending";
+  }
+}
+
+function formatAccountEventPayloadValue(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    const preview = value.slice(0, 3).map((item) => formatAccountEventPayloadValue(item)).join(", ");
+    return value.length > 3 ? `${preview}, +${value.length - 3}` : preview;
+  }
+  try {
+    return JSON.stringify(value) || String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function summarizeAccountEventPayload(payload: Record<string, unknown> | null): string | null {
+  if (!payload) {
+    return null;
+  }
+
+  const preferredKeys = [
+    "comment",
+    "reason",
+    "plan_code",
+    "amount",
+    "currency",
+    "status",
+    "previous_status",
+    "payment_id",
+    "withdrawal_id",
+    "subscription_grant_id",
+    "referral_code",
+    "provider",
+    "telegram_id",
+  ];
+  const entries = [
+    ...preferredKeys
+      .filter((key) => key in payload)
+      .map((key) => [key, payload[key]] as const),
+    ...Object.entries(payload).filter(([key]) => !preferredKeys.includes(key)),
+  ];
+  const parts: string[] = [];
+
+  for (const [key, value] of entries) {
+    if (parts.length >= 3) {
+      break;
+    }
+    if (value === undefined || value === null || typeof value === "object") {
+      continue;
+    }
+    parts.push(`${key}: ${formatAccountEventPayloadValue(value)}`);
+  }
+
+  if (parts.length > 0) {
+    return parts.join(" · ");
+  }
+
+  return JSON.stringify(payload) || null;
+}
+
+function describeAccountEventActor(event: AdminAccountEventLog): string {
+  if (event.actor_admin_id) {
+    return `Admin ${formatCompactId(event.actor_admin_id)}`;
+  }
+  if (event.actor_account_id) {
+    return `Account ${formatCompactId(event.actor_account_id)}`;
+  }
+  return "Actor не указан";
+}
+
+function normalizeGlobalEventSearchFilters(filters: GlobalEventSearchFilters): GlobalEventSearchFilters {
+  return {
+    eventType: filters.eventType,
+    outcome: filters.outcome,
+    source: filters.source,
+    requestId: filters.requestId.trim(),
+    accountId: filters.accountId.trim(),
+    actorAccountId: filters.actorAccountId.trim(),
+    actorAdminId: filters.actorAdminId.trim(),
+    telegramId: filters.telegramId.trim(),
+  };
+}
+
+function formatAdminIdentity(admin: AdminEventAdminSnapshot | null): string {
+  if (!admin) {
+    return "Admin не указан";
+  }
+  return admin.full_name || admin.username || admin.email || admin.id || "Admin";
+}
+
+function describeGlobalEventTargetAccount(event: AdminGlobalAccountEventLog): string {
+  if (event.account) {
+    return formatAccountIdentity(event.account);
+  }
+  if (event.account_id) {
+    return `Account ${formatCompactId(event.account_id)}`;
+  }
+  return "Без target account";
+}
+
+function describeGlobalEventActor(event: AdminGlobalAccountEventLog): string {
+  if (event.actor_admin) {
+    return formatAdminIdentity(event.actor_admin);
+  }
+  if (event.actor_account) {
+    return formatAccountIdentity(event.actor_account);
+  }
+  if (event.actor_admin_id) {
+    return `Admin ${formatCompactId(event.actor_admin_id)}`;
+  }
+  if (event.actor_account_id) {
+    return `Account ${formatCompactId(event.actor_account_id)}`;
+  }
+  return "Actor не указан";
 }
 
 function humanizeWithdrawalStatus(status: string): string {
@@ -1405,6 +1762,29 @@ export default function App() {
   const [ledgerHistoryFilter, setLedgerHistoryFilter] = useState<LedgerEntryFilterOption>("all");
   const [ledgerHistoryLoading, setLedgerHistoryLoading] = useState(false);
   const [ledgerHistoryLoadingMore, setLedgerHistoryLoadingMore] = useState(false);
+  const [accountEventHistoryItems, setAccountEventHistoryItems] = useState<AdminAccountEventLog[]>([]);
+  const [accountEventHistoryTotal, setAccountEventHistoryTotal] = useState(0);
+  const [accountEventTypeFilter, setAccountEventTypeFilter] =
+    useState<AccountEventTypeFilterOption>("all");
+  const [accountEventOutcomeFilter, setAccountEventOutcomeFilter] =
+    useState<AccountEventOutcomeFilterOption>("all");
+  const [accountEventSourceFilter, setAccountEventSourceFilter] =
+    useState<AccountEventSourceFilterOption>("all");
+  const [accountEventRequestIdInput, setAccountEventRequestIdInput] = useState("");
+  const [accountEventRequestIdFilter, setAccountEventRequestIdFilter] = useState("");
+  const [accountEventHistoryLoading, setAccountEventHistoryLoading] = useState(false);
+  const [accountEventHistoryLoadingMore, setAccountEventHistoryLoadingMore] = useState(false);
+  const [globalEventSearchDraft, setGlobalEventSearchDraft] = useState<GlobalEventSearchFilters>({
+    ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS,
+  });
+  const [globalEventSearchFilters, setGlobalEventSearchFilters] = useState<GlobalEventSearchFilters>({
+    ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS,
+  });
+  const [globalEventItems, setGlobalEventItems] = useState<AdminGlobalAccountEventLog[]>([]);
+  const [globalEventTotal, setGlobalEventTotal] = useState(0);
+  const [selectedGlobalEventId, setSelectedGlobalEventId] = useState<number | null>(null);
+  const [globalEventLoading, setGlobalEventLoading] = useState(false);
+  const [globalEventLoadingMore, setGlobalEventLoadingMore] = useState(false);
   const [subscriptionPlans, setSubscriptionPlans] = useState<AdminSubscriptionPlan[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
   const [balanceAdjustmentAmount, setBalanceAdjustmentAmount] = useState("");
@@ -1651,6 +2031,28 @@ export default function App() {
     [withdrawalItems],
   );
   const hasMoreLedgerHistory = ledgerHistoryItems.length < ledgerHistoryTotal;
+  const hasMoreAccountEventHistory = accountEventHistoryItems.length < accountEventHistoryTotal;
+  const accountEventFiltersActive = Boolean(
+    accountEventTypeFilter !== "all" ||
+      accountEventOutcomeFilter !== "all" ||
+      accountEventSourceFilter !== "all" ||
+      accountEventRequestIdFilter,
+  );
+  const selectedGlobalEvent = useMemo(
+    () => globalEventItems.find((item) => item.id === selectedGlobalEventId) || null,
+    [globalEventItems, selectedGlobalEventId],
+  );
+  const hasMoreGlobalEvents = globalEventItems.length < globalEventTotal;
+  const globalEventFiltersActive = Boolean(
+    globalEventSearchFilters.eventType !== "all" ||
+      globalEventSearchFilters.outcome !== "all" ||
+      globalEventSearchFilters.source !== "all" ||
+      globalEventSearchFilters.requestId ||
+      globalEventSearchFilters.accountId ||
+      globalEventSearchFilters.actorAccountId ||
+      globalEventSearchFilters.actorAdminId ||
+      globalEventSearchFilters.telegramId,
+  );
   const broadcastEditorMode = selectedBroadcastId ? "edit" : "create";
   const broadcastIsDraft = !selectedBroadcast || selectedBroadcast.status === "draft";
   const canManageBroadcastRuntime = Boolean(profile?.is_superuser && selectedBroadcastId !== null);
@@ -1983,6 +2385,162 @@ export default function App() {
       }
     },
     [ledgerHistoryFilter],
+  );
+
+  const loadAccountEventHistory = useCallback(
+    async (
+      accountId: string,
+      activeToken: string,
+      options?: {
+        offset?: number;
+        append?: boolean;
+        eventType?: AccountEventTypeFilterOption;
+        outcome?: AccountEventOutcomeFilterOption;
+        source?: AccountEventSourceFilterOption;
+        requestId?: string;
+      },
+    ): Promise<AdminAccountEventLogHistoryResponse | null> => {
+      const offset = options?.offset ?? 0;
+      const append = options?.append ?? false;
+      const eventType = options?.eventType ?? accountEventTypeFilter;
+      const outcome = options?.outcome ?? accountEventOutcomeFilter;
+      const source = options?.source ?? accountEventSourceFilter;
+      const requestId = (options?.requestId ?? accountEventRequestIdFilter).trim();
+      const searchParams = new URLSearchParams({
+        limit: String(ADMIN_ACCOUNT_EVENT_HISTORY_PAGE_SIZE),
+        offset: String(offset),
+      });
+
+      if (eventType !== "all") {
+        searchParams.append("event_type", eventType);
+      }
+      if (outcome !== "all") {
+        searchParams.append("outcome", outcome);
+      }
+      if (source !== "all") {
+        searchParams.append("source", source);
+      }
+      if (requestId) {
+        searchParams.set("request_id", requestId);
+      }
+
+      if (append) {
+        setAccountEventHistoryLoadingMore(true);
+      } else {
+        setAccountEventHistoryLoading(true);
+      }
+
+      try {
+        const response = await adminFetch<AdminAccountEventLogHistoryResponse>(
+          `/api/v1/admin/accounts/${accountId}/event-logs?${searchParams.toString()}`,
+          activeToken,
+        );
+        setAccountEventHistoryItems((currentItems) =>
+          append ? [...currentItems, ...response.items] : response.items,
+        );
+        setAccountEventHistoryTotal(response.total);
+        return response;
+      } catch (fetchError) {
+        if (!append) {
+          setAccountEventHistoryItems([]);
+          setAccountEventHistoryTotal(0);
+        }
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить timeline событий");
+        return null;
+      } finally {
+        if (append) {
+          setAccountEventHistoryLoadingMore(false);
+        } else {
+          setAccountEventHistoryLoading(false);
+        }
+      }
+    },
+    [
+      accountEventOutcomeFilter,
+      accountEventRequestIdFilter,
+      accountEventSourceFilter,
+      accountEventTypeFilter,
+    ],
+  );
+
+  const loadGlobalEventSearch = useCallback(
+    async (
+      activeToken: string,
+      options?: {
+        offset?: number;
+        append?: boolean;
+        filters?: GlobalEventSearchFilters;
+      },
+    ): Promise<AdminGlobalAccountEventLogHistoryResponse | null> => {
+      const offset = options?.offset ?? 0;
+      const append = options?.append ?? false;
+      const filters = normalizeGlobalEventSearchFilters(options?.filters ?? globalEventSearchFilters);
+      const searchParams = new URLSearchParams({
+        limit: String(ADMIN_ACCOUNT_EVENT_HISTORY_PAGE_SIZE),
+        offset: String(offset),
+      });
+
+      if (filters.eventType !== "all") {
+        searchParams.append("event_type", filters.eventType);
+      }
+      if (filters.outcome !== "all") {
+        searchParams.append("outcome", filters.outcome);
+      }
+      if (filters.source !== "all") {
+        searchParams.append("source", filters.source);
+      }
+      if (filters.requestId) {
+        searchParams.set("request_id", filters.requestId);
+      }
+      if (filters.accountId) {
+        searchParams.set("account_id", filters.accountId);
+      }
+      if (filters.actorAccountId) {
+        searchParams.set("actor_account_id", filters.actorAccountId);
+      }
+      if (filters.actorAdminId) {
+        searchParams.set("actor_admin_id", filters.actorAdminId);
+      }
+      if (filters.telegramId) {
+        searchParams.set("telegram_id", filters.telegramId);
+      }
+
+      if (append) {
+        setGlobalEventLoadingMore(true);
+      } else {
+        setGlobalEventLoading(true);
+      }
+
+      try {
+        const response = await adminFetch<AdminGlobalAccountEventLogHistoryResponse>(
+          `/api/v1/admin/accounts/event-logs/search?${searchParams.toString()}`,
+          activeToken,
+        );
+        setGlobalEventItems((currentItems) => (append ? [...currentItems, ...response.items] : response.items));
+        setGlobalEventTotal(response.total);
+        setSelectedGlobalEventId((currentSelection) =>
+          response.items.some((item) => item.id === currentSelection)
+            ? currentSelection
+            : (append ? currentSelection : (response.items[0]?.id ?? null)),
+        );
+        return response;
+      } catch (fetchError) {
+        if (!append) {
+          setGlobalEventItems([]);
+          setGlobalEventTotal(0);
+          setSelectedGlobalEventId(null);
+        }
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить глобальный event search");
+        return null;
+      } finally {
+        if (append) {
+          setGlobalEventLoadingMore(false);
+        } else {
+          setGlobalEventLoading(false);
+        }
+      }
+    },
+    [globalEventSearchFilters],
   );
 
   const loadSubscriptionPlans = useCallback(
@@ -2335,6 +2893,18 @@ export default function App() {
       setSelectedAccount(null);
       setLedgerHistoryItems([]);
       setLedgerHistoryTotal(0);
+      setAccountEventHistoryItems([]);
+      setAccountEventHistoryTotal(0);
+      setAccountEventTypeFilter("all");
+      setAccountEventOutcomeFilter("all");
+      setAccountEventSourceFilter("all");
+      setAccountEventRequestIdInput("");
+      setAccountEventRequestIdFilter("");
+      setGlobalEventSearchDraft({ ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS });
+      setGlobalEventSearchFilters({ ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS });
+      setGlobalEventItems([]);
+      setGlobalEventTotal(0);
+      setSelectedGlobalEventId(null);
       setWithdrawalItems([]);
       setWithdrawalTotal(0);
       setSelectedWithdrawalId(null);
@@ -2454,6 +3024,11 @@ export default function App() {
         setSelectedAccount(null);
         setLedgerHistoryItems([]);
         setLedgerHistoryTotal(0);
+        setAccountEventHistoryItems([]);
+        setAccountEventHistoryTotal(0);
+        setGlobalEventItems([]);
+        setGlobalEventTotal(0);
+        setSelectedGlobalEventId(null);
         setNotice(null);
         setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить админку");
       } finally {
@@ -2503,6 +3078,18 @@ export default function App() {
 
     void loadPromoCampaigns(token);
   }, [activeView, loadPromoCampaigns, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "events") {
+      return;
+    }
+
+    void loadGlobalEventSearch(token, {
+      offset: 0,
+      append: false,
+      filters: globalEventSearchFilters,
+    });
+  }, [activeView, globalEventSearchFilters, loadGlobalEventSearch, token]);
 
   useEffect(() => {
     if (!token || activeView !== "broadcasts") {
@@ -2583,6 +3170,30 @@ export default function App() {
   }, [activeView, ledgerHistoryFilter, loadLedgerHistory, selectedAccountId, token]);
 
   useEffect(() => {
+    if (!token || activeView !== "accounts" || !selectedAccountId) {
+      return;
+    }
+
+    void loadAccountEventHistory(selectedAccountId, token, {
+      offset: 0,
+      append: false,
+      eventType: accountEventTypeFilter,
+      outcome: accountEventOutcomeFilter,
+      source: accountEventSourceFilter,
+      requestId: accountEventRequestIdFilter,
+    });
+  }, [
+    accountEventOutcomeFilter,
+    accountEventRequestIdFilter,
+    accountEventSourceFilter,
+    accountEventTypeFilter,
+    activeView,
+    loadAccountEventHistory,
+    selectedAccountId,
+    token,
+  ]);
+
+  useEffect(() => {
     if (subscriptionGrantPlanCode || subscriptionPlans.length === 0) {
       return;
     }
@@ -2603,6 +3214,8 @@ export default function App() {
   useEffect(() => {
     setLedgerHistoryItems([]);
     setLedgerHistoryTotal(0);
+    setAccountEventHistoryItems([]);
+    setAccountEventHistoryTotal(0);
   }, [selectedAccountId]);
 
   useEffect(() => {
@@ -2826,6 +3439,18 @@ export default function App() {
     setSelectedAccount(null);
     setLedgerHistoryItems([]);
     setLedgerHistoryTotal(0);
+    setAccountEventHistoryItems([]);
+    setAccountEventHistoryTotal(0);
+    setAccountEventTypeFilter("all");
+    setAccountEventOutcomeFilter("all");
+    setAccountEventSourceFilter("all");
+    setAccountEventRequestIdInput("");
+    setAccountEventRequestIdFilter("");
+    setGlobalEventSearchDraft({ ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS });
+    setGlobalEventSearchFilters({ ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS });
+    setGlobalEventItems([]);
+    setGlobalEventTotal(0);
+    setSelectedGlobalEventId(null);
     setWithdrawalItems([]);
     setWithdrawalTotal(0);
     setSelectedWithdrawalId(null);
@@ -2938,6 +3563,21 @@ export default function App() {
           offset: 0,
           append: false,
           entryType: ledgerHistoryFilter,
+        });
+        await loadAccountEventHistory(selectedAccountId, token, {
+          offset: 0,
+          append: false,
+          eventType: accountEventTypeFilter,
+          outcome: accountEventOutcomeFilter,
+          source: accountEventSourceFilter,
+          requestId: accountEventRequestIdFilter,
+        });
+      }
+      if (activeView === "events") {
+        await loadGlobalEventSearch(token, {
+          offset: 0,
+          append: false,
+          filters: globalEventSearchFilters,
         });
       }
       if (activeView === "withdrawals") {
@@ -4164,6 +4804,14 @@ export default function App() {
         append: false,
         entryType: ledgerHistoryFilter,
       });
+      await loadAccountEventHistory(selectedAccount.id, token, {
+        offset: 0,
+        append: false,
+        eventType: accountEventTypeFilter,
+        outcome: accountEventOutcomeFilter,
+        source: accountEventSourceFilter,
+        requestId: accountEventRequestIdFilter,
+      });
       await loadDashboard(token);
       setBalanceAdjustmentAmount("");
       setBalanceAdjustmentComment("");
@@ -4241,6 +4889,14 @@ export default function App() {
         );
       }
 
+      await loadAccountEventHistory(selectedAccount.id, token, {
+        offset: 0,
+        append: false,
+        eventType: accountEventTypeFilter,
+        outcome: accountEventOutcomeFilter,
+        source: accountEventSourceFilter,
+        requestId: accountEventRequestIdFilter,
+      });
       await loadDashboard(token);
       setSubscriptionGrantComment("");
       setNotice(
@@ -4312,6 +4968,14 @@ export default function App() {
         );
       }
 
+      await loadAccountEventHistory(selectedAccount.id, token, {
+        offset: 0,
+        append: false,
+        eventType: accountEventTypeFilter,
+        outcome: accountEventOutcomeFilter,
+        source: accountEventSourceFilter,
+        requestId: accountEventRequestIdFilter,
+      });
       await loadDashboard(token);
       setStatusChangeComment("");
       setNotice(
@@ -4338,6 +5002,77 @@ export default function App() {
       append: true,
       entryType: ledgerHistoryFilter,
     });
+  }
+
+  function handleApplyAccountEventFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAccountEventRequestIdFilter(accountEventRequestIdInput.trim());
+  }
+
+  function handleResetAccountEventFilters() {
+    setAccountEventTypeFilter("all");
+    setAccountEventOutcomeFilter("all");
+    setAccountEventSourceFilter("all");
+    setAccountEventRequestIdInput("");
+    setAccountEventRequestIdFilter("");
+  }
+
+  async function handleLoadMoreAccountEventHistory() {
+    if (
+      !token ||
+      !selectedAccountId ||
+      !hasMoreAccountEventHistory ||
+      accountEventHistoryLoadingMore
+    ) {
+      return;
+    }
+
+    await loadAccountEventHistory(selectedAccountId, token, {
+      offset: accountEventHistoryItems.length,
+      append: true,
+      eventType: accountEventTypeFilter,
+      outcome: accountEventOutcomeFilter,
+      source: accountEventSourceFilter,
+      requestId: accountEventRequestIdFilter,
+    });
+  }
+
+  function handleApplyGlobalEventSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setGlobalEventSearchFilters(normalizeGlobalEventSearchFilters(globalEventSearchDraft));
+  }
+
+  function handleResetGlobalEventSearch() {
+    setGlobalEventSearchDraft({ ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS });
+    setGlobalEventSearchFilters({ ...EMPTY_GLOBAL_EVENT_SEARCH_FILTERS });
+  }
+
+  async function handleLoadMoreGlobalEvents() {
+    if (!token || !hasMoreGlobalEvents || globalEventLoadingMore) {
+      return;
+    }
+
+    await loadGlobalEventSearch(token, {
+      offset: globalEventItems.length,
+      append: true,
+      filters: globalEventSearchFilters,
+    });
+  }
+
+  async function handleOpenGlobalEventAccount(eventItem: AdminGlobalAccountEventLog) {
+    if (!token || !eventItem.account_id) {
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    setAccountEventTypeFilter("all");
+    setAccountEventOutcomeFilter("all");
+    setAccountEventSourceFilter("all");
+    setAccountEventRequestIdInput(eventItem.request_id || "");
+    setAccountEventRequestIdFilter(eventItem.request_id || "");
+    setActiveView("accounts");
+    await loadAccountDetail(eventItem.account_id, token);
   }
 
   async function handleWithdrawalStatusChange(targetStatus: "in_progress" | "paid" | "rejected") {
@@ -4501,6 +5236,13 @@ export default function App() {
           onClick={() => setActiveView("accounts")}
         >
           Пользователи
+        </button>
+        <button
+          type="button"
+          className={activeView === "events" ? "module-nav__button module-nav__button--active" : "module-nav__button"}
+          onClick={() => setActiveView("events")}
+        >
+          События
         </button>
         <button
           type="button"
@@ -4975,6 +5717,152 @@ export default function App() {
                   <article className="detail-section">
                     <div className="detail-section__header detail-section__header--stacked">
                       <div>
+                        <span className="eyebrow">Account timeline</span>
+                        <h3>Business и audit события аккаунта</h3>
+                      </div>
+                      <span className="form-hint">
+                        Здесь видны auth, linking, payments, referrals, withdrawals и admin actions.
+                      </span>
+                    </div>
+                    <form className="event-filter-grid" onSubmit={handleApplyAccountEventFilters}>
+                      <label className="form-field">
+                        <span>Event type</span>
+                        <select
+                          value={accountEventTypeFilter}
+                          onChange={(event) =>
+                            setAccountEventTypeFilter(event.target.value as AccountEventTypeFilterOption)
+                          }
+                          disabled={accountEventHistoryLoading}
+                        >
+                          {ACCOUNT_EVENT_TYPE_FILTER_OPTIONS.map((eventType) => (
+                            <option key={eventType} value={eventType}>
+                              {eventType === "all" ? "Все события" : humanizeAccountEventType(eventType)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="form-field">
+                        <span>Outcome</span>
+                        <select
+                          value={accountEventOutcomeFilter}
+                          onChange={(event) =>
+                            setAccountEventOutcomeFilter(
+                              event.target.value as AccountEventOutcomeFilterOption,
+                            )
+                          }
+                          disabled={accountEventHistoryLoading}
+                        >
+                          {ACCOUNT_EVENT_OUTCOME_FILTER_OPTIONS.map((outcome) => (
+                            <option key={outcome} value={outcome}>
+                              {outcome === "all" ? "Все outcomes" : humanizeAccountEventOutcome(outcome)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="form-field">
+                        <span>Source</span>
+                        <select
+                          value={accountEventSourceFilter}
+                          onChange={(event) =>
+                            setAccountEventSourceFilter(event.target.value as AccountEventSourceFilterOption)
+                          }
+                          disabled={accountEventHistoryLoading}
+                        >
+                          {ACCOUNT_EVENT_SOURCE_FILTER_OPTIONS.map((source) => (
+                            <option key={source} value={source}>
+                              {source === "all" ? "Все источники" : humanizeAccountEventSource(source)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="form-field">
+                        <span>Request ID</span>
+                        <input
+                          value={accountEventRequestIdInput}
+                          onChange={(event) => setAccountEventRequestIdInput(event.target.value)}
+                          placeholder="Например: req_123456"
+                        />
+                      </label>
+                      <div className="event-filter-actions">
+                        <button className="ghost-button" type="submit" disabled={accountEventHistoryLoading}>
+                          Применить request_id
+                        </button>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={handleResetAccountEventFilters}
+                          disabled={!accountEventFiltersActive && !accountEventRequestIdInput}
+                        >
+                          Сбросить
+                        </button>
+                      </div>
+                    </form>
+                    <div className="activity-list">
+                      {accountEventHistoryLoading ? (
+                        <div className="activity-empty">Загружаем timeline событий...</div>
+                      ) : accountEventHistoryItems.length === 0 ? (
+                        <div className="activity-empty">
+                          {accountEventFiltersActive
+                            ? "По текущим фильтрам событий нет."
+                            : "Событий пока нет."}
+                        </div>
+                      ) : (
+                        accountEventHistoryItems.map((eventItem) => {
+                          const payloadSummary = summarizeAccountEventPayload(eventItem.payload);
+
+                          return (
+                            <article key={eventItem.id} className="activity-item">
+                              <div className="activity-item__body">
+                                <strong>{humanizeAccountEventType(eventItem.event_type)}</strong>
+                                <span>{payloadSummary || "Без дополнительного payload"}</span>
+                                <span>
+                                  {describeAccountEventActor(eventItem)} · source:{" "}
+                                  {humanizeAccountEventSource(eventItem.source)}
+                                </span>
+                                {eventItem.request_id ? (
+                                  <span>request_id: {eventItem.request_id}</span>
+                                ) : null}
+                                {eventItem.payload ? (
+                                  <details className="payload-preview">
+                                    <summary>Payload JSON</summary>
+                                    <pre>{JSON.stringify(eventItem.payload, null, 2)}</pre>
+                                  </details>
+                                ) : null}
+                              </div>
+                              <div className="activity-item__meta activity-item__meta--stacked">
+                                <span
+                                  className={`status-pill ${getAccountEventOutcomePillClass(eventItem.outcome)}`}
+                                >
+                                  {humanizeAccountEventOutcome(eventItem.outcome)}
+                                </span>
+                                <span>{formatDate(eventItem.created_at)}</span>
+                                <span>#{eventItem.id}</span>
+                              </div>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+                    <div className="section-footer">
+                      <span className="form-hint">
+                        Показано {accountEventHistoryItems.length} из {accountEventHistoryTotal} событий.
+                      </span>
+                      {hasMoreAccountEventHistory ? (
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void handleLoadMoreAccountEventHistory()}
+                          disabled={accountEventHistoryLoading || accountEventHistoryLoadingMore}
+                        >
+                          {accountEventHistoryLoadingMore ? "Загружаем..." : "Загрузить еще"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+
+                  <article className="detail-section">
+                    <div className="detail-section__header detail-section__header--stacked">
+                      <div>
                         <span className="eyebrow">История ledger</span>
                         <h3>Все движения по балансу</h3>
                       </div>
@@ -5038,7 +5926,9 @@ export default function App() {
                       ) : null}
                     </div>
                   </article>
+                </section>
 
+                <section className="activity-grid">
                   <article className="detail-section">
                     <span className="eyebrow">Последние платежи</span>
                     <div className="activity-list">
@@ -5060,28 +5950,28 @@ export default function App() {
                       )}
                     </div>
                   </article>
-                </section>
 
-                <section className="detail-section">
-                  <span className="eyebrow">Последние выводы</span>
-                  <div className="activity-list">
-                    {selectedAccount.recent_withdrawals.length === 0 ? (
-                      <div className="activity-empty">Выводов пока нет.</div>
-                    ) : (
-                      selectedAccount.recent_withdrawals.map((withdrawal) => (
-                        <article key={withdrawal.id} className="activity-item activity-item--dense">
-                          <div>
-                            <strong>{formatMoney(withdrawal.amount)}</strong>
-                            <span>{withdrawal.destination_type}: {withdrawal.destination_value}</span>
-                          </div>
-                          <div className="activity-item__meta">
-                            <strong>{humanizeWithdrawalStatus(withdrawal.status)}</strong>
-                            <span>{formatDate(withdrawal.created_at)}</span>
-                          </div>
-                        </article>
-                      ))
-                    )}
-                  </div>
+                  <article className="detail-section">
+                    <span className="eyebrow">Последние выводы</span>
+                    <div className="activity-list">
+                      {selectedAccount.recent_withdrawals.length === 0 ? (
+                        <div className="activity-empty">Выводов пока нет.</div>
+                      ) : (
+                        selectedAccount.recent_withdrawals.map((withdrawal) => (
+                          <article key={withdrawal.id} className="activity-item activity-item--dense">
+                            <div>
+                              <strong>{formatMoney(withdrawal.amount)}</strong>
+                              <span>{withdrawal.destination_type}: {withdrawal.destination_value}</span>
+                            </div>
+                            <div className="activity-item__meta">
+                              <strong>{humanizeWithdrawalStatus(withdrawal.status)}</strong>
+                              <span>{formatDate(withdrawal.created_at)}</span>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </article>
                 </section>
 
                 <section className="detail-section detail-section--action detail-section--danger">
@@ -5141,6 +6031,347 @@ export default function App() {
                       </button>
                     </div>
                   </form>
+                </section>
+              </>
+            ) : null}
+          </div>
+        </section>
+      ) : activeView === "events" ? (
+        <section className="search-shell">
+          <aside className="search-column">
+            <form className="search-panel" onSubmit={handleApplyGlobalEventSearch}>
+              <span className="eyebrow">Support search</span>
+              <h2>Глобальный поиск по account events</h2>
+              <p className="queue-panel__copy">
+                Ищи по `request_id`, `telegram_id`, `account_id`, `actor_account_id`, `actor_admin_id`
+                и бизнес-событиям без привязки к одной карточке пользователя.
+              </p>
+              <div className="event-filter-grid">
+                <label className="form-field">
+                  <span>Event type</span>
+                  <select
+                    value={globalEventSearchDraft.eventType}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        eventType: event.target.value as AccountEventTypeFilterOption,
+                      }))
+                    }
+                    disabled={globalEventLoading}
+                  >
+                    {ACCOUNT_EVENT_TYPE_FILTER_OPTIONS.map((eventType) => (
+                      <option key={eventType} value={eventType}>
+                        {eventType === "all" ? "Все события" : humanizeAccountEventType(eventType)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Outcome</span>
+                  <select
+                    value={globalEventSearchDraft.outcome}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        outcome: event.target.value as AccountEventOutcomeFilterOption,
+                      }))
+                    }
+                    disabled={globalEventLoading}
+                  >
+                    {ACCOUNT_EVENT_OUTCOME_FILTER_OPTIONS.map((outcome) => (
+                      <option key={outcome} value={outcome}>
+                        {outcome === "all" ? "Все outcomes" : humanizeAccountEventOutcome(outcome)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Source</span>
+                  <select
+                    value={globalEventSearchDraft.source}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        source: event.target.value as AccountEventSourceFilterOption,
+                      }))
+                    }
+                    disabled={globalEventLoading}
+                  >
+                    {ACCOUNT_EVENT_SOURCE_FILTER_OPTIONS.map((source) => (
+                      <option key={source} value={source}>
+                        {source === "all" ? "Все источники" : humanizeAccountEventSource(source)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>Telegram ID</span>
+                  <input
+                    value={globalEventSearchDraft.telegramId}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        telegramId: event.target.value,
+                      }))
+                    }
+                    placeholder="Например: 777000111"
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Request ID</span>
+                  <input
+                    value={globalEventSearchDraft.requestId}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        requestId: event.target.value,
+                      }))
+                    }
+                    placeholder="Например: req_123456"
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Account ID</span>
+                  <input
+                    value={globalEventSearchDraft.accountId}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        accountId: event.target.value,
+                      }))
+                    }
+                    placeholder="UUID target account"
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Actor account ID</span>
+                  <input
+                    value={globalEventSearchDraft.actorAccountId}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        actorAccountId: event.target.value,
+                      }))
+                    }
+                    placeholder="UUID actor account"
+                  />
+                </label>
+                <label className="form-field">
+                  <span>Actor admin ID</span>
+                  <input
+                    value={globalEventSearchDraft.actorAdminId}
+                    onChange={(event) =>
+                      setGlobalEventSearchDraft((current) => ({
+                        ...current,
+                        actorAdminId: event.target.value,
+                      }))
+                    }
+                    placeholder="UUID admin actor"
+                  />
+                </label>
+              </div>
+              <div className="event-filter-actions">
+                <button className="action-button" type="submit" disabled={globalEventLoading}>
+                  {globalEventLoading ? "Ищем..." : "Применить фильтры"}
+                </button>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={handleResetGlobalEventSearch}
+                  disabled={!globalEventFiltersActive && !globalEventLoading}
+                >
+                  Сбросить
+                </button>
+              </div>
+            </form>
+
+            <div className="results-list">
+              {globalEventLoading && globalEventItems.length === 0 ? (
+                <div className="empty-state">Загружаем события...</div>
+              ) : globalEventItems.length === 0 ? (
+                <div className="empty-state">
+                  {globalEventFiltersActive ? "По текущим фильтрам событий нет." : "Событий пока нет."}
+                </div>
+              ) : (
+                globalEventItems.map((eventItem) => (
+                  <button
+                    key={eventItem.id}
+                    type="button"
+                    className={
+                      selectedGlobalEventId === eventItem.id
+                        ? "result-card result-card--active"
+                        : "result-card"
+                    }
+                    onClick={() => setSelectedGlobalEventId(eventItem.id)}
+                  >
+                    <div className="result-card__top">
+                      <strong>{humanizeAccountEventType(eventItem.event_type)}</strong>
+                      <span className={`status-pill ${getAccountEventOutcomePillClass(eventItem.outcome)}`}>
+                        {humanizeAccountEventOutcome(eventItem.outcome)}
+                      </span>
+                    </div>
+                    <span>{describeGlobalEventTargetAccount(eventItem)}</span>
+                    <span>{summarizeAccountEventPayload(eventItem.payload) || describeGlobalEventActor(eventItem)}</span>
+                    <span>
+                      {humanizeAccountEventSource(eventItem.source)} · {formatDate(eventItem.created_at)}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <section className="detail-section">
+              <div className="section-footer">
+                <span className="form-hint">
+                  Показано {globalEventItems.length} из {globalEventTotal} событий.
+                </span>
+                {hasMoreGlobalEvents ? (
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => void handleLoadMoreGlobalEvents()}
+                    disabled={globalEventLoading || globalEventLoadingMore}
+                  >
+                    {globalEventLoadingMore ? "Загружаем..." : "Загрузить еще"}
+                  </button>
+                ) : null}
+              </div>
+            </section>
+          </aside>
+
+          <div className="detail-column">
+            {globalEventLoading && globalEventItems.length === 0 ? (
+              <div className="detail-skeleton">Загружаем детализацию события...</div>
+            ) : null}
+            {!globalEventLoading && !selectedGlobalEvent ? (
+              <div className="detail-skeleton">Выбери событие из списка слева.</div>
+            ) : null}
+            {!globalEventLoading && selectedGlobalEvent ? (
+              <>
+                <section className="detail-header">
+                  <div>
+                    <span className="eyebrow">Account event</span>
+                    <h2>{humanizeAccountEventType(selectedGlobalEvent.event_type)}</h2>
+                    <p>
+                      {describeGlobalEventTargetAccount(selectedGlobalEvent)} ·{" "}
+                      {humanizeAccountEventSource(selectedGlobalEvent.source)}
+                    </p>
+                  </div>
+                  <span className={`status-pill ${getAccountEventOutcomePillClass(selectedGlobalEvent.outcome)}`}>
+                    {humanizeAccountEventOutcome(selectedGlobalEvent.outcome)}
+                  </span>
+                </section>
+
+                <section className="detail-facts-grid">
+                  <DetailFact label="Request ID" value={selectedGlobalEvent.request_id || "-"} />
+                  <DetailFact label="Создано" value={formatDate(selectedGlobalEvent.created_at)} />
+                  <DetailFact label="Source" value={humanizeAccountEventSource(selectedGlobalEvent.source)} />
+                  <DetailFact label="Event ID" value={`#${selectedGlobalEvent.id}`} />
+                </section>
+
+                <section className="detail-sections-grid">
+                  <article className="detail-section">
+                    <span className="eyebrow">Target account</span>
+                    <div className="detail-kv">
+                      <div>
+                        <span>Аккаунт</span>
+                        <strong>{describeGlobalEventTargetAccount(selectedGlobalEvent)}</strong>
+                      </div>
+                      <div>
+                        <span>Email</span>
+                        <strong>{selectedGlobalEvent.account?.email || "-"}</strong>
+                      </div>
+                      <div>
+                        <span>Username</span>
+                        <strong>{selectedGlobalEvent.account?.username || "-"}</strong>
+                      </div>
+                      <div>
+                        <span>Telegram</span>
+                        <strong>
+                          {selectedGlobalEvent.account?.telegram_id
+                            ? String(selectedGlobalEvent.account.telegram_id)
+                            : "-"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Status</span>
+                        <strong>
+                          {selectedGlobalEvent.account?.status
+                            ? humanizeAccountStatus(selectedGlobalEvent.account.status)
+                            : "-"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>UUID</span>
+                        <strong>{selectedGlobalEvent.account_id || "-"}</strong>
+                      </div>
+                    </div>
+                    {selectedGlobalEvent.account_id ? (
+                      <button
+                        className="ghost-button detail-inline-button"
+                        type="button"
+                        onClick={() => void handleOpenGlobalEventAccount(selectedGlobalEvent)}
+                      >
+                        Открыть аккаунт и timeline
+                      </button>
+                    ) : null}
+                  </article>
+
+                  <article className="detail-section">
+                    <span className="eyebrow">Actor</span>
+                    <div className="detail-kv">
+                      <div>
+                        <span>Инициатор</span>
+                        <strong>{describeGlobalEventActor(selectedGlobalEvent)}</strong>
+                      </div>
+                      <div>
+                        <span>Actor account</span>
+                        <strong>
+                          {selectedGlobalEvent.actor_account
+                            ? formatAccountIdentity(selectedGlobalEvent.actor_account)
+                            : "-"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Actor admin</span>
+                        <strong>{formatAdminIdentity(selectedGlobalEvent.actor_admin)}</strong>
+                      </div>
+                      <div>
+                        <span>Actor account UUID</span>
+                        <strong>{selectedGlobalEvent.actor_account_id || "-"}</strong>
+                      </div>
+                      <div>
+                        <span>Actor admin UUID</span>
+                        <strong>{selectedGlobalEvent.actor_admin_id || "-"}</strong>
+                      </div>
+                      <div>
+                        <span>Telegram actor</span>
+                        <strong>
+                          {selectedGlobalEvent.actor_account?.telegram_id
+                            ? String(selectedGlobalEvent.actor_account.telegram_id)
+                            : "-"}
+                        </strong>
+                      </div>
+                    </div>
+                  </article>
+                </section>
+
+                <section className="detail-section">
+                  <span className="eyebrow">Payload</span>
+                  {selectedGlobalEvent.payload ? (
+                    <>
+                      <div className="note-card">
+                        <strong>Summary</strong>
+                        <p>{summarizeAccountEventPayload(selectedGlobalEvent.payload) || "Без краткого summary"}</p>
+                      </div>
+                      <details className="payload-preview" open>
+                        <summary>Payload JSON</summary>
+                        <pre>{JSON.stringify(selectedGlobalEvent.payload, null, 2)}</pre>
+                      </details>
+                    </>
+                  ) : (
+                    <div className="activity-empty">Payload не записан.</div>
+                  )}
                 </section>
               </>
             ) : null}

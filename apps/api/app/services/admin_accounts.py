@@ -8,6 +8,8 @@ from sqlalchemy.orm import aliased
 
 from app.db.models import (
     Account,
+    AccountEventLog,
+    Admin,
     AuthAccount,
     LedgerEntry,
     Payment,
@@ -27,6 +29,15 @@ def _normalize_query(query: str) -> str:
     return normalized
 
 
+def _normalize_filter_values(values: list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
+    if not values:
+        return None
+    normalized_values = tuple(
+        dict.fromkeys(value.strip() for value in values if isinstance(value, str) and value.strip())
+    )
+    return normalized_values or None
+
+
 def _build_referral_account_snapshot(
     account: Account | None,
     *,
@@ -40,6 +51,34 @@ def _build_referral_account_snapshot(
         "username": None if account is None else account.username,
         "referral_code": None if account is None else account.referral_code,
         "status": None if account is None else account.status,
+    }
+
+
+def _build_account_identity_snapshot(
+    account: Account | None,
+    *,
+    account_id: uuid.UUID | None,
+) -> dict[str, object | None] | None:
+    if account is None and account_id is None:
+        return None
+    return {
+        "id": account_id if account is None else account.id,
+        "email": None if account is None else account.email,
+        "display_name": None if account is None else account.display_name,
+        "telegram_id": None if account is None else account.telegram_id,
+        "username": None if account is None else account.username,
+        "status": None if account is None else account.status,
+    }
+
+
+def _build_admin_identity_snapshot(admin: Admin | None, *, admin_id: uuid.UUID | None) -> dict[str, object | None] | None:
+    if admin is None and admin_id is None:
+        return None
+    return {
+        "id": admin_id if admin is None else admin.id,
+        "username": None if admin is None else admin.username,
+        "email": None if admin is None else admin.email,
+        "full_name": None if admin is None else admin.full_name,
     }
 
 
@@ -149,6 +188,133 @@ async def search_admin_accounts(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def get_admin_account_event_logs(
+    session: AsyncSession,
+    *,
+    account_id: uuid.UUID,
+    limit: int,
+    offset: int,
+    event_types: list[str] | tuple[str, ...] | None = None,
+    outcomes: list[str] | tuple[str, ...] | None = None,
+    sources: list[str] | tuple[str, ...] | None = None,
+    request_id: str | None = None,
+) -> tuple[list[AccountEventLog], int]:
+    filters = [AccountEventLog.account_id == account_id]
+    normalized_event_types = _normalize_filter_values(event_types)
+    normalized_outcomes = _normalize_filter_values(outcomes)
+    normalized_sources = _normalize_filter_values(sources)
+    normalized_request_id = None if request_id is None else request_id.strip() or None
+
+    if normalized_event_types:
+        filters.append(AccountEventLog.event_type.in_(normalized_event_types))
+    if normalized_outcomes:
+        filters.append(AccountEventLog.outcome.in_(normalized_outcomes))
+    if normalized_sources:
+        filters.append(AccountEventLog.source.in_(normalized_sources))
+    if normalized_request_id is not None:
+        filters.append(AccountEventLog.request_id == normalized_request_id)
+
+    total = int(
+        await session.scalar(
+            select(func.count()).select_from(AccountEventLog).where(*filters)
+        )
+        or 0
+    )
+    result = await session.execute(
+        select(AccountEventLog)
+        .where(*filters)
+        .order_by(AccountEventLog.created_at.desc(), AccountEventLog.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(result.scalars().all()), total
+
+
+async def search_admin_account_event_logs(
+    session: AsyncSession,
+    *,
+    limit: int,
+    offset: int,
+    account_id: uuid.UUID | None = None,
+    actor_account_id: uuid.UUID | None = None,
+    actor_admin_id: uuid.UUID | None = None,
+    telegram_id: int | None = None,
+    event_types: list[str] | tuple[str, ...] | None = None,
+    outcomes: list[str] | tuple[str, ...] | None = None,
+    sources: list[str] | tuple[str, ...] | None = None,
+    request_id: str | None = None,
+) -> tuple[list[dict[str, object | None]], int]:
+    target_account = aliased(Account)
+    actor_account = aliased(Account)
+    actor_admin = aliased(Admin)
+
+    filters = []
+    normalized_event_types = _normalize_filter_values(event_types)
+    normalized_outcomes = _normalize_filter_values(outcomes)
+    normalized_sources = _normalize_filter_values(sources)
+    normalized_request_id = None if request_id is None else request_id.strip() or None
+
+    if account_id is not None:
+        filters.append(AccountEventLog.account_id == account_id)
+    if actor_account_id is not None:
+        filters.append(AccountEventLog.actor_account_id == actor_account_id)
+    if actor_admin_id is not None:
+        filters.append(AccountEventLog.actor_admin_id == actor_admin_id)
+    if telegram_id is not None:
+        filters.append(target_account.telegram_id == telegram_id)
+    if normalized_event_types:
+        filters.append(AccountEventLog.event_type.in_(normalized_event_types))
+    if normalized_outcomes:
+        filters.append(AccountEventLog.outcome.in_(normalized_outcomes))
+    if normalized_sources:
+        filters.append(AccountEventLog.source.in_(normalized_sources))
+    if normalized_request_id is not None:
+        filters.append(AccountEventLog.request_id == normalized_request_id)
+
+    count_stmt = (
+        select(func.count())
+        .select_from(AccountEventLog)
+        .outerjoin(target_account, target_account.id == AccountEventLog.account_id)
+        .outerjoin(actor_account, actor_account.id == AccountEventLog.actor_account_id)
+        .outerjoin(actor_admin, actor_admin.id == AccountEventLog.actor_admin_id)
+        .where(*filters)
+    )
+    total = int(await session.scalar(count_stmt) or 0)
+
+    result = await session.execute(
+        select(AccountEventLog, target_account, actor_account, actor_admin)
+        .outerjoin(target_account, target_account.id == AccountEventLog.account_id)
+        .outerjoin(actor_account, actor_account.id == AccountEventLog.actor_account_id)
+        .outerjoin(actor_admin, actor_admin.id == AccountEventLog.actor_admin_id)
+        .where(*filters)
+        .order_by(AccountEventLog.created_at.desc(), AccountEventLog.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+
+    items: list[dict[str, object | None]] = []
+    for event, account, actor, admin in result.all():
+        items.append(
+            {
+                "id": event.id,
+                "account_id": event.account_id,
+                "actor_account_id": event.actor_account_id,
+                "actor_admin_id": event.actor_admin_id,
+                "event_type": event.event_type,
+                "outcome": event.outcome,
+                "source": event.source,
+                "request_id": event.request_id,
+                "payload": event.payload,
+                "created_at": event.created_at,
+                "account": _build_account_identity_snapshot(account, account_id=event.account_id),
+                "actor_account": _build_account_identity_snapshot(actor, account_id=event.actor_account_id),
+                "actor_admin": _build_admin_identity_snapshot(admin, admin_id=event.actor_admin_id),
+            }
+        )
+
+    return items, total
 
 
 async def get_admin_account_detail(

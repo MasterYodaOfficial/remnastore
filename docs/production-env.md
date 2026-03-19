@@ -259,6 +259,12 @@
 ## Переменные с рабочими дефолтами
 
 - `LOG_LEVEL`
+- `LOG_FORMAT`
+- `LOG_TO_FILE`
+- `LOG_DIR`
+- `LOG_FILE_MAX_BYTES`
+- `LOG_FILE_BACKUP_COUNT`
+- `ACCESS_LOG_ENABLED`
 - `JWT_ACCESS_TOKEN_EXPIRES_SECONDS`
 - `ADMIN_JWT_ACCESS_TOKEN_EXPIRES_SECONDS`
 - `SUPABASE_USER_CACHE_TTL_SECONDS`
@@ -284,6 +290,36 @@
 - `YOOKASSA_VERIFY_TLS`
 
 Их можно не менять на первом production deploy, если дефолты подходят.
+
+### Logging runtime
+
+- `LOG_LEVEL`
+  - общий уровень логирования для `api`, `bot` и Python worker'ов
+  - примеры: `INFO`, `WARNING`, `ERROR`, `DEBUG`
+
+- `LOG_FORMAT`
+  - формат application logs
+  - допустимые значения: `text`, `json`
+  - для production рекомендуется `json`
+
+- `LOG_TO_FILE`
+  - включает дополнительную запись логов в файлы с ротацией через `RotatingFileHandler`
+  - по умолчанию `false`
+  - не заменяет Docker log rotation, а дополняет ее
+
+- `LOG_DIR`
+  - директория для файловых логов, если `LOG_TO_FILE=true`
+  - если используется в контейнерах, лучше монтировать отдельный volume
+
+- `LOG_FILE_MAX_BYTES`
+  - максимальный размер одного лог-файла до ротации
+
+- `LOG_FILE_BACKUP_COUNT`
+  - сколько rotated-файлов хранить рядом
+
+- `ACCESS_LOG_ENABLED`
+  - включает access log для API middleware
+  - даже при `false` API продолжает выдавать `X-Request-ID`
 
 ## Переменные для локального Compose Postgres
 

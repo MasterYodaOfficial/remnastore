@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     AdminActionLog,
     LedgerEntry,
     LedgerEntryType,
@@ -171,6 +172,15 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def test_list_admin_withdrawals_returns_pending_queue(self) -> None:
         token = await self._create_admin_token()
         first_account = await self._create_account(
@@ -282,6 +292,13 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(len(audit_logs), 1)
 
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], [
+            "withdrawal.created",
+            "admin.withdrawal.status_change",
+        ])
+        self.assertEqual(event_logs[1].payload["next_status"], WithdrawalStatus.REJECTED.value)
+
     async def test_mark_withdrawal_paid_updates_status_and_keeps_reserved_balance(self) -> None:
         token = await self._create_admin_token()
         account = await self._create_account(
@@ -328,6 +345,13 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
             NotificationType.WITHDRAWAL_CREATED,
             NotificationType.WITHDRAWAL_PAID,
         ])
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], [
+            "withdrawal.created",
+            "admin.withdrawal.status_change",
+        ])
+        self.assertEqual(event_logs[1].payload["next_status"], WithdrawalStatus.PAID.value)
 
 
 if __name__ == "__main__":

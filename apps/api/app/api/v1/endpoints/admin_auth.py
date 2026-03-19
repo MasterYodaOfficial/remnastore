@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_admin
+from app.core.audit import build_request_audit_context, log_audit_event
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.db.models import Admin
@@ -20,8 +21,11 @@ router = APIRouter()
 @router.post("/login", response_model=AdminAuthResponse)
 async def admin_login(
     payload: AdminLoginRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> AdminAuthResponse:
+    request_context = build_request_audit_context(request)
+    normalized_login = payload.login.strip().lower()
     try:
         admin = await authenticate_admin(
             session,
@@ -29,11 +33,28 @@ async def admin_login(
             password=payload.password,
         )
     except AdminInvalidCredentialsError as exc:
+        log_audit_event(
+            "admin.login",
+            outcome="failure",
+            category="security",
+            reason="invalid_credentials",
+            login=normalized_login,
+            **request_context,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
     admin.last_login_at = datetime.now(UTC)
     await session.commit()
     await session.refresh(admin)
+    log_audit_event(
+        "admin.login",
+        outcome="success",
+        category="security",
+        admin_id=admin.id,
+        username=admin.username,
+        login=normalized_login,
+        **request_context,
+    )
 
     token = create_access_token(
         {"sub": str(admin.id), "scope": "admin"},

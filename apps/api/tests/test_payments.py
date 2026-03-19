@@ -15,6 +15,7 @@ from app.api.dependencies import get_current_account
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     AccountStatus,
     LedgerEntry,
     LedgerEntryType,
@@ -491,6 +492,15 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def _create_direct_plan_payment(self, account: Account) -> None:
         response = await self.client.post(
             "/api/v1/payments/yookassa/plans/plan_1m",
@@ -529,6 +539,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.amount, 500)
         self.assertIsNotNone(stored_payment.expires_at)
 
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["payment.intent.created"])
+        self.assertEqual(event_logs[0].payload["payment_id"], stored_payment.id)
+        self.assertEqual(event_logs[0].payload["provider_payment_id"], "yoopay-topup-500")
+
     async def test_create_yookassa_topup_rejects_blocked_account(self) -> None:
         account = await self._create_account(
             balance=0,
@@ -550,7 +565,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await self._get_payment("yoopay-blocked-topup-500"))
 
     async def test_create_bot_yookassa_plan_payment_uses_telegram_return_url(self) -> None:
-        await self._create_account(
+        account = await self._create_account(
             balance=0,
             email="bot-payer@example.com",
             telegram_id=758107031,
@@ -572,6 +587,35 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             self._fake_gateway.created_commands[0].success_url,
             "https://t.me/test_bot",
         )
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["payment.intent.created"])
+        self.assertEqual(event_logs[0].source, "bot")
+
+    async def test_create_bot_telegram_stars_plan_payment_persists_bot_source(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="bot-stars@example.com",
+            telegram_id=758107031,
+        )
+
+        response = await self.client.post(
+            "/api/v1/internal/bot/payments/telegram-stars/plans/plan_1m",
+            json={
+                "telegram_id": 758107031,
+                "idempotency_key": "bot-stars-plan-1m",
+            },
+            headers={"Authorization": "Bearer internal-token"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["provider"], "telegram_stars")
+        self.assertIn("https://t.me/invoice/", body["confirmation_url"])
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["payment.intent.created"])
+        self.assertEqual(event_logs[0].source, "bot")
 
     async def test_list_subscription_plans_returns_backend_catalog(self) -> None:
         account = await self._create_account(email="plans@example.com")
@@ -731,6 +775,10 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         notifications = await self._get_notifications(account.id)
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0].type, NotificationType.PAYMENT_SUCCEEDED)
+
+        event_types = [item.event_type for item in await self._get_account_event_logs(account.id)]
+        self.assertIn("payment.intent.created", event_types)
+        self.assertIn("payment.topup.applied", event_types)
         self.assertEqual(notifications[0].payload["payment_id"], stored_payment.id)
 
         duplicate_response = await self.client.post(
@@ -1558,6 +1606,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        event_types = [item.event_type for item in await self._get_account_event_logs(account.id)]
+        self.assertIn("payment.intent.created", event_types)
+        self.assertIn("subscription.direct_payment.staged", event_types)
+        self.assertIn("subscription.direct_payment.applied", event_types)
 
         duplicate_response = await self.client.post(
             "/api/v1/webhooks/payments/telegram-stars",

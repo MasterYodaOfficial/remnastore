@@ -14,4 +14,4 @@ until uv run --no-sync alembic -c alembic.ini upgrade head; do
 done
 
 echo "Starting API in reload mode..."
-exec uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+exec uv run --no-sync python -m app.server --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app

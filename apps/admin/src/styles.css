@@ -767,6 +767,21 @@ button {
   color: var(--text);
 }
 
+.event-filter-grid {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.event-filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .detail-section--action {
   display: grid;
   gap: 18px;
@@ -956,6 +971,13 @@ button {
   align-items: flex-start;
 }
 
+.activity-item__body {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+
 .activity-item strong {
   display: block;
 }
@@ -971,6 +993,37 @@ button {
 
 .activity-item__meta {
   text-align: right;
+}
+
+.activity-item__meta--stacked {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.payload-preview {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(122, 255, 171, 0.12);
+  background: rgba(6, 11, 8, 0.7);
+}
+
+.payload-preview summary {
+  cursor: pointer;
+  color: var(--soft);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+}
+
+.payload-preview pre {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
 
 .profile-card,
@@ -1417,6 +1470,7 @@ body {
 .detail-fact,
 .note-card,
 .activity-item,
+.payload-preview,
 .result-card,
 .broadcast-preview,
 .broadcast-button-editor,
@@ -1969,6 +2023,7 @@ body {
   .search-shell,
   .detail-sections-grid,
   .activity-grid,
+  .event-filter-grid,
   .broadcast-workbench {
     grid-template-columns: 1fr;
   }
@@ -1979,6 +2034,7 @@ body {
   .broadcast-toolbar__meta,
   .broadcast-header-actions,
   .panel-toolbar__actions,
+  .event-filter-actions,
   .adjustment-form__footer,
   .action-cluster {
     flex-direction: column;

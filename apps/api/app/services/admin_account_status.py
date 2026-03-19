@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, AccountStatus, AdminActionLog, AdminActionType
+from app.services.account_events import append_account_event
 from app.services.ledger import clear_account_cache
 
 
@@ -213,6 +214,21 @@ async def change_account_status(
         ),
     )
     session.add(audit_log)
+    await session.flush()
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_admin_id=admin_id,
+        event_type="admin.account_status_change",
+        source="admin",
+        payload={
+            "previous_status": previous_status.value,
+            "next_status": target_status.value,
+            "comment": normalized_comment,
+            "admin_action_log_id": audit_log.id,
+            "idempotency_key": normalized_idempotency_key,
+        },
+    )
 
     try:
         await session.commit()

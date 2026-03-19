@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import bearer_scheme, get_current_account
+from app.core.audit import build_request_audit_context, log_audit_event
 from app.core.config import settings
 from app.db.session import get_session
 from app.schemas.account import (
@@ -112,11 +113,22 @@ async def get_account_me(
 
 @router.post("/accounts/link-telegram", response_model=LinkTelegramResponse)
 async def generate_telegram_link(
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_account: Account = Depends(get_current_account),
 ) -> LinkTelegramResponse:
     """Generate a link to bind Telegram account to browser OAuth account."""
+    request_context = build_request_audit_context(request)
     if current_account.telegram_id is not None:
+        log_audit_event(
+            "account.link.telegram_token.create",
+            outcome="denied",
+            category="security",
+            reason="account_already_linked",
+            account_id=current_account.id,
+            telegram_id=current_account.telegram_id,
+            **request_context,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Account already linked to Telegram"
@@ -131,6 +143,14 @@ async def generate_telegram_link(
     
     # Replace placeholder with actual bot username from config
     link_url = link_url_template.format(bot_username=settings.telegram_bot_username)
+    log_audit_event(
+        "account.link.telegram_token.create",
+        outcome="success",
+        category="security",
+        account_id=current_account.id,
+        expires_in_seconds=3600,
+        **request_context,
+    )
     
     return LinkTelegramResponse(
         link_url=link_url,
@@ -141,17 +161,36 @@ async def generate_telegram_link(
 
 @router.post("/accounts/link-browser", response_model=LinkBrowserResponse)
 async def generate_browser_link(
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_account: Account = Depends(get_current_account),
 ) -> LinkBrowserResponse:
     """Generate a browser URL to bind OAuth auth to the current Telegram account."""
+    request_context = build_request_audit_context(request)
     if current_account.telegram_id is None:
+        log_audit_event(
+            "account.link.browser_token.create",
+            outcome="denied",
+            category="security",
+            reason="telegram_account_required",
+            account_id=current_account.id,
+            **request_context,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Telegram account required"
         )
 
     if not settings.webapp_url:
+        log_audit_event(
+            "account.link.browser_token.create",
+            outcome="error",
+            category="security",
+            reason="webapp_url_missing",
+            account_id=current_account.id,
+            telegram_id=current_account.telegram_id,
+            **request_context,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="WEBAPP_URL is not configured",
@@ -164,6 +203,15 @@ async def generate_browser_link(
         ttl_seconds=3600,
     )
     await session.commit()
+    log_audit_event(
+        "account.link.browser_token.create",
+        outcome="success",
+        category="security",
+        account_id=current_account.id,
+        telegram_id=current_account.telegram_id,
+        expires_in_seconds=3600,
+        **request_context,
+    )
 
     return LinkBrowserResponse(
         link_url=link_url_template,
@@ -175,11 +223,13 @@ async def generate_browser_link(
 @router.post("/accounts/link-browser-complete", response_model=AccountResponse)
 async def complete_browser_link(
     payload: LinkBrowserCompleteRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     current_account: Account = Depends(get_current_account),
 ) -> AccountResponse:
     """Complete Telegram -> browser linking after browser auth succeeds."""
+    request_context = build_request_audit_context(request)
     try:
         token = await get_link_token(
             session,
@@ -192,6 +242,14 @@ async def complete_browser_link(
         LinkTokenAlreadyConsumedError,
         LinkTokenTypeMismatchError,
     ) as exc:
+        log_audit_event(
+            "account.link.browser_complete",
+            outcome="failure",
+            category="security",
+            reason=type(exc).__name__,
+            browser_account_id=current_account.id,
+            **request_context,
+        )
         raise _link_token_http_error(exc) from exc
 
     try:
@@ -202,6 +260,15 @@ async def complete_browser_link(
         )
     except (ValueError, AccountMergeConflictError) as exc:
         await session.rollback()
+        log_audit_event(
+            "account.link.browser_complete",
+            outcome="failure",
+            category="security",
+            reason=type(exc).__name__,
+            telegram_account_id=token.account_id,
+            browser_account_id=current_account.id,
+            **request_context,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
@@ -218,6 +285,14 @@ async def complete_browser_link(
             str(account.id),
             settings.auth_token_cache_ttl_seconds,
         )
+    log_audit_event(
+        "account.link.browser_complete",
+        outcome="success",
+        category="security",
+        account_id=account.id,
+        telegram_account_id=token.account_id,
+        browser_account_id=current_account.id,
+        **request_context,
+    )
 
     return AccountResponse.model_validate(account)
-

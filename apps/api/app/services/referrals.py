@@ -9,6 +9,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.audit import log_audit_event
 from app.core.config import settings
 from app.db.models import (
     Account,
@@ -18,6 +19,7 @@ from app.db.models import (
     SubscriptionGrant,
     TelegramReferralIntent,
 )
+from app.services.account_events import append_account_event
 from app.services.ledger import apply_credit_in_transaction
 from app.services.notifications import notify_referral_reward_received
 from app.services.plans import get_subscription_plan
@@ -218,6 +220,40 @@ async def _get_telegram_referral_intent_by_telegram_id(
     return result.scalar_one_or_none()
 
 
+async def _append_referral_claim_events(
+    session: AsyncSession,
+    *,
+    referred_account_id: uuid.UUID,
+    referrer_account_id: uuid.UUID,
+    referral_code: str,
+    created: bool,
+) -> None:
+    await append_account_event(
+        session,
+        account_id=referred_account_id,
+        actor_account_id=referred_account_id,
+        event_type="referral.claim",
+        source="api",
+        payload={
+            "referrer_account_id": referrer_account_id,
+            "referral_code": referral_code,
+            "created": created,
+        },
+    )
+    if created:
+        await append_account_event(
+            session,
+            account_id=referrer_account_id,
+            actor_account_id=referred_account_id,
+            event_type="referral.attributed",
+            source="api",
+            payload={
+                "referred_account_id": referred_account_id,
+                "referral_code": referral_code,
+            },
+        )
+
+
 async def claim_referral_code(
     session: AsyncSession,
     *,
@@ -242,6 +278,13 @@ async def claim_referral_code(
         if existing_attribution.referrer_account_id == referrer_account.id:
             if referred_account.referred_by_account_id is None:
                 referred_account.referred_by_account_id = referrer_account.id
+            await _append_referral_claim_events(
+                session,
+                referred_account_id=referred_account.id,
+                referrer_account_id=referrer_account.id,
+                referral_code=normalized_referral_code,
+                created=False,
+            )
             return ReferralClaimResult(attribution=existing_attribution, created=False)
         raise ReferralAlreadyAttributedError("referral already claimed")
 
@@ -254,6 +297,13 @@ async def claim_referral_code(
             )
             session.add(attribution)
             await session.flush()
+            await _append_referral_claim_events(
+                session,
+                referred_account_id=referred_account.id,
+                referrer_account_id=referrer_account.id,
+                referral_code=normalized_referral_code,
+                created=False,
+            )
             return ReferralClaimResult(attribution=attribution, created=False)
         raise ReferralAlreadyAttributedError("referral already claimed")
 
@@ -272,6 +322,13 @@ async def claim_referral_code(
     locked_referrer_account.referrals_count = int(locked_referrer_account.referrals_count) + 1
     session.add(attribution)
     await session.flush()
+    await _append_referral_claim_events(
+        session,
+        referred_account_id=referred_account.id,
+        referrer_account_id=locked_referrer_account.id,
+        referral_code=normalized_referral_code,
+        created=True,
+    )
     return ReferralClaimResult(attribution=attribution, created=True)
 
 
@@ -283,6 +340,14 @@ async def record_telegram_referral_intent(
 ) -> TelegramReferralIntent:
     normalized_referral_code = _normalize_referral_code(referral_code)
     if await _get_account_by_referral_code(session, normalized_referral_code) is None:
+        log_audit_event(
+            "referral.intent.record",
+            outcome="failure",
+            category="business",
+            telegram_id=telegram_id,
+            referral_code=normalized_referral_code,
+            reason="referral_code_not_found",
+        )
         raise ReferralCodeNotFoundError("referral code not found")
 
     intent = await _get_telegram_referral_intent_by_telegram_id(
@@ -307,6 +372,14 @@ async def record_telegram_referral_intent(
 
     await session.commit()
     await session.refresh(intent)
+    log_audit_event(
+        "referral.intent.record",
+        outcome="success",
+        category="business",
+        telegram_id=telegram_id,
+        referral_code=normalized_referral_code,
+        status=intent.status,
+    )
     return intent
 
 
@@ -336,27 +409,142 @@ async def apply_telegram_referral_intent(
     except ReferralCodeNotFoundError:
         intent.status = "rejected"
         intent.result_reason = "referral_code_not_found"
+        await append_account_event(
+            session,
+            account_id=account_id,
+            actor_account_id=account_id,
+            event_type="referral.intent.apply",
+            outcome="failure",
+            source="api",
+            payload={
+                "telegram_id": telegram_id,
+                "referral_code": intent.referral_code,
+                "reason": intent.result_reason,
+            },
+        )
         await session.commit()
+        log_audit_event(
+            "referral.intent.apply",
+            outcome="failure",
+            category="business",
+            telegram_id=telegram_id,
+            account_id=account_id,
+            referral_code=intent.referral_code,
+            reason=intent.result_reason,
+        )
         return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
     except ReferralSelfAttributionError:
         intent.status = "rejected"
         intent.result_reason = "self_referral"
+        await append_account_event(
+            session,
+            account_id=account_id,
+            actor_account_id=account_id,
+            event_type="referral.intent.apply",
+            outcome="failure",
+            source="api",
+            payload={
+                "telegram_id": telegram_id,
+                "referral_code": intent.referral_code,
+                "reason": intent.result_reason,
+            },
+        )
         await session.commit()
+        log_audit_event(
+            "referral.intent.apply",
+            outcome="failure",
+            category="business",
+            telegram_id=telegram_id,
+            account_id=account_id,
+            referral_code=intent.referral_code,
+            reason=intent.result_reason,
+        )
         return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
     except ReferralAlreadyAttributedError:
         intent.status = "rejected"
         intent.result_reason = "already_claimed"
+        await append_account_event(
+            session,
+            account_id=account_id,
+            actor_account_id=account_id,
+            event_type="referral.intent.apply",
+            outcome="failure",
+            source="api",
+            payload={
+                "telegram_id": telegram_id,
+                "referral_code": intent.referral_code,
+                "reason": intent.result_reason,
+            },
+        )
         await session.commit()
+        log_audit_event(
+            "referral.intent.apply",
+            outcome="failure",
+            category="business",
+            telegram_id=telegram_id,
+            account_id=account_id,
+            referral_code=intent.referral_code,
+            reason=intent.result_reason,
+        )
         return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
     except ReferralAttributionWindowClosedError:
         intent.status = "rejected"
         intent.result_reason = "window_closed"
+        await append_account_event(
+            session,
+            account_id=account_id,
+            actor_account_id=account_id,
+            event_type="referral.intent.apply",
+            outcome="failure",
+            source="api",
+            payload={
+                "telegram_id": telegram_id,
+                "referral_code": intent.referral_code,
+                "reason": intent.result_reason,
+            },
+        )
         await session.commit()
+        log_audit_event(
+            "referral.intent.apply",
+            outcome="failure",
+            category="business",
+            telegram_id=telegram_id,
+            account_id=account_id,
+            referral_code=intent.referral_code,
+            reason=intent.result_reason,
+        )
         return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
 
     intent.status = "applied" if claim_result.created else "noop"
     intent.result_reason = None if claim_result.created else "already_applied"
+    await append_account_event(
+        session,
+        account_id=account_id,
+        actor_account_id=account_id,
+        event_type="referral.intent.apply",
+        source="api",
+        payload={
+            "telegram_id": telegram_id,
+            "referral_code": intent.referral_code,
+            "applied": claim_result.created,
+            "created": claim_result.created,
+            "reason": intent.result_reason,
+            "referrer_account_id": claim_result.attribution.referrer_account_id,
+        },
+    )
     await session.commit()
+    log_audit_event(
+        "referral.intent.apply",
+        outcome="success",
+        category="business",
+        telegram_id=telegram_id,
+        account_id=account_id,
+        referral_code=intent.referral_code,
+        applied=claim_result.created,
+        created=claim_result.created,
+        reason=intent.result_reason,
+        referrer_account_id=claim_result.attribution.referrer_account_id,
+    )
     return TelegramReferralIntentResult(
         applied=claim_result.created,
         created=claim_result.created,
@@ -431,6 +619,21 @@ async def apply_first_referral_reward_for_grant(
     )
     session.add(reward)
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=referrer_account.id,
+        actor_account_id=grant.account_id,
+        event_type="referral.reward.granted",
+        source="system",
+        payload={
+            "reward_id": reward.id,
+            "referred_account_id": grant.account_id,
+            "subscription_grant_id": grant.id,
+            "reward_amount": reward_amount,
+            "purchase_amount_rub": purchase_amount_rub,
+            "reward_rate": float(reward_rate),
+        },
+    )
     await notify_referral_reward_received(session, reward=reward)
     return reward
 

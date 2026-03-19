@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.models import Account, AccountStatus, LedgerEntryType, Withdrawal, WithdrawalStatus
 from app.db.models.withdrawal import WithdrawalDestinationType
+from app.services.account_events import append_account_event
 from app.services.ledger import apply_debit_in_transaction
 from app.services.notifications import notify_withdrawal_created
 
@@ -231,6 +232,24 @@ async def create_withdrawal_request(
     )
     withdrawal.reserved_ledger_entry_id = reserve_entry.id
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_account_id=account.id,
+        event_type="withdrawal.created",
+        source="api",
+        payload={
+            "withdrawal_id": withdrawal.id,
+            "amount": withdrawal.amount,
+            "status": withdrawal.status.value,
+            "destination_type": withdrawal.destination_type.value,
+            "destination_value": mask_withdrawal_destination_value(
+                destination_type=withdrawal.destination_type,
+                destination_value=withdrawal.destination_value,
+            ),
+            "reserved_ledger_entry_id": reserve_entry.id,
+        },
+    )
     await notify_withdrawal_created(session, withdrawal=withdrawal)
     return withdrawal
 

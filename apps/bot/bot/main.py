@@ -107,7 +107,7 @@ def create_fastapi_app(bot: Bot, dp: Dispatcher) -> FastAPI:
 
 
 async def main() -> None:
-    configure_logging()
+    configure_logging(component_name="bot")
     bot = Bot(token=settings.bot_token)
     dp = create_dispatcher()
     dp.startup.register(on_startup)

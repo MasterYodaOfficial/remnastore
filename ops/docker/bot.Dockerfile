@@ -10,6 +10,7 @@ RUN uv sync --frozen --no-dev
 # uv creates .venv by default; add it to PATH
 ENV PATH="/app/.venv/bin:${PATH}"
 
+COPY common ./common
 COPY apps/bot/bot ./bot
 COPY packages/locales ./packages/locales
 EXPOSE 8080

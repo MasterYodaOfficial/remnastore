@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_admin
+from app.core.audit import build_request_audit_context, log_audit_event
 from app.db.models import Account, Admin
 from app.db.session import get_session
 from app.db.models.ledger import LedgerEntryType
@@ -15,6 +16,10 @@ from app.schemas.admin import (
     AdminBalanceAdjustmentRequest,
     AdminBalanceAdjustmentResponse,
     AdminAccountDetailResponse,
+    AdminAccountEventLogHistoryResponse,
+    AdminAccountEventLogResponse,
+    AdminGlobalAccountEventLogHistoryResponse,
+    AdminGlobalAccountEventLogResponse,
     AdminAccountLedgerHistoryResponse,
     AdminAccountLedgerEntryResponse,
     AdminAccountSearchItemResponse,
@@ -23,7 +28,12 @@ from app.schemas.admin import (
     AdminSubscriptionGrantResponse,
 )
 from app.schemas.payment import SubscriptionPlanResponse
-from app.services.admin_accounts import get_admin_account_detail, search_admin_accounts
+from app.services.admin_accounts import (
+    get_admin_account_detail,
+    get_admin_account_event_logs,
+    search_admin_account_event_logs,
+    search_admin_accounts,
+)
 from app.services.admin_account_status import (
     AdminAccountStatusCommentRequiredError,
     AdminAccountStatusConflictError,
@@ -88,6 +98,45 @@ async def search_accounts(
     )
 
 
+@router.get(
+    "/event-logs/search",
+    response_model=AdminGlobalAccountEventLogHistoryResponse,
+)
+async def search_account_event_logs(
+    account_id: UUID | None = Query(default=None),
+    actor_account_id: UUID | None = Query(default=None),
+    actor_admin_id: UUID | None = Query(default=None),
+    telegram_id: int | None = Query(default=None),
+    event_type: list[str] | None = Query(default=None),
+    outcome: list[str] | None = Query(default=None),
+    source: list[str] | None = Query(default=None),
+    request_id: str | None = Query(default=None, min_length=1, max_length=128),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminGlobalAccountEventLogHistoryResponse:
+    items, total = await search_admin_account_event_logs(
+        session,
+        account_id=account_id,
+        actor_account_id=actor_account_id,
+        actor_admin_id=actor_admin_id,
+        telegram_id=telegram_id,
+        event_types=event_type,
+        outcomes=outcome,
+        sources=source,
+        request_id=request_id,
+        limit=limit,
+        offset=offset,
+    )
+    return AdminGlobalAccountEventLogHistoryResponse(
+        items=[AdminGlobalAccountEventLogResponse.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.get("/{account_id}", response_model=AdminAccountDetailResponse)
 async def read_account_detail(
     account_id: str,
@@ -98,6 +147,46 @@ async def read_account_detail(
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
     return AdminAccountDetailResponse.model_validate(detail, from_attributes=True)
+
+
+@router.get(
+    "/{account_id}/event-logs",
+    response_model=AdminAccountEventLogHistoryResponse,
+)
+async def read_account_event_logs(
+    account_id: UUID,
+    event_type: list[str] | None = Query(default=None),
+    outcome: list[str] | None = Query(default=None),
+    source: list[str] | None = Query(default=None),
+    request_id: str | None = Query(default=None, min_length=1, max_length=128),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminAccountEventLogHistoryResponse:
+    account = await session.get(Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+
+    items, total = await get_admin_account_event_logs(
+        session,
+        account_id=account.id,
+        limit=limit,
+        offset=offset,
+        event_types=event_type,
+        outcomes=outcome,
+        sources=source,
+        request_id=request_id,
+    )
+    return AdminAccountEventLogHistoryResponse(
+        items=[
+            AdminAccountEventLogResponse.model_validate(item, from_attributes=True)
+            for item in items
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(
@@ -141,9 +230,11 @@ async def read_account_ledger_entries(
 async def adjust_account_balance(
     account_id: UUID,
     payload: AdminBalanceAdjustmentRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
     current_admin: Admin = Depends(get_current_admin),
 ) -> AdminBalanceAdjustmentResponse:
+    request_context = build_request_audit_context(request)
     account = await session.get(Account, account_id)
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
@@ -158,8 +249,28 @@ async def adjust_account_balance(
             idempotency_key=payload.idempotency_key,
         )
     except LedgerCommentRequiredError as exc:
+        log_audit_event(
+            "admin.balance_adjustment",
+            outcome="failure",
+            category="business",
+            reason="comment_required",
+            admin_id=current_admin.id,
+            account_id=account.id,
+            amount=payload.amount,
+            **request_context,
+        )
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except InsufficientFundsError as exc:
+        log_audit_event(
+            "admin.balance_adjustment",
+            outcome="failure",
+            category="business",
+            reason="insufficient_funds",
+            admin_id=current_admin.id,
+            account_id=account.id,
+            amount=payload.amount,
+            **request_context,
+        )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
     return AdminBalanceAdjustmentResponse(

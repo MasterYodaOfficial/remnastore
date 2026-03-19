@@ -130,6 +130,7 @@ docker builder prune -a -f
 - [`docs/launch-roadmap.md`](docs/launch-roadmap.md) - путь до первого коммерческого запуска
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
 - [`docs/production-env.md`](docs/production-env.md) - production-контракт по env-переменным
+- [`docs/logging-observability.md`](docs/logging-observability.md) - фазный план логирования и observability
 - [`docs/security-checklist.md`](docs/security-checklist.md) - базовый security checklist
 - [`apps/web/FRONTEND_CONTRACT.md`](apps/web/FRONTEND_CONTRACT.md) - единый контракт frontend на русском
 

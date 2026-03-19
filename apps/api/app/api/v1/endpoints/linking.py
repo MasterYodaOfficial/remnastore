@@ -1,10 +1,12 @@
 """Public linking endpoints (no authentication required)."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import build_request_audit_context, log_audit_event
 from app.db.session import get_session
 from app.schemas.account import AccountResponse
 from app.services.account_linking import (
@@ -66,9 +68,11 @@ def _link_token_http_error(exc: Exception) -> HTTPException:
 @router.post("/link-telegram-confirm", response_model=AccountResponse)
 async def confirm_telegram_link(
     payload: LinkTelegramConfirmRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> AccountResponse:
     """Confirm and consume Telegram linking token (called from bot)."""
+    request_context = build_request_audit_context(request)
     try:
         token = await get_link_token(
             session,
@@ -81,6 +85,14 @@ async def confirm_telegram_link(
         LinkTokenAlreadyConsumedError,
         LinkTokenTypeMismatchError,
     ) as exc:
+        log_audit_event(
+            "account.link.telegram_confirm",
+            outcome="failure",
+            category="security",
+            reason=type(exc).__name__,
+            telegram_id=payload.telegram_id,
+            **request_context,
+        )
         raise _link_token_http_error(exc) from exc
 
     try:
@@ -95,6 +107,15 @@ async def confirm_telegram_link(
         )
     except (ValueError, AccountMergeConflictError) as exc:
         await session.rollback()
+        log_audit_event(
+            "account.link.telegram_confirm",
+            outcome="failure",
+            category="security",
+            reason=type(exc).__name__,
+            account_id=token.account_id,
+            telegram_id=payload.telegram_id,
+            **request_context,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
@@ -103,6 +124,14 @@ async def confirm_telegram_link(
     mark_link_token_consumed(token)
     await session.commit()
     await session.refresh(account)
+    log_audit_event(
+        "account.link.telegram_confirm",
+        outcome="success",
+        category="security",
+        account_id=account.id,
+        telegram_id=payload.telegram_id,
+        **request_context,
+    )
     return AccountResponse.model_validate(account)
 
 

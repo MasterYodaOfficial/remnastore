@@ -5,6 +5,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    app_name: str = "remnastore-bot"
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    log_format: str = Field(default="text", validation_alias="LOG_FORMAT")
+    log_to_file: bool = Field(default=False, validation_alias="LOG_TO_FILE")
+    log_dir: str = Field(default="./.logs", validation_alias="LOG_DIR")
+    log_file_max_bytes: int = Field(default=10 * 1024 * 1024, validation_alias="LOG_FILE_MAX_BYTES")
+    log_file_backup_count: int = Field(default=5, validation_alias="LOG_FILE_BACKUP_COUNT")
     bot_token: str = ""
     bot_admin_ids: str = ""
     api_url: str = ""

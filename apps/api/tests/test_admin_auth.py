@@ -97,10 +97,11 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_admin_login_returns_token_and_profile(self) -> None:
         await self._create_admin()
 
-        response = await self.client.post(
-            "/api/v1/admin/auth/login",
-            json={"login": "root", "password": "secret-password"},
-        )
+        with self.assertLogs("app.audit", level="INFO") as captured:
+            response = await self.client.post(
+                "/api/v1/admin/auth/login",
+                json={"login": "root", "password": "secret-password"},
+            )
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -108,6 +109,19 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["access_token"])
         self.assertEqual(body["admin"]["username"], "root")
         self.assertTrue(body["admin"]["is_active"])
+        self.assertTrue(any("event=admin.login" in line and "outcome=success" in line for line in captured.output))
+
+    async def test_admin_login_failure_emits_audit_log(self) -> None:
+        await self._create_admin()
+
+        with self.assertLogs("app.audit", level="WARNING") as captured:
+            response = await self.client.post(
+                "/api/v1/admin/auth/login",
+                json={"login": "root", "password": "wrong-password"},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertTrue(any("event=admin.login" in line and "outcome=failure" in line for line in captured.output))
 
     async def test_admin_me_requires_admin_token(self) -> None:
         await self._create_admin()

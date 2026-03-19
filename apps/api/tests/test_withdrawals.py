@@ -10,7 +10,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.api.dependencies import get_current_account
 from app.core.config import settings
 from app.db.base import Base
-from app.db.models import Account, LedgerEntry, LedgerEntryType, Notification, NotificationType, Withdrawal
+from app.db.models import (
+    Account,
+    AccountEventLog,
+    LedgerEntry,
+    LedgerEntryType,
+    Notification,
+    NotificationType,
+    Withdrawal,
+)
 from app.db.session import get_session
 from app.main import create_app
 
@@ -123,6 +131,15 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def test_create_withdrawal_reserves_balance_and_updates_summary(self) -> None:
         account = await self._create_account(balance=90, referral_earnings=90, referral_code="withdraw-ref")
         self._current_account_id = account.id
@@ -163,6 +180,11 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0].type, NotificationType.WITHDRAWAL_CREATED)
         self.assertEqual(notifications[0].payload["withdrawal_id"], body["id"])
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["withdrawal.created"])
+        self.assertEqual(event_logs[0].payload["withdrawal_id"], body["id"])
+        self.assertEqual(event_logs[0].payload["destination_value"], "+7••••00")
 
         summary_response = await self.client.get("/api/v1/referrals/summary")
         self.assertEqual(summary_response.status_code, 200)

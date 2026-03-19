@@ -73,7 +73,7 @@ async def _run_delivery_once() -> None:
 
 
 async def run() -> None:
-    configure_logging()
+    configure_logging(component_name="broadcast-worker")
     cache = get_cache()
     await cache.ping()
 

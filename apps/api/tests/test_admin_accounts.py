@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     AccountStatus,
+    Admin,
     AdminActionLog,
     AuthAccount,
     AuthProvider,
@@ -571,6 +573,18 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0].entry_type, LedgerEntryType.ADMIN_CREDIT)
 
+            event_logs = list(
+                (
+                    await session.execute(
+                        select(AccountEventLog)
+                        .where(AccountEventLog.account_id == stored_account.id)
+                        .order_by(AccountEventLog.id.asc())
+                    )
+                ).scalars()
+            )
+            self.assertEqual([item.event_type for item in event_logs], ["admin.balance_adjustment"])
+            self.assertEqual(event_logs[0].payload["ledger_entry_id"], entries[0].id)
+
     async def test_balance_adjustment_rejects_insufficient_funds(self) -> None:
         token = await self._create_admin_token()
 
@@ -679,6 +693,18 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(logs[0].payload["plan_code"], "plan_1m")
             self.assertEqual(logs[0].payload["subscription_grant_id"], grants[0].id)
 
+            event_logs = list(
+                (
+                    await session.execute(
+                        select(AccountEventLog)
+                        .where(AccountEventLog.account_id == stored_account.id)
+                        .order_by(AccountEventLog.id.asc())
+                    )
+                ).scalars()
+            )
+            self.assertEqual([item.event_type for item in event_logs], ["admin.subscription_grant"])
+            self.assertEqual(event_logs[0].payload["subscription_grant_id"], grants[0].id)
+
     async def test_account_status_change_updates_status_and_is_idempotent(self) -> None:
         token = await self._create_admin_token()
 
@@ -734,3 +760,185 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(logs[0].comment, "Блокировка по abuse signal")
             self.assertEqual(logs[0].payload["previous_status"], AccountStatus.ACTIVE.value)
             self.assertEqual(logs[0].payload["next_status"], AccountStatus.BLOCKED.value)
+
+            event_logs = list(
+                (
+                    await session.execute(
+                        select(AccountEventLog)
+                        .where(AccountEventLog.account_id == stored_account.id)
+                        .order_by(AccountEventLog.id.asc())
+                    )
+                ).scalars()
+            )
+            self.assertEqual([item.event_type for item in event_logs], ["admin.account_status_change"])
+            self.assertEqual(event_logs[0].payload["next_status"], AccountStatus.BLOCKED.value)
+
+    async def test_account_event_logs_endpoint_returns_latest_events(self) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(
+                email="events@example.com",
+                display_name="Events User",
+                status=AccountStatus.ACTIVE,
+            )
+            session.add(account)
+            await session.flush()
+            session.add_all(
+                [
+                    AccountEventLog(
+                        account_id=account.id,
+                        actor_account_id=account.id,
+                        event_type="payment.intent.created",
+                        outcome="success",
+                        source="api",
+                        request_id="req-1",
+                        payload={"payment_id": 11},
+                    ),
+                    AccountEventLog(
+                        account_id=account.id,
+                        actor_admin_id=uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                        event_type="payment.finalized",
+                        outcome="failure",
+                        source="webhook",
+                        request_id="req-2",
+                        payload={"final_status": "failed"},
+                    ),
+                    AccountEventLog(
+                        account_id=account.id,
+                        actor_admin_id=uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                        event_type="admin.balance_adjustment",
+                        outcome="success",
+                        source="admin",
+                        request_id="req-3",
+                        payload={"amount": 100},
+                    ),
+                ]
+            )
+            await session.commit()
+            account_id = str(account.id)
+
+        response = await self.client.get(
+            f"/api/v1/admin/accounts/{account_id}/event-logs",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["total"], 3)
+        self.assertEqual(body["items"][0]["event_type"], "admin.balance_adjustment")
+        self.assertEqual(body["items"][1]["event_type"], "payment.finalized")
+        self.assertEqual(body["items"][2]["event_type"], "payment.intent.created")
+
+        filtered_response = await self.client.get(
+            f"/api/v1/admin/accounts/{account_id}/event-logs",
+            params=[
+                ("event_type", "payment.intent.created"),
+                ("source", "api"),
+                ("outcome", "success"),
+                ("request_id", "req-1"),
+            ],
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(filtered_response.status_code, 200)
+        filtered_body = filtered_response.json()
+        self.assertEqual(filtered_body["total"], 1)
+        self.assertEqual(filtered_body["items"][0]["event_type"], "payment.intent.created")
+        self.assertEqual(filtered_body["items"][0]["payload"]["payment_id"], 11)
+
+    async def test_global_account_event_log_search_returns_context_and_supports_filters(self) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            admin = (
+                await session.execute(select(Admin).where(Admin.username == "root"))
+            ).scalar_one()
+            account_a = Account(
+                email="alpha@example.com",
+                display_name="Alpha User",
+                telegram_id=700001,
+                username="alpha",
+                status=AccountStatus.ACTIVE,
+            )
+            account_b = Account(
+                email="beta@example.com",
+                display_name="Beta User",
+                telegram_id=700002,
+                username="beta",
+                status=AccountStatus.BLOCKED,
+            )
+            session.add_all([account_a, account_b])
+            await session.flush()
+            session.add_all(
+                [
+                    AccountEventLog(
+                        account_id=account_a.id,
+                        actor_account_id=account_a.id,
+                        actor_admin_id=admin.id,
+                        event_type="payment.intent.created",
+                        outcome="success",
+                        source="api",
+                        request_id="req-alpha",
+                        payload={"payment_id": 1001},
+                    ),
+                    AccountEventLog(
+                        account_id=account_b.id,
+                        actor_account_id=account_a.id,
+                        actor_admin_id=admin.id,
+                        event_type="admin.balance_adjustment",
+                        outcome="success",
+                        source="admin",
+                        request_id="req-beta",
+                        payload={"amount": 500},
+                    ),
+                    AccountEventLog(
+                        account_id=account_b.id,
+                        event_type="payment.finalized",
+                        outcome="failure",
+                        source="webhook",
+                        request_id="req-failure",
+                        payload={"reason": "provider_error"},
+                    ),
+                ]
+            )
+            await session.commit()
+
+        filtered_response = await self.client.get(
+            "/api/v1/admin/accounts/event-logs/search",
+            params=[
+                ("actor_admin_id", str(admin.id)),
+                ("source", "admin"),
+            ],
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(filtered_response.status_code, 200)
+        filtered_body = filtered_response.json()
+        self.assertEqual(filtered_body["total"], 1)
+        self.assertEqual(filtered_body["items"][0]["event_type"], "admin.balance_adjustment")
+        self.assertEqual(filtered_body["items"][0]["account"]["display_name"], "Beta User")
+        self.assertEqual(filtered_body["items"][0]["actor_account"]["username"], "alpha")
+        self.assertEqual(filtered_body["items"][0]["actor_admin"]["username"], "root")
+
+        telegram_response = await self.client.get(
+            "/api/v1/admin/accounts/event-logs/search",
+            params={"telegram_id": "700001"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(telegram_response.status_code, 200)
+        telegram_body = telegram_response.json()
+        self.assertEqual(telegram_body["total"], 1)
+        self.assertEqual(telegram_body["items"][0]["request_id"], "req-alpha")
+
+        request_response = await self.client.get(
+            "/api/v1/admin/accounts/event-logs/search",
+            params=[
+                ("request_id", "req-failure"),
+                ("event_type", "payment.finalized"),
+                ("outcome", "failure"),
+            ],
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(request_response.status_code, 200)
+        request_body = request_response.json()
+        self.assertEqual(request_body["total"], 1)
+        self.assertEqual(request_body["items"][0]["account"]["email"], "beta@example.com")
+        self.assertEqual(request_body["items"][0]["payload"]["reason"], "provider_error")

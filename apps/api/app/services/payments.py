@@ -35,6 +35,7 @@ from app.domain.payments import (
     PaymentStatus,
     PaymentWebhookEvent,
 )
+from app.services.account_events import append_account_event
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
 from app.services.notifications import (
     FINAL_FAILED_PAYMENT_STATUSES,
@@ -622,6 +623,45 @@ class PaymentMaintenanceResult:
     failed: int = 0
 
 
+def _payment_event_payload(payment: Payment) -> dict[str, object]:
+    return {
+        "payment_id": payment.id,
+        "provider": payment.provider.value,
+        "flow_type": payment.flow_type.value,
+        "status": payment.status.value,
+        "amount": payment.amount,
+        "currency": payment.currency,
+        "provider_payment_id": payment.provider_payment_id,
+        "plan_code": payment.plan_code,
+        "external_reference": payment.external_reference,
+        "idempotency_key": payment.idempotency_key,
+    }
+
+
+async def _append_payment_account_event(
+    session: AsyncSession,
+    *,
+    payment: Payment,
+    event_type: str,
+    source: str,
+    outcome: str = "success",
+    actor_account_id: UUID | None = None,
+    payload: dict[str, object] | None = None,
+) -> None:
+    event_payload = _payment_event_payload(payment)
+    if payload:
+        event_payload.update(payload)
+    await append_account_event(
+        session,
+        account_id=payment.account_id,
+        actor_account_id=actor_account_id,
+        event_type=event_type,
+        outcome=outcome,
+        source=source,
+        payload={key: value for key, value in event_payload.items() if value is not None},
+    )
+
+
 STALE_PENDING_PAYMENT_STATUSES = {
     PaymentStatus.CREATED,
     PaymentStatus.PENDING,
@@ -940,6 +980,17 @@ async def expire_stale_payments(
         payment.status = PaymentStatus.EXPIRED
         payment.finalized_at = _utcnow()
         await notify_payment_failed(session, payment=payment, status=PaymentStatus.EXPIRED)
+        await _append_payment_account_event(
+            session,
+            payment=payment,
+            event_type="payment.finalized",
+            source="maintenance",
+            outcome="failure",
+            payload={
+                "final_status": PaymentStatus.EXPIRED.value,
+                "finalized_at": payment.finalized_at.isoformat(),
+            },
+        )
         summary.processed += 1
         summary.expired += 1
 
@@ -1053,6 +1104,17 @@ async def reconcile_pending_yookassa_payments(
         if snapshot.status in FINAL_FAILED_PAYMENT_STATUSES:
             payment.finalized_at = _utcnow()
             await notify_payment_failed(session, payment=payment, status=snapshot.status)
+            await _append_payment_account_event(
+                session,
+                payment=payment,
+                event_type="payment.finalized",
+                source="reconcile",
+                outcome="failure",
+                payload={
+                    "final_status": snapshot.status.value,
+                    "finalized_at": payment.finalized_at.isoformat(),
+                },
+            )
             await session.commit()
             summary.processed += 1
             if snapshot.status == PaymentStatus.CANCELLED:
@@ -1083,6 +1145,7 @@ async def create_payment(
     plan_code: str | None = None,
     idempotency_key: str | None = None,
     metadata: dict[str, str] | None = None,
+    source: str = "api",
 ) -> PaymentIntentSnapshot:
     if account.status == AccountStatus.BLOCKED:
         raise PaymentAccountBlockedError("blocked accounts cannot create payments")
@@ -1122,6 +1185,7 @@ async def create_payment(
         provider=gateway.provider,
         provider_payment_id=snapshot.provider_payment_id,
     )
+    is_new_payment = payment is None
     if payment is None:
         payment = Payment(
             account_id=account.id,
@@ -1135,6 +1199,19 @@ async def create_payment(
         session.add(payment)
 
     _apply_payment_intent_snapshot(payment, command=command, snapshot=snapshot)
+    await session.flush()
+    if is_new_payment:
+        await _append_payment_account_event(
+            session,
+            payment=payment,
+            event_type="payment.intent.created",
+            source=source,
+            actor_account_id=account.id,
+            payload={
+                "confirmation_url": payment.confirmation_url,
+                "expires_at": None if payment.expires_at is None else payment.expires_at.isoformat(),
+            },
+        )
 
     try:
         await session.commit()
@@ -1178,6 +1255,7 @@ async def create_yookassa_topup_payment(
     cancel_url: str | None = None,
     description: str | None = None,
     idempotency_key: str | None = None,
+    source: str = "api",
 ) -> PaymentIntentSnapshot:
     return await create_payment(
         session,
@@ -1190,6 +1268,7 @@ async def create_yookassa_topup_payment(
         cancel_url=cancel_url,
         description=description,
         idempotency_key=idempotency_key,
+        source=source,
     )
 
 
@@ -1203,6 +1282,7 @@ async def create_yookassa_plan_purchase_payment(
     description: str | None = None,
     idempotency_key: str | None = None,
     promo_code: str | None = None,
+    source: str = "api",
 ) -> PaymentIntentSnapshot:
     plan = get_subscription_plan(plan_code)
     if promo_code is not None and idempotency_key:
@@ -1252,6 +1332,7 @@ async def create_yookassa_plan_purchase_payment(
         description=plan_description,
         plan_code=plan.code,
         idempotency_key=idempotency_key,
+        source=source,
         metadata={
             "rm_plan_code": plan.code,
             "rm_plan_name": plan.name,
@@ -1296,6 +1377,7 @@ async def create_telegram_stars_plan_purchase_payment(
     description: str | None = None,
     idempotency_key: str | None = None,
     promo_code: str | None = None,
+    source: str = "api",
 ) -> PaymentIntentSnapshot:
     if account.telegram_id is None:
         raise PaymentConflictError("Telegram Stars доступны только для Telegram-аккаунтов")
@@ -1352,6 +1434,7 @@ async def create_telegram_stars_plan_purchase_payment(
         description=plan_description,
         plan_code=plan.code,
         idempotency_key=idempotency_key,
+        source=source,
         metadata={
             "rm_plan_code": plan.code,
             "rm_plan_name": plan.name,
@@ -1464,22 +1547,37 @@ async def _stage_plan_purchase_grant(
         account,
         duration_days=duration_days,
     )
-    session.add(
-        SubscriptionGrant(
-            account_id=payment.account_id,
-            payment_id=payment.id,
-            purchase_source=PurchaseSource.DIRECT_PAYMENT.value,
-            reference_type="payment",
-            reference_id=str(payment.id),
-            plan_code=payment.plan_code,
-            amount=payment.amount,
-            currency=payment.currency,
-            duration_days=duration_days,
-            base_expires_at=base_expires_at,
-            target_expires_at=target_expires_at,
-        )
+    grant = SubscriptionGrant(
+        account_id=payment.account_id,
+        payment_id=payment.id,
+        purchase_source=PurchaseSource.DIRECT_PAYMENT.value,
+        reference_type="payment",
+        reference_id=str(payment.id),
+        plan_code=payment.plan_code,
+        amount=payment.amount,
+        currency=payment.currency,
+        duration_days=duration_days,
+        base_expires_at=base_expires_at,
+        target_expires_at=target_expires_at,
     )
+    session.add(grant)
     await session.flush()
+    await append_account_event(
+        session,
+        account_id=payment.account_id,
+        event_type="subscription.direct_payment.staged",
+        source="system",
+        payload={
+            "payment_id": payment.id,
+            "subscription_grant_id": grant.id,
+            "provider": payment.provider.value,
+            "plan_code": grant.plan_code,
+            "amount": grant.amount,
+            "currency": grant.currency,
+            "duration_days": grant.duration_days,
+            "target_expires_at": grant.target_expires_at.isoformat(),
+        },
+    )
 
 
 async def _finalize_wallet_topup_payment(
@@ -1493,7 +1591,7 @@ async def _finalize_wallet_topup_payment(
     if payment.finalized_at is not None:
         return False
 
-    await apply_credit_in_transaction(
+    ledger_entry = await apply_credit_in_transaction(
         session,
         account_id=payment.account_id,
         amount=payment.amount,
@@ -1504,6 +1602,16 @@ async def _finalize_wallet_topup_payment(
         idempotency_key=f"payment:{payment.provider.value}:{payment.provider_payment_id}:credit",
     )
     payment.finalized_at = _utcnow()
+    await _append_payment_account_event(
+        session,
+        payment=payment,
+        event_type="payment.topup.applied",
+        source="system",
+        payload={
+            "ledger_entry_id": ledger_entry.id,
+            "finalized_at": payment.finalized_at.isoformat(),
+        },
+    )
     await notify_payment_succeeded(session, payment=payment)
     await session.commit()
     await clear_account_cache(payment.account_id)
@@ -1547,6 +1655,23 @@ async def _finalize_direct_plan_purchase(
         raise PaymentGatewayError(str(exc)) from exc
 
     grant.applied_at = _utcnow()
+    await append_account_event(
+        session,
+        account_id=payment.account_id,
+        event_type="subscription.direct_payment.applied",
+        source="system",
+        payload={
+            "payment_id": payment.id,
+            "subscription_grant_id": grant.id,
+            "provider": payment.provider.value,
+            "plan_code": grant.plan_code,
+            "amount": grant.amount,
+            "currency": grant.currency,
+            "duration_days": grant.duration_days,
+            "target_expires_at": grant.target_expires_at.isoformat(),
+            "applied_at": grant.applied_at.isoformat(),
+        },
+    )
     await mark_promo_redemption_applied(
         session,
         reference_type=PAYMENT_REFERENCE_TYPE,
@@ -1627,6 +1752,19 @@ async def process_payment_webhook(
             await _stage_plan_purchase_grant(session, payment=payment)
         elif event.status in FINAL_FAILED_PAYMENT_STATUSES:
             await notify_payment_failed(session, payment=payment, status=event.status)
+            await _append_payment_account_event(
+                session,
+                payment=payment,
+                event_type="payment.finalized",
+                source="webhook",
+                outcome="failure",
+                payload={
+                    "final_status": event.status.value,
+                    "finalized_at": None
+                    if payment.finalized_at is None
+                    else payment.finalized_at.isoformat(),
+                },
+            )
 
         try:
             await session.commit()

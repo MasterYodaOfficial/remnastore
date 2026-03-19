@@ -18,6 +18,7 @@ from app.integrations.remnawave import (
     RemnawaveUser,
     get_remnawave_gateway,
 )
+from app.services.account_events import append_account_event
 from app.services.ledger import InsufficientFundsError, apply_debit_in_transaction, clear_account_cache
 from app.services.plans import SubscriptionPlan, get_subscription_plan
 from app.services.referrals import apply_first_referral_reward_for_grant
@@ -341,6 +342,22 @@ async def stage_wallet_plan_purchase(
         target_expires_at=target_expires_at,
     )
     session.add(grant)
+    await session.flush()
+    await append_account_event(
+        session,
+        account_id=account_id,
+        actor_account_id=account_id,
+        event_type="subscription.wallet_purchase.staged",
+        source="api",
+        payload={
+            "subscription_grant_id": grant.id,
+            "plan_code": grant.plan_code,
+            "amount": grant.amount,
+            "currency": grant.currency,
+            "duration_days": grant.duration_days,
+            "reference_id": grant.reference_id,
+        },
+    )
 
     try:
         await session.commit()
@@ -410,6 +427,22 @@ async def finalize_wallet_plan_purchase(
         raise
 
     grant.applied_at = utcnow()
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_account_id=account.id,
+        event_type="subscription.wallet_purchase.applied",
+        source="api",
+        payload={
+            "subscription_grant_id": grant.id,
+            "plan_code": grant.plan_code,
+            "amount": grant.amount,
+            "currency": grant.currency,
+            "duration_days": grant.duration_days,
+            "reference_id": grant.reference_id,
+            "target_expires_at": grant.target_expires_at.isoformat(),
+        },
+    )
     await session.commit()
     await session.refresh(account)
     await clear_account_cache(account.id)

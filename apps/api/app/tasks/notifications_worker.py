@@ -53,7 +53,7 @@ async def _run_telegram_delivery_once() -> None:
 
 
 async def run() -> None:
-    configure_logging()
+    configure_logging(component_name="notifications-worker")
     cache = get_cache()
     await cache.ping()
 

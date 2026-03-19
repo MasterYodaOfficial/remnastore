@@ -17,6 +17,7 @@ from app.db.models import (
     Withdrawal,
     WithdrawalStatus,
 )
+from app.services.account_events import append_account_event
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
 from app.services.notifications import notify_withdrawal_paid, notify_withdrawal_rejected
 
@@ -367,6 +368,22 @@ async def change_admin_withdrawal_status(
 
     try:
         await session.flush()
+        await append_account_event(
+            session,
+            account_id=withdrawal.account_id,
+            actor_admin_id=admin_id,
+            event_type="admin.withdrawal.status_change",
+            source="admin",
+            payload={
+                "withdrawal_id": withdrawal.id,
+                "previous_status": previous_status.value,
+                "next_status": target_status.value,
+                "comment": normalized_comment,
+                "admin_action_log_id": audit_log.id,
+                "released_ledger_entry_id": None if release_entry is None else release_entry.id,
+                "idempotency_key": normalized_idempotency_key,
+            },
+        )
         if target_status == WithdrawalStatus.PAID:
             await notify_withdrawal_paid(session, withdrawal=withdrawal)
         elif target_status == WithdrawalStatus.REJECTED:

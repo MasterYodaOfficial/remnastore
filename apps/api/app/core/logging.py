@@ -1,28 +1,18 @@
-import logging
-
 from app.core.config import settings
+from common.logging_setup import (
+    configure_logging as configure_runtime_logging,
+    resolve_log_format,
+    resolve_log_level,
+)
 
-
-def resolve_log_level(raw_level: object) -> int | str:
-    if isinstance(raw_level, int):
-        return raw_level
-
-    if isinstance(raw_level, str):
-        normalized = raw_level.strip()
-        if not normalized:
-            return logging.INFO
-        if normalized.isdigit():
-            return int(normalized)
-
-        upper_level = normalized.upper()
-        if upper_level in logging.getLevelNamesMapping():
-            return upper_level
-
-    raise ValueError(f"Unknown level: {raw_level!r}")
-
-
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=resolve_log_level(settings.log_level),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+def configure_logging(*, component_name: str = "api") -> None:
+    configure_runtime_logging(
+        service_name=settings.app_name,
+        component_name=component_name,
+        log_level=settings.log_level,
+        log_format=settings.log_format,
+        log_to_file=settings.log_to_file,
+        log_dir=settings.log_dir,
+        log_file_max_bytes=settings.log_file_max_bytes,
+        log_file_backup_count=settings.log_file_backup_count,
     )

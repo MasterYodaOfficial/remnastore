@@ -6,7 +6,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import log_audit_event
 from app.db.models import Account, LedgerEntry, LedgerEntryType
+from app.services.account_events import append_account_event
 from app.services.cache import get_cache
 
 
@@ -364,12 +366,24 @@ async def admin_adjust_balance(
     idempotency_key: str | None = None,
 ) -> LedgerEntry:
     normalized_comment = _normalize_optional_text(comment)
+    normalized_idempotency_key = _normalize_optional_text(idempotency_key)
     if normalized_comment is None:
         raise LedgerCommentRequiredError("admin comment is required")
     if amount == 0:
         raise ValueError("amount must be non-zero")
 
     entry_type = LedgerEntryType.ADMIN_CREDIT if amount > 0 else LedgerEntryType.ADMIN_DEBIT
+    if normalized_idempotency_key is not None:
+        existing_entry = await _get_entry_by_idempotency_key(session, normalized_idempotency_key)
+        if existing_entry is not None:
+            _validate_idempotent_entry(
+                existing_entry,
+                account_id=account_id,
+                entry_type=entry_type,
+                amount=amount,
+            )
+            return existing_entry
+
     entry = await _apply_entry(
         session,
         account_id=account_id,
@@ -378,10 +392,37 @@ async def admin_adjust_balance(
         reference_type=reference_type,
         reference_id=reference_id,
         comment=normalized_comment,
-        idempotency_key=idempotency_key,
+        idempotency_key=normalized_idempotency_key,
         created_by_admin_id=admin_id,
     )
-    return await _commit_entry(session, entry=entry, account_id=account_id)
+    await append_account_event(
+        session,
+        account_id=account_id,
+        actor_admin_id=admin_id,
+        event_type="admin.balance_adjustment",
+        source="admin",
+        payload={
+            "amount": amount,
+            "entry_type": entry_type.value,
+            "comment": normalized_comment,
+            "ledger_entry_id": entry.id,
+            "reference_type": reference_type,
+            "reference_id": reference_id,
+            "idempotency_key": normalized_idempotency_key,
+        },
+    )
+    committed_entry = await _commit_entry(session, entry=entry, account_id=account_id)
+    log_audit_event(
+        "admin.balance_adjustment",
+        outcome="success",
+        category="business",
+        admin_id=admin_id,
+        account_id=account_id,
+        amount=amount,
+        ledger_entry_id=committed_entry.id,
+        entry_type=entry_type.value,
+    )
+    return committed_entry
 
 
 async def transfer_balance_for_merge(

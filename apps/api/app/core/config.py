@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     app_name: str = "remnastore-api"
     app_version: str = "0.1.0"
     log_level: str = "INFO"
+    log_format: str = Field(default="text", validation_alias="LOG_FORMAT")
+    log_to_file: bool = Field(default=False, validation_alias="LOG_TO_FILE")
+    log_dir: str = Field(default="./.logs", validation_alias="LOG_DIR")
+    log_file_max_bytes: int = Field(default=10 * 1024 * 1024, validation_alias="LOG_FILE_MAX_BYTES")
+    log_file_backup_count: int = Field(default=5, validation_alias="LOG_FILE_BACKUP_COUNT")
+    access_log_enabled: bool = Field(default=True, validation_alias="ACCESS_LOG_ENABLED")
 
     database_url: str = ""
     redis_url: str = ""

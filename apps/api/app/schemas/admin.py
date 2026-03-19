@@ -123,6 +123,67 @@ class AdminAccountLedgerHistoryResponse(BaseModel):
     offset: int
 
 
+class AdminAccountEventLogResponse(BaseModel):
+    id: int
+    account_id: UUID | None = None
+    actor_account_id: UUID | None = None
+    actor_admin_id: UUID | None = None
+    event_type: str
+    outcome: str
+    source: str | None = None
+    request_id: str | None = None
+    payload: dict[str, object] | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AdminAccountEventLogHistoryResponse(BaseModel):
+    items: list[AdminAccountEventLogResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class AdminAccountEventLogAccountSnapshotResponse(BaseModel):
+    id: UUID | None = None
+    email: str | None = None
+    display_name: str | None = None
+    telegram_id: int | None = None
+    username: str | None = None
+    status: AccountStatus | None = None
+
+
+class AdminAccountEventLogAdminSnapshotResponse(BaseModel):
+    id: UUID | None = None
+    username: str | None = None
+    email: str | None = None
+    full_name: str | None = None
+
+
+class AdminGlobalAccountEventLogResponse(BaseModel):
+    id: int
+    account_id: UUID | None = None
+    actor_account_id: UUID | None = None
+    actor_admin_id: UUID | None = None
+    event_type: str
+    outcome: str
+    source: str | None = None
+    request_id: str | None = None
+    payload: dict[str, object] | None = None
+    created_at: datetime
+    account: AdminAccountEventLogAccountSnapshotResponse | None = None
+    actor_account: AdminAccountEventLogAccountSnapshotResponse | None = None
+    actor_admin: AdminAccountEventLogAdminSnapshotResponse | None = None
+
+
+class AdminGlobalAccountEventLogHistoryResponse(BaseModel):
+    items: list[AdminGlobalAccountEventLogResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class AdminAccountPaymentResponse(BaseModel):
     id: int
     provider: PaymentProvider

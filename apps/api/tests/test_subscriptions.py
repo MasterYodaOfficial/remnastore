@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     AccountStatus,
     LedgerEntry,
     LedgerEntryType,
@@ -168,7 +169,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._original_trial_duration_days = settings.trial_duration_days
+        self._original_api_token = settings.api_token
         settings.trial_duration_days = 3
+        settings.api_token = "internal-token"
         self._original_remnawave_webhook_secret = settings.remnawave_webhook_secret
         settings.remnawave_webhook_secret = "test-remnawave-secret"
 
@@ -202,6 +205,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         settings.trial_duration_days = self._original_trial_duration_days
+        settings.api_token = self._original_api_token
         settings.remnawave_webhook_secret = self._original_remnawave_webhook_secret
         subscriptions_service.get_remnawave_gateway = self._original_gateway_factory
         self._cache_module._cache = self._original_cache
@@ -247,6 +251,15 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
+    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def test_activate_trial_creates_remote_user_and_marks_snapshot(self) -> None:
         account = await self._create_account(email="trial@example.com")
         self._current_account_id = account.id
@@ -272,6 +285,32 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stored_account.subscription_is_trial)
         self.assertIsNotNone(stored_account.trial_used_at)
         self.assertIsNotNone(stored_account.trial_ends_at)
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["subscription.trial.activated"])
+        self.assertEqual(event_logs[0].source, "api")
+
+    async def test_internal_bot_trial_activation_persists_bot_source(self) -> None:
+        account = await self._create_account(
+            email="trial-bot@example.com",
+            telegram_id=758107031,
+        )
+
+        response = await self.client.post(
+            f"/api/v1/internal/bot/subscriptions/trial/{account.telegram_id}",
+            headers={"Authorization": "Bearer internal-token"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(body["telegram_id"], account.telegram_id)
+        self.assertTrue(body["exists"])
+        self.assertEqual(body["subscription"]["status"], "ACTIVE")
+        self.assertTrue(body["subscription"]["is_trial"])
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["subscription.trial.activated"])
+        self.assertEqual(event_logs[0].source, "bot")
 
     async def test_bootstrap_me_uses_local_snapshot_without_remnawave_call(self) -> None:
         account = await self._create_account(email="bootstrap@example.com")
@@ -438,6 +477,10 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grants[0].purchase_source, "wallet")
         self.assertEqual(grants[0].reference_type, "wallet_purchase")
         self.assertEqual(grants[0].reference_id, "wallet-plan-1m")
+
+        event_types = [item.event_type for item in await self._get_account_event_logs(account.id)]
+        self.assertIn("subscription.wallet_purchase.staged", event_types)
+        self.assertIn("subscription.wallet_purchase.applied", event_types)
         self.assertIsNotNone(grants[0].applied_at)
 
     async def test_wallet_plan_purchase_after_trial_clears_current_trial_flag(self) -> None:
@@ -739,6 +782,12 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             "https://panel.test/sub/webhook",
         )
         self.assertTrue(stored_account.subscription_is_trial)
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual([item.event_type for item in event_logs], ["subscription.remnawave.webhook"])
+        self.assertEqual(event_logs[0].source, "webhook")
+        self.assertEqual(event_logs[0].payload["remnawave_event"], "user.modified")
+        self.assertEqual(event_logs[0].payload["remnawave_scope"], "user")
 
     async def test_remnawave_webhook_with_null_tag_clears_trial_flag(self) -> None:
         account = await self._create_account(

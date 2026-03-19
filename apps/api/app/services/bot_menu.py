@@ -110,7 +110,7 @@ async def activate_trial_for_telegram_account(
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
         raise BotMenuAccountNotFoundError(f"telegram account not found: {telegram_id}")
-    return await activate_trial(session, account=account)
+    return await activate_trial(session, account=account, source="bot")
 
 
 async def create_telegram_stars_plan_payment_for_telegram_account(
@@ -129,6 +129,7 @@ async def create_telegram_stars_plan_payment_for_telegram_account(
         account=account,
         plan_code=plan_code,
         idempotency_key=idempotency_key,
+        source="bot",
     )
 
     if not snapshot.confirmation_url:
@@ -166,6 +167,7 @@ async def create_yookassa_plan_payment_for_telegram_account(
         success_url=resolved_success_url,
         cancel_url=cancel_url,
         idempotency_key=idempotency_key,
+        source="bot",
     )
 
     if not snapshot.confirmation_url:

@@ -1,3 +1,4 @@
+from app.db.models.account_event_log import AccountEventLog
 from app.db.models.admin_action_log import AdminActionLog, AdminActionType
 from app.db.models.admin import Admin
 from app.db.models.account import (
@@ -46,6 +47,7 @@ from app.db.models.subscription_grant import SubscriptionGrant
 from app.db.models.withdrawal import Withdrawal, WithdrawalDestinationType, WithdrawalStatus
 
 __all__ = [
+    "AccountEventLog",
     "AdminActionLog",
     "AdminActionType",
     "Admin",

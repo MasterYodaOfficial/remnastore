@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, Notification, NotificationType
 from app.integrations.remnawave.models import RemnawaveWebhookEnvelope, RemnawaveWebhookUserData
+from app.services.account_events import append_account_event
 from app.services.ledger import clear_account_cache
 from app.services.notifications import notify_subscription_expired, notify_subscription_expiring
 from app.services.purchases import clear_remote_subscription_snapshot, normalize_datetime, utcnow
@@ -218,6 +219,26 @@ async def process_remnawave_webhook(
         handler = USER_EVENT_HANDLERS.get(envelope.event)
         if handler is not None:
             notifications = await handler(session, account, user, envelope)
+
+    await append_account_event(
+        session,
+        account_id=account.id,
+        event_type="subscription.remnawave.webhook",
+        source="webhook",
+        payload={
+            "remnawave_event": envelope.event,
+            "remnawave_scope": scope,
+            "remnawave_user_uuid": str(user.uuid),
+            "subscription_status": account.subscription_status,
+            "subscription_expires_at": None
+            if account.subscription_expires_at is None
+            else normalize_datetime(account.subscription_expires_at).isoformat(),
+            "subscription_url": account.subscription_url,
+            "subscription_is_trial": account.subscription_is_trial,
+            "notification_types": [notification.type.value for notification in notifications],
+            "cleared_remote_snapshot": envelope.event == USER_DELETED_EVENT,
+        },
+    )
 
     await session.commit()
     await session.refresh(account)

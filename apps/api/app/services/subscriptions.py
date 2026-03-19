@@ -17,6 +17,7 @@ from app.integrations.remnawave import (
     get_remnawave_gateway,
 )
 from app.schemas.subscription import SubscriptionStateResponse, TrialEligibilityResponse
+from app.services.account_events import append_account_event
 from app.services.cache import get_cache
 from app.services.purchases import (
     PurchaseConflictError,
@@ -214,6 +215,7 @@ async def activate_trial(
     session: AsyncSession,
     *,
     account: Account,
+    source: str = "api",
 ) -> SubscriptionStateResponse:
     account = await _load_managed_account(session, account.id)
     eligibility = await get_trial_eligibility(session, account=account)
@@ -227,10 +229,27 @@ async def activate_trial(
             status_code = 503
         raise TrialEligibilityError(eligibility.reason or "trial_not_eligible", status_code=status_code)
 
-    await apply_trial_purchase(
+    purchase_result = await apply_trial_purchase(
         account,
         trial_duration_days=settings.trial_duration_days,
         gateway_factory=get_remnawave_gateway,
+    )
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_account_id=account.id,
+        event_type="subscription.trial.activated",
+        source=source,
+        payload={
+            "target_expires_at": purchase_result.target_expires_at.isoformat(),
+            "trial_used_at": None
+            if purchase_result.trial_used_at is None
+            else purchase_result.trial_used_at.isoformat(),
+            "trial_ends_at": None
+            if purchase_result.trial_ends_at is None
+            else purchase_result.trial_ends_at.isoformat(),
+            "duration_days": settings.trial_duration_days,
+        },
     )
 
     await session.commit()

@@ -14,4 +14,4 @@ until uv run --no-sync alembic -c alembic.ini upgrade head; do
 done
 
 echo "Starting API..."
-exec uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000
+exec uv run --no-sync python -m app.server --host 0.0.0.0 --port 8000

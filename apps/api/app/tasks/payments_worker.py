@@ -68,7 +68,7 @@ async def _run_reconcile_yookassa_once() -> None:
 
 
 async def run() -> None:
-    configure_logging()
+    configure_logging(component_name="payments-worker")
     cache = get_cache()
     await cache.ping()
 

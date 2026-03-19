@@ -6,8 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.endpoints.webhooks import router as public_webhooks_router
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.logging import configure_logging
 from app.db.session import SessionLocal
+from app.middleware.request_context import register_request_context_middleware
 from app.services.admin_auth import ensure_bootstrap_admin
 from app.services.cache import get_cache
 
@@ -22,7 +22,6 @@ def create_app() -> FastAPI:
         yield
         await cache.close()
 
-    configure_logging()
     app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
@@ -31,6 +30,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    register_request_context_middleware(app, emit_access_log=settings.access_log_enabled)
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(public_webhooks_router, prefix="/webhooks")
     return app

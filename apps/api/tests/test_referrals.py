@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     AccountStatus,
     LedgerEntry,
     Notification,
@@ -151,6 +152,15 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return result.scalar_one_or_none()
 
+    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def _create_subscription_grant(
         self,
         *,
@@ -210,6 +220,11 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_referrer)
         assert stored_referrer is not None
         self.assertEqual(stored_referrer.referrals_count, 1)
+
+        referred_event_types = [item.event_type for item in await self._get_account_event_logs(referred.id)]
+        referrer_event_types = [item.event_type for item in await self._get_account_event_logs(referrer.id)]
+        self.assertIn("referral.claim", referred_event_types)
+        self.assertIn("referral.attributed", referrer_event_types)
 
     async def test_claim_referral_code_rejects_self_referral(self) -> None:
         account = await self._create_account(referral_code="ref-self")
@@ -317,6 +332,9 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         entries = await self._get_ledger_entries(referrer.id)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].amount, 59)
+
+        event_types = [item.event_type for item in await self._get_account_event_logs(referrer.id)]
+        self.assertIn("referral.reward.granted", event_types)
 
     async def test_bot_webhook_records_pending_telegram_referral_intent(self) -> None:
         await self._create_account(referral_code="ref-bot")

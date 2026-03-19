@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, AdminActionLog, AdminActionType, SubscriptionGrant
 from app.integrations.remnawave import get_remnawave_gateway
+from app.services.account_events import append_account_event
 from app.services.ledger import clear_account_cache
 from app.services.plans import SubscriptionPlan, get_subscription_plan
 from app.services.purchases import (
@@ -293,6 +294,25 @@ async def grant_subscription_manually(
         raise
 
     grant.applied_at = utcnow()
+    await append_account_event(
+        session,
+        account_id=account.id,
+        actor_admin_id=admin_id,
+        event_type="admin.subscription_grant",
+        source="admin",
+        payload={
+            "subscription_grant_id": grant.id,
+            "admin_action_log_id": audit_log.id,
+            "plan_code": plan.code,
+            "duration_days": plan.duration_days,
+            "reference_type": ADMIN_MANUAL_GRANT_REFERENCE_TYPE,
+            "reference_id": normalized_idempotency_key,
+            "base_expires_at": grant.base_expires_at,
+            "target_expires_at": grant.target_expires_at,
+            "comment": normalized_comment,
+            "idempotency_key": normalized_idempotency_key,
+        },
+    )
 
     try:
         await session.commit()
