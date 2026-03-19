@@ -129,6 +129,7 @@ docker builder prune -a -f
 - [`docs/account-linking.md`](docs/account-linking.md) - логика связки Telegram и browser-аккаунтов
 - [`docs/launch-roadmap.md`](docs/launch-roadmap.md) - путь до первого коммерческого запуска
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
+- [`docs/product-readiness-plan.md`](docs/product-readiness-plan.md) - план hardening и подготовки `dev -> main`
 - [`docs/production-env.md`](docs/production-env.md) - production-контракт по env-переменным
 - [`docs/logging-observability.md`](docs/logging-observability.md) - фазный план логирования и observability
 - [`docs/security-checklist.md`](docs/security-checklist.md) - базовый security checklist
