@@ -10,12 +10,14 @@ from bot.services.menu_renderer import (
     BUTTON_STYLE_DANGER,
     BUTTON_STYLE_SUCCESS,
     SCREEN_HOME,
+    SCREEN_PLAN,
     YOOKASSA_IDEMPOTENCY_KEY_MAX_LENGTH,
     RenderedMenu,
     _build_bot_payment_idempotency_key,
     _build_help_keyboard,
     _build_plan_detail_keyboard,
     _top_webapp_row,
+    build_rendered_menu,
     create_plan_payment_and_render,
     present_menu,
 )
@@ -106,6 +108,52 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         stars_button = keyboard.inline_keyboard[1][0]
 
         self.assertEqual(stars_button.text, "⭐ Оплатить звездами Telegram")
+
+    async def test_build_rendered_menu_plan_includes_promo_code_and_actions(self) -> None:
+        client = AsyncMock()
+        client.get_bot_plans.return_value = {
+            "items": [
+                {
+                    "code": "plan_1m",
+                    "name": "1 месяц",
+                    "price_rub": 299,
+                    "price_stars": 90,
+                    "duration_days": 30,
+                    "features": ["Безлимит"],
+                    "popular": True,
+                }
+            ]
+        }
+        client.get_bot_dashboard.return_value = {"exists": True}
+
+        rendered = await build_rendered_menu(
+            telegram_id=758107031,
+            locale="ru",
+            screen=SCREEN_PLAN,
+            screen_params={"plan_code": "plan_1m", "promo_code": " spring20 "},
+            referral_code=None,
+            api_client=client,
+        )
+
+        self.assertIn("Промокод: SPRING20", rendered.caption)
+        self.assertEqual(
+            rendered.screen_params,
+            {"plan_code": "plan_1m", "promo_code": "SPRING20"},
+        )
+        self.assertIn("Код сохранен в боте.", rendered.caption)
+        buttons = [
+            button
+            for row in rendered.reply_markup.inline_keyboard
+            for button in row
+        ]
+        button_texts = [button.text for button in buttons]
+        self.assertIn("Применить код в ЛК", button_texts)
+        self.assertIn("Открыть в браузере", button_texts)
+        self.assertIn("Промокод", button_texts)
+        self.assertIn("Убрать код", button_texts)
+        browser_button = next(button for button in buttons if button.text == "Открыть в браузере")
+        self.assertIn("promo=SPRING20", browser_button.url)
+        self.assertIn("plan=plan_1m", browser_button.url)
 
     async def test_yookassa_gateway_failure_returns_short_payment_error(self) -> None:
         request = httpx.Request("POST", "http://api:8000/api/v1/internal/bot/payments/yookassa/plans/plan_1m")

@@ -54,7 +54,14 @@ class BroadcastAudienceSegment(str, enum.Enum):
     ACTIVE = "active"
     WITH_TELEGRAM = "with_telegram"
     PAID = "paid"
+    MANUAL_LIST = "manual_list"
+    INACTIVE_ACCOUNTS = "inactive_accounts"
+    INACTIVE_PAID_USERS = "inactive_paid_users"
     EXPIRED = "expired"
+    ABANDONED_CHECKOUT = "abandoned_checkout"
+    FAILED_PAYMENT = "failed_payment"
+    TRIAL_ENDED_NO_CONVERSION = "trial_ended_no_conversion"
+    PAID_BEFORE_NOT_ACTIVE_NOW = "paid_before_not_active_now"
 
 
 class BroadcastDeliveryStatus(str, enum.Enum):

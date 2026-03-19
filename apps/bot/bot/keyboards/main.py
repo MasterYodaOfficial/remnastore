@@ -25,22 +25,26 @@ def build_webapp_url(
     referral_code: str | None = None,
     *,
     route_path: str | None = None,
+    query_params: dict[str, str | None] | None = None,
 ) -> str:
     base_url = settings.webapp_url.strip()
     if not base_url:
         return base_url
 
     parsed = urlsplit(base_url)
-    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    resolved_query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
     if referral_code:
-        query_params["ref"] = referral_code
+        resolved_query_params["ref"] = referral_code
+    for key, value in (query_params or {}).items():
+        if value:
+            resolved_query_params[key] = value
 
     return urlunsplit(
         (
             parsed.scheme,
             parsed.netloc,
             _join_webapp_path(parsed.path, route_path),
-            urlencode(query_params),
+            urlencode(resolved_query_params),
             parsed.fragment,
         )
     )

@@ -22,7 +22,7 @@ from yookassa.domain.exceptions import ApiError as YooKassaApiError
 from yookassa.domain.notification.webhook_notification import WebhookNotification
 
 from app.core.config import settings
-from app.db.models import Account, AccountStatus, LedgerEntryType, Payment, PaymentEvent, SubscriptionGrant
+from app.db.models import Account, AccountStatus, LedgerEntryType, Payment, PaymentEvent, PromoCode, SubscriptionGrant
 from app.domain.payments import (
     CreatePaymentIntentCommand,
     PaymentFlowType,
@@ -42,6 +42,14 @@ from app.services.notifications import (
     notify_payment_succeeded,
 )
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
+from app.services.promos import (
+    PAYMENT_REFERENCE_TYPE,
+    get_promo_redemption_by_reference,
+    mark_promo_redemption_applied,
+    normalize_promo_code,
+    quote_plan_promo,
+    stage_promo_redemption,
+)
 from app.services.purchases import (
     PurchaseSource,
     RemnawaveSyncError,
@@ -1194,15 +1202,50 @@ async def create_yookassa_plan_purchase_payment(
     cancel_url: str | None = None,
     description: str | None = None,
     idempotency_key: str | None = None,
+    promo_code: str | None = None,
 ) -> PaymentIntentSnapshot:
     plan = get_subscription_plan(plan_code)
+    if promo_code is not None and idempotency_key:
+        existing_payment = await _get_payment_by_idempotency_key(
+            session,
+            provider=PaymentProvider.YOOKASSA,
+            idempotency_key=idempotency_key,
+        )
+        if existing_payment is not None and existing_payment.id is not None:
+            existing_redemption = await get_promo_redemption_by_reference(
+                session,
+                reference_type=PAYMENT_REFERENCE_TYPE,
+                reference_id=str(existing_payment.id),
+            )
+            if existing_redemption is not None:
+                existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
+                if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
+                    raise PaymentConflictError("idempotency key already used for another promo code")
+                return _payment_to_snapshot(existing_payment)
+
+    quote = None
+    amount = plan.price_rub
+    duration_days = plan.duration_days
+    if promo_code is not None:
+        if not idempotency_key:
+            raise PaymentConflictError("idempotency_key is required when promo_code is used")
+        quote = await quote_plan_promo(
+            session,
+            account=account,
+            plan_code=plan.code,
+            base_amount=plan.price_rub,
+            currency="RUB",
+            code=promo_code,
+        )
+        amount = quote.final_amount
+        duration_days = quote.final_duration_days
     plan_description = description or f"Оплата тарифа {plan.name}"
-    return await create_payment(
+    snapshot = await create_payment(
         session,
         gateway=get_yookassa_gateway(),
         account=account,
         flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
-        amount=plan.price_rub,
+        amount=amount,
         currency="RUB",
         success_url=success_url,
         cancel_url=cancel_url,
@@ -1212,9 +1255,37 @@ async def create_yookassa_plan_purchase_payment(
         metadata={
             "rm_plan_code": plan.code,
             "rm_plan_name": plan.name,
-            "rm_plan_duration_days": str(plan.duration_days),
+            "rm_plan_duration_days": str(duration_days),
+            **(
+                {}
+                if quote is None
+                else {
+                    "rm_promo_code": quote.promo_code.code,
+                    "rm_promo_effect_type": quote.campaign.effect_type.value,
+                    "rm_promo_discount_amount": str(quote.discount_amount),
+                    "rm_promo_original_amount": str(quote.original_amount),
+                    "rm_promo_final_amount": str(quote.final_amount),
+                }
+            ),
         },
     )
+    if quote is not None:
+        payment = await _get_payment_by_provider_payment_id(
+            session,
+            provider=snapshot.provider,
+            provider_payment_id=snapshot.provider_payment_id,
+        )
+        if payment is None or payment.id is None:
+            raise PaymentGatewayError("payment not found after creating promo payment intent")
+        await stage_promo_redemption(
+            session,
+            account_id=account.id,
+            quote=quote,
+            reference_type=PAYMENT_REFERENCE_TYPE,
+            reference_id=str(payment.id),
+            payment_id=payment.id,
+        )
+    return snapshot
 
 
 async def create_telegram_stars_plan_purchase_payment(
@@ -1224,6 +1295,7 @@ async def create_telegram_stars_plan_purchase_payment(
     plan_code: str,
     description: str | None = None,
     idempotency_key: str | None = None,
+    promo_code: str | None = None,
 ) -> PaymentIntentSnapshot:
     if account.telegram_id is None:
         raise PaymentConflictError("Telegram Stars доступны только для Telegram-аккаунтов")
@@ -1234,13 +1306,48 @@ async def create_telegram_stars_plan_purchase_payment(
             f"Telegram Stars price is not configured for plan {plan.code}"
         )
 
+    if promo_code is not None and idempotency_key:
+        existing_payment = await _get_payment_by_idempotency_key(
+            session,
+            provider=PaymentProvider.TELEGRAM_STARS,
+            idempotency_key=idempotency_key,
+        )
+        if existing_payment is not None and existing_payment.id is not None:
+            existing_redemption = await get_promo_redemption_by_reference(
+                session,
+                reference_type=PAYMENT_REFERENCE_TYPE,
+                reference_id=str(existing_payment.id),
+            )
+            if existing_redemption is not None:
+                existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
+                if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
+                    raise PaymentConflictError("idempotency key already used for another promo code")
+                return _payment_to_snapshot(existing_payment)
+
+    quote = None
+    amount = plan.price_stars
+    duration_days = plan.duration_days
+    if promo_code is not None:
+        if not idempotency_key:
+            raise PaymentConflictError("idempotency_key is required when promo_code is used")
+        quote = await quote_plan_promo(
+            session,
+            account=account,
+            plan_code=plan.code,
+            base_amount=plan.price_stars,
+            currency="XTR",
+            code=promo_code,
+        )
+        amount = quote.final_amount
+        duration_days = quote.final_duration_days
+
     plan_description = description or f"Оплата тарифа {plan.name} в Telegram Stars"
-    return await create_payment(
+    snapshot = await create_payment(
         session,
         gateway=get_telegram_stars_gateway(),
         account=account,
         flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
-        amount=plan.price_stars,
+        amount=amount,
         currency="XTR",
         description=plan_description,
         plan_code=plan.code,
@@ -1248,10 +1355,38 @@ async def create_telegram_stars_plan_purchase_payment(
         metadata={
             "rm_plan_code": plan.code,
             "rm_plan_name": plan.name,
-            "rm_plan_duration_days": str(plan.duration_days),
+            "rm_plan_duration_days": str(duration_days),
             "rm_expected_telegram_id": str(account.telegram_id),
+            **(
+                {}
+                if quote is None
+                else {
+                    "rm_promo_code": quote.promo_code.code,
+                    "rm_promo_effect_type": quote.campaign.effect_type.value,
+                    "rm_promo_discount_amount": str(quote.discount_amount),
+                    "rm_promo_original_amount": str(quote.original_amount),
+                    "rm_promo_final_amount": str(quote.final_amount),
+                }
+            ),
         },
     )
+    if quote is not None:
+        payment = await _get_payment_by_provider_payment_id(
+            session,
+            provider=snapshot.provider,
+            provider_payment_id=snapshot.provider_payment_id,
+        )
+        if payment is None or payment.id is None:
+            raise PaymentGatewayError("payment not found after creating promo payment intent")
+        await stage_promo_redemption(
+            session,
+            account_id=account.id,
+            quote=quote,
+            reference_type=PAYMENT_REFERENCE_TYPE,
+            reference_id=str(payment.id),
+            payment_id=payment.id,
+        )
+    return snapshot
 
 
 async def validate_telegram_stars_pre_checkout(
@@ -1412,6 +1547,13 @@ async def _finalize_direct_plan_purchase(
         raise PaymentGatewayError(str(exc)) from exc
 
     grant.applied_at = _utcnow()
+    await mark_promo_redemption_applied(
+        session,
+        reference_type=PAYMENT_REFERENCE_TYPE,
+        reference_id=str(payment.id),
+        payment_id=payment.id,
+        subscription_grant_id=grant.id,
+    )
     payment.finalized_at = _utcnow()
     await notify_payment_succeeded(session, payment=payment)
     await session.commit()

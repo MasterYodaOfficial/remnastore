@@ -28,6 +28,7 @@ class PurchaseSource(str, Enum):
     WALLET = "wallet"
     DIRECT_PAYMENT = "direct_payment"
     ADMIN = "admin"
+    PROMO = "promo"
 
 
 class PurchaseServiceError(Exception):
@@ -261,14 +262,18 @@ def _validate_existing_wallet_grant(
     grant: SubscriptionGrant,
     *,
     account_id: UUID,
-    plan: SubscriptionPlan,
+    plan_code: str,
+    amount: int,
+    duration_days: int,
 ) -> None:
     if grant.account_id != account_id:
         raise PurchaseConflictError("idempotency key already belongs to another account")
-    if grant.plan_code != plan.code:
+    if grant.plan_code != plan_code:
         raise PurchaseConflictError("idempotency key already used for another plan")
-    if grant.amount != plan.price_rub or grant.currency != "RUB":
+    if grant.amount != amount or grant.currency != "RUB":
         raise PurchaseConflictError("idempotency key already used for another purchase amount")
+    if grant.duration_days != duration_days:
+        raise PurchaseConflictError("idempotency key already used for another purchase duration")
 
 
 async def stage_wallet_plan_purchase(
@@ -277,9 +282,17 @@ async def stage_wallet_plan_purchase(
     account_id: UUID,
     plan_code: str,
     idempotency_key: str,
+    amount_override: int | None = None,
+    duration_days_override: int | None = None,
 ) -> SubscriptionGrant:
     normalized_idempotency_key = _normalize_required_reference_id(idempotency_key)
     plan = get_subscription_plan(plan_code)
+    amount = plan.price_rub if amount_override is None else amount_override
+    duration_days = plan.duration_days if duration_days_override is None else duration_days_override
+    if amount <= 0:
+        raise PurchaseConflictError("wallet purchase amount must be positive")
+    if duration_days <= 0:
+        raise PurchaseConflictError("wallet purchase duration must be positive")
 
     existing_grant = await get_subscription_grant_by_reference(
         session,
@@ -289,13 +302,19 @@ async def stage_wallet_plan_purchase(
         for_update=True,
     )
     if existing_grant is not None:
-        _validate_existing_wallet_grant(existing_grant, account_id=account_id, plan=plan)
+        _validate_existing_wallet_grant(
+            existing_grant,
+            account_id=account_id,
+            plan_code=plan.code,
+            amount=amount,
+            duration_days=duration_days,
+        )
         return existing_grant
 
     await apply_debit_in_transaction(
         session,
         account_id=account_id,
-        amount=plan.price_rub,
+        amount=amount,
         entry_type=LedgerEntryType.SUBSCRIPTION_DEBIT,
         reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
         reference_id=normalized_idempotency_key,
@@ -305,7 +324,7 @@ async def stage_wallet_plan_purchase(
     account = await load_purchase_account_for_update(session, account_id=account_id)
     base_expires_at, target_expires_at = compute_paid_plan_window(
         account,
-        duration_days=plan.duration_days,
+        duration_days=duration_days,
     )
 
     grant = SubscriptionGrant(
@@ -315,9 +334,9 @@ async def stage_wallet_plan_purchase(
         reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
         reference_id=normalized_idempotency_key,
         plan_code=plan.code,
-        amount=plan.price_rub,
+        amount=amount,
         currency="RUB",
-        duration_days=plan.duration_days,
+        duration_days=duration_days,
         base_expires_at=base_expires_at,
         target_expires_at=target_expires_at,
     )
@@ -335,7 +354,13 @@ async def stage_wallet_plan_purchase(
             for_update=True,
         )
         if existing_grant is not None:
-            _validate_existing_wallet_grant(existing_grant, account_id=account_id, plan=plan)
+            _validate_existing_wallet_grant(
+                existing_grant,
+                account_id=account_id,
+                plan_code=plan.code,
+                amount=amount,
+                duration_days=duration_days,
+            )
             return existing_grant
         raise PurchaseConflictError("wallet purchase staging failed") from exc
 
@@ -397,6 +422,8 @@ async def purchase_plan_with_wallet(
     account_id: UUID,
     plan_code: str,
     idempotency_key: str,
+    amount_override: int | None = None,
+    duration_days_override: int | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> Account:
     await stage_wallet_plan_purchase(
@@ -404,6 +431,8 @@ async def purchase_plan_with_wallet(
         account_id=account_id,
         plan_code=plan_code,
         idempotency_key=idempotency_key,
+        amount_override=amount_override,
+        duration_days_override=duration_days_override,
     )
     return await finalize_wallet_plan_purchase(
         session,

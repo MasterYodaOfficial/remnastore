@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Shield,
 } from 'lucide-react';
+import { PromoRedeemCard, type PromoRedeemMessage } from './PromoRedeemCard';
 import { ThemeToggle } from './ThemeToggle';
 
 interface SettingsPageProps {
@@ -36,6 +37,11 @@ interface SettingsPageProps {
   onOpenPrivacy?: () => void;
   onOpenTerms?: () => void;
   onOpenSupport?: () => void;
+  promoCode?: string;
+  onPromoCodeChange?: (value: string) => void;
+  onRedeemPromo?: () => void;
+  isRedeemingPromo?: boolean;
+  promoMessage?: PromoRedeemMessage | null;
 }
 
 export function SettingsPage({
@@ -56,6 +62,11 @@ export function SettingsPage({
   onOpenPrivacy,
   onOpenTerms,
   onOpenSupport,
+  promoCode = '',
+  onPromoCodeChange,
+  onRedeemPromo,
+  isRedeemingPromo = false,
+  promoMessage = null,
 }: SettingsPageProps) {
   const toggleTheme = () => onThemeChange(theme === 'dark' ? 'light' : 'dark');
 
@@ -285,6 +296,17 @@ export function SettingsPage({
         </div>
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
+
+      {onPromoCodeChange && onRedeemPromo ? (
+        <PromoRedeemCard
+          code={promoCode}
+          onCodeChange={onPromoCodeChange}
+          onRedeem={onRedeemPromo}
+          isSubmitting={isRedeemingPromo}
+          message={promoMessage}
+          className="border-none bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] shadow-none dark:border dark:border-slate-800/80 dark:bg-slate-900/90"
+        />
+      ) : null}
 
       {settingsSections.map((section, sectionIndex) => (
         <div key={sectionIndex} className="space-y-2">

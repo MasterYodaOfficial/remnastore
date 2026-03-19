@@ -104,6 +104,12 @@ def _safe_string(value: object, fallback: str) -> str:
     return fallback
 
 
+def _normalize_promo_code(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(value.strip().upper().split())
+
+
 def _safe_dict(value: object) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -413,11 +419,40 @@ def _build_plan_detail_keyboard(
     referral_code: str | None,
     plan: dict[str, Any],
     account_exists: bool,
+    promo_code: str | None = None,
 ) -> InlineKeyboardMarkup:
     plan_code = _safe_string(plan.get("code"), fallback="")
     rows: list[list[InlineKeyboardButton]] = [_top_webapp_row(locale=locale, referral_code=referral_code)]
+    promo_checkout_url = ""
+    if plan_code and promo_code:
+        promo_checkout_url = build_webapp_url(
+            referral_code,
+            route_path="/plans",
+            query_params={
+                "tab": "plans",
+                "plan": plan_code,
+                "promo": promo_code,
+            },
+        )
 
-    if account_exists and plan_code:
+    if promo_checkout_url:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=translate("common.actions.apply_promo_in_webapp", locale=locale),
+                    web_app=WebAppInfo(url=promo_checkout_url),
+                )
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=translate("common.actions.open_in_browser", locale=locale),
+                    url=promo_checkout_url,
+                )
+            ]
+        )
+    elif account_exists and plan_code:
         if plan.get("price_stars") is not None:
             rows.append(
                 [
@@ -436,6 +471,21 @@ def _build_plan_detail_keyboard(
                 )
             ]
         )
+    if plan_code:
+        promo_buttons = [
+            InlineKeyboardButton(
+                text=translate("common.actions.enter_promo_code", locale=locale),
+                callback_data=action("promo", "enter", plan_code),
+            )
+        ]
+        if promo_code:
+            promo_buttons.append(
+                InlineKeyboardButton(
+                    text=translate("common.actions.clear_promo_code", locale=locale),
+                    callback_data=action("promo", "clear", plan_code),
+                )
+            )
+        rows.append(promo_buttons)
 
     rows.append(
         [
@@ -642,6 +692,7 @@ async def build_rendered_menu(
     if screen == SCREEN_PLAN:
         plans = await _get_plans_payload(client)
         plan_code = _safe_string(params.get("plan_code"), fallback="")
+        promo_code = _normalize_promo_code(params.get("promo_code"))
         selected_plan = next(
             (plan for plan in plans if _safe_string(plan.get("code"), fallback="") == plan_code),
             None,
@@ -661,25 +712,38 @@ async def build_rendered_menu(
             if dashboard.get("exists")
             else "bot.menu.plan_detail.guest_caption"
         )
+        caption = translate(
+            caption_key,
+            locale=locale,
+            plan_name=_safe_string(selected_plan.get("name"), fallback=plan_code),
+            duration_days=_format_integer(selected_plan.get("duration_days")),
+            price_rub=_format_integer(selected_plan.get("price_rub")),
+            price_stars=_price_stars_label(selected_plan, locale=locale),
+            features_block=_features_block(selected_plan, locale=locale),
+        )
+        if promo_code:
+            caption = "\n\n".join(
+                [
+                    caption,
+                    translate("bot.menu.plan_detail.promo_line", locale=locale, promo_code=promo_code),
+                    translate("bot.menu.plan_detail.promo_hint", locale=locale),
+                ]
+            )
+        rendered_screen_params = {"plan_code": plan_code}
+        if promo_code:
+            rendered_screen_params["promo_code"] = promo_code
         return RenderedMenu(
-            caption=translate(
-                caption_key,
-                locale=locale,
-                plan_name=_safe_string(selected_plan.get("name"), fallback=plan_code),
-                duration_days=_format_integer(selected_plan.get("duration_days")),
-                price_rub=_format_integer(selected_plan.get("price_rub")),
-                price_stars=_price_stars_label(selected_plan, locale=locale),
-                features_block=_features_block(selected_plan, locale=locale),
-            ),
+            caption=caption,
             reply_markup=_build_plan_detail_keyboard(
                 locale=locale,
                 referral_code=referral_code,
                 plan=selected_plan,
                 account_exists=bool(dashboard.get("exists")),
+                promo_code=promo_code or None,
             ),
             screen=SCREEN_PLAN,
             asset_name=ASSET_LOGO,
-            screen_params={"plan_code": plan_code},
+            screen_params=rendered_screen_params,
         )
 
     if screen == SCREEN_REFERRALS:

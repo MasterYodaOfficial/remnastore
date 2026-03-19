@@ -3,8 +3,9 @@ from __future__ import annotations
 import httpx
 
 from aiogram import F, Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from bot.callbacks.menu import parse_menu_callback
 from bot.core.config import settings
@@ -34,6 +35,10 @@ def _normalize_callback_answer_text(text: str | None, *, locale: str | None) -> 
     if len(normalized) <= CALLBACK_ANSWER_TEXT_LIMIT:
         return normalized
     return normalized[: CALLBACK_ANSWER_TEXT_LIMIT - 3].rstrip() + "..."
+
+
+def _normalize_promo_code(raw_value: str | None) -> str:
+    return "".join((raw_value or "").strip().upper().split())
 
 
 async def _answer_callback(
@@ -100,6 +105,34 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
             return
 
         if parsed.scope == "plan" and parsed.action == "open" and parsed.value:
+            screen_params = {"plan_code": parsed.value}
+            if session is not None and session.screen_params.get("plan_code") == parsed.value:
+                promo_code = _normalize_promo_code(session.screen_params.get("promo_code"))
+                if promo_code:
+                    screen_params["promo_code"] = promo_code
+            await present_menu(
+                callback.bot,
+                chat_id=callback.message.chat.id,
+                telegram_id=callback.from_user.id,
+                locale=locale,
+                screen=SCREEN_PLAN,
+                screen_params=screen_params,
+                referral_code=referral_code,
+            )
+            await _answer_callback(callback, locale=locale)
+            return
+
+        if parsed.scope == "promo" and parsed.action == "enter" and parsed.value:
+            await state.set_state(MenuState.awaiting_promo_code)
+            await state.update_data(plan_code=parsed.value)
+            await _answer_callback(
+                callback,
+                locale=locale,
+                text=translate("bot.menu.messages.enter_promo_code", locale=locale),
+            )
+            return
+
+        if parsed.scope == "promo" and parsed.action == "clear" and parsed.value:
             await present_menu(
                 callback.bot,
                 chat_id=callback.message.chat.id,
@@ -109,7 +142,11 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
                 screen_params={"plan_code": parsed.value},
                 referral_code=referral_code,
             )
-            await _answer_callback(callback, locale=locale)
+            await _answer_callback(
+                callback,
+                locale=locale,
+                text=translate("bot.menu.messages.promo_cleared", locale=locale),
+            )
             return
 
         if parsed.scope == "trial" and parsed.action == "activate":
@@ -170,3 +207,32 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
         )
     finally:
         await session_store.release_lock(callback.from_user.id)
+
+
+@router.message(StateFilter(MenuState.awaiting_promo_code))
+async def handle_plan_promo_code_message(message: Message, state: FSMContext) -> None:
+    if message.from_user is None:
+        return
+
+    promo_code = _normalize_promo_code(message.text)
+    locale = message.from_user.language_code
+    data = await state.get_data()
+    plan_code = str(data.get("plan_code") or "")
+    if not promo_code:
+        await message.answer(translate("bot.menu.messages.enter_promo_code", locale=locale))
+        return
+
+    await state.clear()
+    session = await get_menu_session_store().get(message.from_user.id)
+    await present_menu(
+        message.bot,
+        chat_id=message.chat.id,
+        telegram_id=message.from_user.id,
+        locale=locale,
+        screen=SCREEN_PLAN,
+        screen_params={
+            "plan_code": plan_code,
+            "promo_code": promo_code,
+        },
+        referral_code=session.referral_code if session is not None else None,
+    )

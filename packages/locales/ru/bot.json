@@ -37,7 +37,9 @@
       },
       "plan_detail": {
         "caption": "Тариф: {plan_name}\nСрок: {duration_days} дн.\nЦена: {price_rub} ₽\nTelegram Stars: {price_stars}\n\n{features_block}\n\nВ боте доступна покупка тарифа через Telegram Stars и YooKassa.\nПополнение баланса остается в WebApp.",
-        "guest_caption": "Тариф: {plan_name}\nСрок: {duration_days} дн.\nЦена: {price_rub} ₽\nTelegram Stars: {price_stars}\n\nЧтобы купить тариф в боте, сначала откройте личный кабинет и завершите вход через Telegram."
+        "guest_caption": "Тариф: {plan_name}\nСрок: {duration_days} дн.\nЦена: {price_rub} ₽\nTelegram Stars: {price_stars}\n\nЧтобы купить тариф в боте, сначала откройте личный кабинет и завершите вход через Telegram.",
+        "promo_line": "Промокод: {promo_code}",
+        "promo_hint": "Код сохранен в боте. Для применения откройте тариф в ЛК или браузере."
       },
       "referrals": {
         "caption": "Рефералы\n\nКод: {referral_code}\nПриглашено: {referrals_count}\nНачислено: {total_earnings_rub} ₽\nДоступно к выводу: {available_for_withdraw_rub} ₽\nСтавка вознаграждения: {reward_rate_percent}%\n\nНаграда начисляется после первой успешной платной покупки приглашенного пользователя.\nДетальная статистика и вывод средств доступны в WebApp.",
@@ -53,7 +55,9 @@
         "processing": "Обрабатываю действие, попробуйте еще раз через пару секунд.",
         "trial_activated": "Пробный период активирован.",
         "account_required": "Сначала откройте личный кабинет и завершите вход через Telegram.",
+        "enter_promo_code": "Отправьте промокод следующим сообщением.",
         "payment_ready": "Ссылка на оплату готова.",
+        "promo_cleared": "Промокод убран.",
         "payment_failed": "Не удалось подготовить оплату. Попробуйте позже.",
         "generic_error": "Не удалось выполнить действие. Попробуйте позже."
       },

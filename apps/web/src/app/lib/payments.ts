@@ -22,6 +22,7 @@ export interface StoredPaymentAttempt {
   expiresAt: string | null;
   planId?: string;
   planName?: string;
+  promoCode?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,6 +33,7 @@ interface PaymentAttemptMatch {
   provider: StoredPaymentAttemptProvider;
   amount?: number;
   planId?: string;
+  promoCode?: string;
 }
 
 const PAYMENT_ATTEMPTS_STORAGE_KEY = 'remnastore.payment_attempts';
@@ -53,6 +55,15 @@ const MAX_STORED_ATTEMPTS = 24;
 
 function isIsoDateString(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(Date.parse(value));
+}
+
+function normalizePromoCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim().toUpperCase();
+  return normalized || undefined;
 }
 
 function normalizeAttempt(rawValue: unknown): StoredPaymentAttempt | null {
@@ -98,6 +109,7 @@ function normalizeAttempt(rawValue: unknown): StoredPaymentAttempt | null {
     expiresAt: isIsoDateString(rawAttempt.expiresAt) ? rawAttempt.expiresAt : null,
     planId: rawAttempt.planId || undefined,
     planName: rawAttempt.planName || undefined,
+    promoCode: normalizePromoCode(rawAttempt.promoCode),
     createdAt: rawAttempt.createdAt,
     updatedAt: rawAttempt.updatedAt,
   };
@@ -162,7 +174,7 @@ function matchesAttemptContext(attempt: StoredPaymentAttempt, match: PaymentAtte
   }
 
   if (match.kind === 'plan') {
-    return attempt.planId === match.planId;
+    return attempt.planId === match.planId && attempt.promoCode === normalizePromoCode(match.promoCode);
   }
 
   return attempt.amount === match.amount;

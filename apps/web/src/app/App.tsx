@@ -12,6 +12,7 @@ import { HomePage } from './components/HomePage';
 import { PlansPage } from './components/PlansPage';
 import { ReferralPage } from './components/ReferralPage';
 import { ReferralCard } from './components/ReferralCard';
+import { PromoRedeemCard, type PromoRedeemMessage } from './components/PromoRedeemCard';
 import { SettingsPage } from './components/SettingsPage';
 import { SubscriptionCard } from './components/SubscriptionCard';
 import { ThemeToggle } from './components/ThemeToggle';
@@ -87,6 +88,11 @@ type AppTab =
   | 'privacy'
   | 'terms';
 type PrimaryAppTab = 'home' | 'plans' | 'referral' | 'settings';
+type PromoLaunchState = {
+  promoCode: string | null;
+  planId: string | null;
+  tab: AppTab | null;
+};
 
 const APP_THEME_TOKENS = {
   light: {
@@ -195,6 +201,28 @@ interface BackendPlan {
   duration_days: number;
   features: string[];
   popular?: boolean;
+}
+
+interface BackendPromoPlanQuoteResponse {
+  plan_code: string;
+  promo_code: string;
+  effect_type: string;
+  original_amount: number;
+  final_amount: number;
+  discount_amount: number;
+  currency: string;
+  original_duration_days: number;
+  final_duration_days: number;
+}
+
+interface BackendPromoRedeemResponse {
+  promo_code: string;
+  effect_type: string;
+  status: string;
+  balance: number;
+  balance_credit_amount?: number | null;
+  granted_duration_days?: number | null;
+  subscription: BackendSubscriptionState;
 }
 
 interface BackendPaymentIntent {
@@ -385,6 +413,12 @@ interface Plan {
   duration: number;
   features: string[];
   popular?: boolean;
+}
+
+interface PlanPromoContext {
+  code: string | null;
+  rubQuote: BackendPromoPlanQuoteResponse | null;
+  starsQuote: BackendPromoPlanQuoteResponse | null;
 }
 
 type PaymentSelectionState =
@@ -586,9 +620,60 @@ function getPaymentErrorMessage(detail: string): string {
     case 'insufficient funds':
       return 'На балансе недостаточно средств для покупки тарифа.';
     default:
+      {
+        const promoMessage = getPromoErrorMessage(detail);
+        if (promoMessage !== detail) {
+          return promoMessage;
+        }
+      }
       if (detail.startsWith('Telegram Stars price is not configured for plan ')) {
         return 'Для этого тарифа пока не настроена цена в Telegram Stars.';
       }
+      return detail;
+  }
+}
+
+function getPromoErrorMessage(detail: string): string {
+  switch (detail) {
+    case 'promo code not found':
+      return 'Промокод не найден.';
+    case 'promo code is disabled':
+      return 'Этот промокод отключен.';
+    case 'promo campaign is not active':
+      return 'Промокод сейчас недоступен.';
+    case 'promo campaign has not started yet':
+      return 'Промокод еще не начал действовать.';
+    case 'promo campaign has already ended':
+      return 'Срок действия промокода уже закончился.';
+    case 'blocked accounts cannot redeem promo codes':
+      return 'Для заблокированного аккаунта промокоды недоступны.';
+    case 'promo code can be used only for selected plans':
+      return 'Этот промокод работает только для отдельных тарифов.';
+    case 'promo code is not available for this plan':
+      return 'Этот промокод не подходит для выбранного тарифа.';
+    case 'promo code is available only for the first paid purchase':
+      return 'Этот промокод доступен только на первую покупку.';
+    case 'promo code requires an active subscription':
+      return 'Этот промокод доступен только при активной подписке.';
+    case 'promo code requires no active subscription':
+      return 'Этот промокод доступен только без активной подписки.';
+    case 'promo campaign redemption limit reached':
+      return 'Лимит активаций по этой акции уже исчерпан.';
+    case 'promo code redemption limit reached for this account':
+      return 'Для этого аккаунта лимит активаций уже исчерпан.';
+    case 'promo code redemption limit reached':
+      return 'Лимит активаций этого промокода уже исчерпан.';
+    case 'promo code currency does not match selected payment method':
+      return 'Этот промокод не работает с выбранным способом оплаты.';
+    case 'promo code does not improve the selected plan price':
+      return 'Этот промокод не меняет цену выбранного тарифа.';
+    case 'promo code reduces payment amount to zero; use direct redemption instead':
+      return 'Этот код дает бесплатный доступ. Активируйте его в настройках.';
+    case 'promo code cannot be used for plan purchase':
+      return 'Этот промокод нужно применять в другом сценарии.';
+    case 'promo code cannot be redeemed directly':
+      return 'Этот промокод нужно использовать при покупке тарифа.';
+    default:
       return detail;
   }
 }
@@ -752,6 +837,83 @@ function createClientIdempotencyKey(prefix: string): string {
   return `${prefix}-${randomPart}`;
 }
 
+function normalizePromoCodeInput(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function normalizePromoLaunchTab(value: string | null): AppTab | null {
+  switch (value) {
+    case 'home':
+    case 'plans':
+    case 'notifications':
+    case 'payments':
+    case 'balance-history':
+    case 'referral':
+    case 'settings':
+    case 'faq':
+    case 'privacy':
+    case 'terms':
+      return value;
+    default:
+      return null;
+  }
+}
+
+function readPromoLaunchStateFromUrl(): PromoLaunchState | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  const promoCode = normalizePromoCodeInput(url.searchParams.get('promo') ?? '');
+  const planId = (url.searchParams.get('plan') ?? '').trim();
+  const tab = normalizePromoLaunchTab(url.searchParams.get('tab'));
+
+  if (!promoCode && !planId && !tab) {
+    return null;
+  }
+
+  url.searchParams.delete('promo');
+  url.searchParams.delete('plan');
+  url.searchParams.delete('tab');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+
+  return {
+    promoCode: promoCode || null,
+    planId: planId || null,
+    tab,
+  };
+}
+
+function formatAmountWithCurrency(amount: number, currency: string): string {
+  if (currency === 'RUB') {
+    return `${formatRubles(amount)} ₽`;
+  }
+  if (currency === 'XTR') {
+    return `${amount} Stars`;
+  }
+  return `${amount} ${currency}`;
+}
+
+function describePromoQuote(quote: BackendPromoPlanQuoteResponse): string {
+  const parts: string[] = [];
+
+  if (quote.final_amount < quote.original_amount) {
+    parts.push(
+      `${formatAmountWithCurrency(quote.final_amount, quote.currency)} вместо ${formatAmountWithCurrency(
+        quote.original_amount,
+        quote.currency
+      )}`
+    );
+  }
+
+  if (quote.final_duration_days > quote.original_duration_days) {
+    parts.push(`доступ на ${quote.final_duration_days} дней`);
+  }
+
+  return parts.length > 0 ? `${parts.join(' • ')}.` : 'Промокод активен для этого тарифа.';
+}
+
 function getPaymentReturnUrl(options: { preferTelegramBot?: boolean } = {}): string {
   if (typeof window === 'undefined') {
     return '';
@@ -765,23 +927,43 @@ function getPaymentReturnUrl(options: { preferTelegramBot?: boolean } = {}): str
   return `${origin}${pathname}`;
 }
 
-function buildYooKassaMethod(isTelegramWebApp: boolean): PaymentMethodOption {
+function buildYooKassaMethod(
+  isTelegramWebApp: boolean,
+  promoContext?: PlanPromoContext
+): PaymentMethodOption {
+  const promoNote = promoContext?.rubQuote
+    ? `Промокод: ${describePromoQuote(promoContext.rubQuote)}`
+    : promoContext?.code
+      ? 'Этот промокод не применяется к оплате картой.'
+      : undefined;
+
   return {
     provider: 'yookassa',
     label: 'Банковская карта',
     description: isTelegramWebApp
       ? 'Переход на YooKassa во внешнем браузере.'
       : 'Оплата картой через YooKassa.',
-    note: isTelegramWebApp ? 'Мини-приложение откроет внешнюю ссылку на оплату.' : undefined,
+    note: [isTelegramWebApp ? 'Мини-приложение откроет внешнюю ссылку на оплату.' : undefined, promoNote]
+      .filter(Boolean)
+      .join(' '),
   };
 }
 
-function buildWalletMethod(plan: Plan): PaymentMethodOption {
+function buildWalletMethod(plan: Plan, promoContext?: PlanPromoContext): PaymentMethodOption {
+  const walletAmount = promoContext?.rubQuote?.final_amount ?? plan.price;
+  const promoNote = promoContext?.rubQuote
+    ? `Промокод: ${describePromoQuote(promoContext.rubQuote)}`
+    : promoContext?.code
+      ? 'Этот промокод не применяется к оплате с баланса.'
+      : undefined;
+
   return {
     provider: 'wallet',
     label: 'С баланса',
     description: 'Мгновенная активация без внешнего перехода.',
-    note: `Списание ${formatRubles(plan.price)} ₽ с внутреннего баланса.`,
+    note: [`Списание ${formatRubles(walletAmount)} ₽ с внутреннего баланса.`, promoNote]
+      .filter(Boolean)
+      .join(' '),
   };
 }
 
@@ -792,12 +974,14 @@ function getAvailableTopUpPaymentMethods(isTelegramWebApp: boolean): PaymentMeth
 function getAvailablePlanPaymentMethods(
   plan: Plan,
   isTelegramWebApp: boolean,
-  balance: number
+  balance: number,
+  promoContext?: PlanPromoContext
 ): PaymentMethodOption[] {
   const methods: PaymentMethodOption[] = [];
+  const walletAmount = promoContext?.rubQuote?.final_amount ?? plan.price;
 
-  if (balance >= plan.price) {
-    methods.push(buildWalletMethod(plan));
+  if (balance >= walletAmount) {
+    methods.push(buildWalletMethod(plan, promoContext));
   }
 
   if (isTelegramWebApp && plan.priceStars) {
@@ -805,11 +989,17 @@ function getAvailablePlanPaymentMethods(
       provider: 'telegram_stars',
       label: 'Telegram Stars',
       description: 'Оплата внутри Telegram без перехода в браузер.',
-      note: `Списание ${plan.priceStars} Stars.`,
+      note: promoContext?.starsQuote
+        ? `Списание ${promoContext.starsQuote.final_amount} Stars. Промокод: ${describePromoQuote(
+            promoContext.starsQuote
+          )}`
+        : promoContext?.code
+          ? `Списание ${plan.priceStars} Stars. Этот промокод не применяется к Telegram Stars.`
+          : `Списание ${plan.priceStars} Stars.`,
     });
   }
 
-  methods.push(buildYooKassaMethod(isTelegramWebApp));
+  methods.push(buildYooKassaMethod(isTelegramWebApp, promoContext));
   return methods;
 }
 
@@ -896,6 +1086,12 @@ export default function App() {
   const [isLoadingPlans, setIsLoadingPlans] = useState(false);
   const [isTopUpSubmitting, setIsTopUpSubmitting] = useState(false);
   const [checkoutPlanId, setCheckoutPlanId] = useState<string | null>(null);
+  const [planPromoCode, setPlanPromoCode] = useState('');
+  const [planPromoPlanId, setPlanPromoPlanId] = useState<string | null>(null);
+  const [planPromoRubQuote, setPlanPromoRubQuote] = useState<BackendPromoPlanQuoteResponse | null>(null);
+  const [planPromoStarsQuote, setPlanPromoStarsQuote] = useState<BackendPromoPlanQuoteResponse | null>(null);
+  const [isApplyingPlanPromo, setIsApplyingPlanPromo] = useState(false);
+  const [planPromoMessage, setPlanPromoMessage] = useState<PromoRedeemMessage | null>(null);
   const [paymentMethodSelection, setPaymentMethodSelection] = useState<PaymentSelectionState | null>(null);
   const [paymentMethodSubmitting, setPaymentMethodSubmitting] = useState<PaymentMethodProvider | null>(null);
   const [checkoutAttempts, setCheckoutAttempts] = useState<StoredPaymentAttempt[]>([]);
@@ -923,6 +1119,10 @@ export default function App() {
   const [isLoadingLedgerEntries, setIsLoadingLedgerEntries] = useState(false);
   const [isLoadingMoreLedgerEntries, setIsLoadingMoreLedgerEntries] = useState(false);
   const [isTopUpModalOpen, setIsTopUpModalOpen] = useState(false);
+  const [settingsPromoCode, setSettingsPromoCode] = useState('');
+  const [isRedeemingSettingsPromo, setIsRedeemingSettingsPromo] = useState(false);
+  const [settingsPromoMessage, setSettingsPromoMessage] = useState<PromoRedeemMessage | null>(null);
+  const [promoLaunchState, setPromoLaunchState] = useState<PromoLaunchState | null>(null);
   const [isDesktopBrowser, setIsDesktopBrowser] = useState(
     () => typeof window !== 'undefined' && window.innerWidth >= 1200
   );
@@ -933,6 +1133,7 @@ export default function App() {
   const pendingTelegramLinkRefreshRef = useRef(false);
   const pendingPaymentRefreshRef = useRef(false);
   const pendingReferralClaimRef = useRef(false);
+  const settingsPromoIdempotencyKeyRef = useRef<string | null>(null);
   const attemptedWithdrawalsTokenRef = useRef<string | null>(null);
   const attemptedPlansTokenRef = useRef<string | null>(null);
   const attemptedNotificationsTokenRef = useRef<string | null>(null);
@@ -941,6 +1142,8 @@ export default function App() {
   const lastPrimaryTabRef = useRef<PrimaryAppTab>('home');
   const manualLogoutRef = useRef(false);
   const authViewRef = useRef<AuthView>('default');
+  const promoLaunchAppliedRef = useRef(false);
+  const promoLaunchQuoteRequestedRef = useRef(false);
 
   const setAuthViewMode = (view: AuthView) => {
     authViewRef.current = view;
@@ -973,6 +1176,68 @@ export default function App() {
     }
 
     return await response.json() as BackendPlan[];
+  };
+
+  const loadPlanPromoQuoteSnapshot = async (
+    token: string,
+    planId: string,
+    promoCode: string,
+    currency: 'RUB' | 'XTR'
+  ) => {
+    const response = await fetch(
+      `${BACKEND_API}/api/v1/promos/plans/${encodeURIComponent(planId)}/quote`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          promo_code: promoCode,
+          currency,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const detail =
+        errorData && typeof errorData.detail === 'string'
+          ? getPromoErrorMessage(errorData.detail)
+          : 'Не удалось проверить промокод';
+      throw new Error(detail);
+    }
+
+    return (await response.json()) as BackendPromoPlanQuoteResponse;
+  };
+
+  const redeemPromoCodeSnapshot = async (
+    token: string,
+    promoCode: string,
+    idempotencyKey: string
+  ) => {
+    const response = await fetch(`${BACKEND_API}/api/v1/promos/redeem`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        code: promoCode,
+        idempotency_key: idempotencyKey,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const detail =
+        errorData && typeof errorData.detail === 'string'
+          ? getPromoErrorMessage(errorData.detail)
+          : 'Не удалось активировать промокод';
+      throw new Error(detail);
+    }
+
+    return (await response.json()) as BackendPromoRedeemResponse;
   };
 
   const loadNotificationsSnapshot = async (
@@ -1124,6 +1389,7 @@ export default function App() {
           kind: attempt.kind,
           provider: attempt.provider,
           planId: attempt.planId,
+          promoCode: attempt.promoCode,
         }
       : {
           accountId: attempt.accountId,
@@ -1236,6 +1502,7 @@ export default function App() {
           kind: 'plan';
           provider: StoredPaymentAttemptProvider;
           planId: string;
+          promoCode?: string;
         }
       | {
           accountId: string;
@@ -1262,6 +1529,7 @@ export default function App() {
           kind: 'plan';
           planId: string;
           planName: string;
+          promoCode?: string;
         }
       | {
           kind: 'topup';
@@ -1291,6 +1559,7 @@ export default function App() {
         ? {
             planId: checkout.planId,
             planName: checkout.planName,
+            promoCode: checkout.promoCode,
           }
         : {}),
     };
@@ -1433,6 +1702,11 @@ export default function App() {
   // Check if running in Telegram WebApp
   useEffect(() => {
     capturePendingReferralCodeFromUrl();
+    const launchState = readPromoLaunchStateFromUrl();
+    if (launchState) {
+      setPromoLaunchState(launchState);
+      setActiveTab(launchState.planId ? 'plans' : launchState.tab ?? (launchState.promoCode ? 'settings' : 'home'));
+    }
 
     const initApp = async () => {
       // Load Telegram script first
@@ -1470,6 +1744,81 @@ export default function App() {
 
     initApp();
   }, []);
+
+  useEffect(() => {
+    if (!promoLaunchState || promoLaunchAppliedRef.current || !isAuthenticated) {
+      return;
+    }
+
+    if (promoLaunchState.planId) {
+      if (!plans.length) {
+        return;
+      }
+
+      const selectedPlan = plans.find((plan) => plan.id === promoLaunchState.planId);
+      if (!selectedPlan) {
+        promoLaunchAppliedRef.current = true;
+        toast.error('Тариф из ссылки с промокодом больше недоступен.');
+        return;
+      }
+
+      setActiveTab('plans');
+      promoLaunchAppliedRef.current = true;
+      promoLaunchQuoteRequestedRef.current = false;
+
+      if (promoLaunchState.promoCode) {
+        setPlanPromoCode(promoLaunchState.promoCode);
+        setPlanPromoPlanId(promoLaunchState.planId);
+        setPlanPromoRubQuote(null);
+        setPlanPromoStarsQuote(null);
+        setPlanPromoMessage({
+          tone: 'neutral',
+          text: 'Промокод перенесен из Telegram. Проверяем его для выбранного тарифа.',
+        });
+      }
+
+      void handleBuyPlan(promoLaunchState.planId);
+      return;
+    }
+
+    if (promoLaunchState.promoCode) {
+      const targetTab = promoLaunchState.tab ?? 'settings';
+      setActiveTab(targetTab);
+      if (targetTab === 'settings') {
+        setSettingsPromoCode(promoLaunchState.promoCode);
+        setSettingsPromoMessage({
+          tone: 'neutral',
+          text: 'Промокод перенесен из Telegram. Нажмите «Активировать», чтобы применить его.',
+        });
+      }
+    } else if (promoLaunchState.tab) {
+      setActiveTab(promoLaunchState.tab);
+    }
+
+    promoLaunchAppliedRef.current = true;
+  }, [isAuthenticated, plans, promoLaunchState]);
+
+  useEffect(() => {
+    if (
+      !promoLaunchState?.planId ||
+      !promoLaunchState.promoCode ||
+      promoLaunchQuoteRequestedRef.current ||
+      paymentMethodSelection?.kind !== 'plan' ||
+      paymentMethodSelection.planId !== promoLaunchState.planId
+    ) {
+      return;
+    }
+
+    if (
+      planPromoPlanId !== promoLaunchState.planId ||
+      normalizePromoCodeInput(planPromoCode) !== promoLaunchState.promoCode
+    ) {
+      return;
+    }
+
+    promoLaunchQuoteRequestedRef.current = true;
+    void handleApplyPlanPromo();
+  }, [paymentMethodSelection, planPromoPlanId, planPromoCode, promoLaunchState, accessToken]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1882,6 +2231,11 @@ export default function App() {
     setUser(null);
     setAccessToken(null);
     setPlans([]);
+    setPlanPromoCode('');
+    setPlanPromoPlanId(null);
+    setPlanPromoRubQuote(null);
+    setPlanPromoStarsQuote(null);
+    setPlanPromoMessage(null);
     setReferralSummary(null);
     setWithdrawals([]);
     setWithdrawalsTotal(0);
@@ -1893,8 +2247,14 @@ export default function App() {
     setLedgerEntries([]);
     setLedgerEntriesTotal(0);
     setCheckoutAttempts([]);
+    setPaymentMethodSelection(null);
+    setPaymentMethodSubmitting(null);
     setIsWithdrawalModalOpen(false);
     setIsWithdrawalSubmitting(false);
+    setSettingsPromoCode('');
+    setSettingsPromoMessage(null);
+    setIsRedeemingSettingsPromo(false);
+    settingsPromoIdempotencyKeyRef.current = null;
     attemptedWithdrawalsTokenRef.current = null;
     attemptedPlansTokenRef.current = null;
     attemptedNotificationsTokenRef.current = null;
@@ -2683,6 +3043,7 @@ export default function App() {
       | {
           kind: 'plan';
           planId: string;
+          promoCodeByProvider?: Partial<Record<PaymentMethodProvider, string>>;
         }
       | {
           kind: 'topup';
@@ -2701,7 +3062,8 @@ export default function App() {
               (attempt) =>
                 attempt.kind === 'plan' &&
                 attempt.planId === selection.planId &&
-                attempt.provider === method.provider
+                attempt.provider === method.provider &&
+                attempt.promoCode === selection.promoCodeByProvider?.[method.provider]
             )
           : checkoutAttempts.find(
               (attempt) =>
@@ -2869,6 +3231,157 @@ export default function App() {
     }
   };
 
+  const handlePlanPromoCodeChange = (value: string) => {
+    setPlanPromoCode(value);
+    setPlanPromoRubQuote(null);
+    setPlanPromoStarsQuote(null);
+    setPlanPromoMessage(null);
+  };
+
+  const handleApplyPlanPromo = async () => {
+    if (!accessToken || paymentMethodSelection?.kind !== 'plan') {
+      return;
+    }
+
+    const selectedPlan = plans.find((plan) => plan.id === paymentMethodSelection.planId);
+    if (!selectedPlan) {
+      setPlanPromoMessage({
+        tone: 'error',
+        text: 'Выбранный тариф не найден.',
+      });
+      return;
+    }
+
+    const normalizedPromoCode = normalizePromoCodeInput(planPromoCode);
+    if (!normalizedPromoCode) {
+      setPlanPromoMessage({
+        tone: 'error',
+        text: 'Введите промокод, чтобы проверить его для этого тарифа.',
+      });
+      return;
+    }
+
+    setIsApplyingPlanPromo(true);
+
+    let rubQuote: BackendPromoPlanQuoteResponse | null = null;
+    let starsQuote: BackendPromoPlanQuoteResponse | null = null;
+    let rubError: string | null = null;
+    let starsError: string | null = null;
+
+    try {
+      try {
+        rubQuote = await loadPlanPromoQuoteSnapshot(accessToken, selectedPlan.id, normalizedPromoCode, 'RUB');
+      } catch (err) {
+        rubError = err instanceof Error ? err.message : 'Не удалось проверить промокод для оплаты в рублях.';
+      }
+
+      if (selectedPlan.priceStars) {
+        try {
+          starsQuote = await loadPlanPromoQuoteSnapshot(accessToken, selectedPlan.id, normalizedPromoCode, 'XTR');
+        } catch (err) {
+          starsError = err instanceof Error ? err.message : 'Не удалось проверить промокод для Telegram Stars.';
+        }
+      }
+
+      if (!rubQuote && !starsQuote) {
+        const message = rubError ?? starsError ?? 'Не удалось применить промокод.';
+        setPlanPromoPlanId(selectedPlan.id);
+        setPlanPromoRubQuote(null);
+        setPlanPromoStarsQuote(null);
+        setPlanPromoMessage({
+          tone: 'error',
+          text: message,
+        });
+        toast.error(message);
+        return;
+      }
+
+      const appliedCode = rubQuote?.promo_code ?? starsQuote?.promo_code ?? normalizedPromoCode;
+      const summary = rubQuote
+        ? `Промокод ${appliedCode} применен: ${describePromoQuote(rubQuote)}${
+            selectedPlan.priceStars && !starsQuote ? ' Для оплаты через Telegram Stars он не действует.' : ''
+          }`
+        : `Промокод ${appliedCode} работает для Telegram Stars: ${describePromoQuote(starsQuote as BackendPromoPlanQuoteResponse)}`;
+
+      setPlanPromoPlanId(selectedPlan.id);
+      setPlanPromoCode(appliedCode);
+      setPlanPromoRubQuote(rubQuote);
+      setPlanPromoStarsQuote(starsQuote);
+      setPlanPromoMessage({
+        tone: 'success',
+        text: summary,
+      });
+      toast.success('Промокод применен к выбранному тарифу');
+    } finally {
+      setIsApplyingPlanPromo(false);
+    }
+  };
+
+  const handleSettingsPromoCodeChange = (value: string) => {
+    settingsPromoIdempotencyKeyRef.current = null;
+    setSettingsPromoCode(value);
+    setSettingsPromoMessage(null);
+  };
+
+  const handleRedeemSettingsPromo = async () => {
+    if (!accessToken) {
+      toast.error('Необходимо войти в аккаунт');
+      return;
+    }
+
+    const normalizedPromoCode = normalizePromoCodeInput(settingsPromoCode);
+    if (!normalizedPromoCode) {
+      setSettingsPromoMessage({
+        tone: 'error',
+        text: 'Введите промокод для активации.',
+      });
+      return;
+    }
+
+    const idempotencyKey =
+      settingsPromoIdempotencyKeyRef.current ??
+      createClientIdempotencyKey(`promo-redeem-${normalizedPromoCode.toLowerCase()}`);
+    settingsPromoIdempotencyKeyRef.current = idempotencyKey;
+
+    setIsRedeemingSettingsPromo(true);
+
+    try {
+      const result = await redeemPromoCodeSnapshot(accessToken, normalizedPromoCode, idempotencyKey);
+      const message =
+        typeof result.balance_credit_amount === 'number' && result.balance_credit_amount > 0
+          ? `Промокод ${result.promo_code} активирован: на баланс начислено ${formatRubles(
+              result.balance_credit_amount
+            )} ₽.`
+          : typeof result.granted_duration_days === 'number' && result.granted_duration_days > 0
+            ? `Промокод ${result.promo_code} активирован: доступ продлен на ${result.granted_duration_days} дней.`
+            : `Промокод ${result.promo_code} активирован.`;
+
+      setSettingsPromoCode(result.promo_code);
+      setSettingsPromoMessage({
+        tone: 'success',
+        text: message,
+      });
+
+      const reloaded = await loadUserData(accessToken, user?.avatar);
+      if (!reloaded) {
+        setUser((currentUser) =>
+          currentUser ? { ...currentUser, balance: result.balance } : currentUser
+        );
+      }
+
+      toast.success(message);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Не удалось активировать промокод.';
+      setSettingsPromoMessage({
+        tone: 'error',
+        text: message,
+      });
+      toast.error(message);
+    } finally {
+      setIsRedeemingSettingsPromo(false);
+    }
+  };
+
   const createPlanPayment = async (planId: string, provider: PaymentMethodProvider) => {
     if (!accessToken || !user) return;
 
@@ -2877,9 +3390,30 @@ export default function App() {
       throw new Error('Выбранный тариф не найден.');
     }
 
+    const promoCodeForProvider =
+      provider === 'telegram_stars'
+        ? paymentMethodSelection?.kind === 'plan' && planPromoPlanId === planId
+          ? planPromoStarsQuote?.promo_code ?? null
+          : null
+        : paymentMethodSelection?.kind === 'plan' && planPromoPlanId === planId
+          ? planPromoRubQuote?.promo_code ?? null
+          : null;
+    const hasTypedPromoCode =
+      paymentMethodSelection?.kind === 'plan' &&
+      planPromoPlanId === planId &&
+      normalizePromoCodeInput(planPromoCode).length > 0;
+
     setCheckoutPlanId(planId);
 
     try {
+      if (hasTypedPromoCode && !promoCodeForProvider) {
+        toast.error(
+          provider === 'telegram_stars'
+            ? 'Этот промокод не действует для Telegram Stars. Продолжаем без него.'
+            : 'Этот промокод не действует для выбранного способа оплаты. Продолжаем без него.'
+        );
+      }
+
       if (provider === 'wallet') {
         const response = await fetch(
           `${BACKEND_API}/api/v1/subscriptions/wallet/plans/${encodeURIComponent(planId)}`,
@@ -2891,6 +3425,7 @@ export default function App() {
             },
             body: JSON.stringify({
               idempotency_key: createClientIdempotencyKey(`wallet-plan-${planId}`),
+              promo_code: promoCodeForProvider,
             }),
           }
         );
@@ -2923,6 +3458,7 @@ export default function App() {
           kind: 'plan',
           provider,
           planId,
+          promoCode: promoCodeForProvider ?? undefined,
         });
 
         if (resumableAttempt.activeAttempt) {
@@ -2976,6 +3512,7 @@ export default function App() {
         body: JSON.stringify({
           description: selectedPlan ? `Оплата тарифа ${selectedPlan.name}` : `Оплата тарифа ${planId}`,
           idempotency_key: createClientIdempotencyKey(`plan-${planId}`),
+          promo_code: promoCodeForProvider,
           ...(useTelegramStars
             ? {}
             : { success_url: getPaymentReturnUrl({ preferTelegramBot: isTelegramWebApp }) }),
@@ -3000,6 +3537,7 @@ export default function App() {
         kind: 'plan',
         planId,
         planName: selectedPlan.name,
+        promoCode: promoCodeForProvider ?? undefined,
       });
       toast.success(
         useTelegramStars ? 'Открываем оплату в Telegram Stars' : 'Открываем YooKassa для оплаты тарифа'
@@ -3059,9 +3597,18 @@ export default function App() {
       return;
     }
 
-    if (methods.length === 1) {
-      await createPlanPayment(planId, methods[0].provider);
-      return;
+    if (planPromoPlanId !== planId) {
+      setPlanPromoPlanId(planId);
+      setPlanPromoRubQuote(null);
+      setPlanPromoStarsQuote(null);
+      setPlanPromoMessage(
+        planPromoCode.trim()
+          ? {
+              tone: 'neutral',
+              text: 'Нажмите «Применить», чтобы проверить текущий промокод для этого тарифа.',
+            }
+          : null
+      );
     }
 
     setPaymentMethodSelection({
@@ -3462,6 +4009,41 @@ export default function App() {
       .filter((attempt) => attempt.kind === 'topup')
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
   const pendingPayments = mergePendingPayments(activePayments, checkoutAttempts, plans);
+  const selectedPlanForPaymentSheet =
+    paymentMethodSelection?.kind === 'plan'
+      ? plans.find((plan) => plan.id === paymentMethodSelection.planId) ?? null
+      : null;
+  const isPlanPromoResolvedForCurrentSelection =
+    paymentMethodSelection?.kind === 'plan' &&
+    planPromoPlanId === paymentMethodSelection.planId &&
+    Boolean(planPromoRubQuote || planPromoStarsQuote || planPromoMessage?.tone === 'error');
+  const currentPlanPromoContext: PlanPromoContext | null =
+    paymentMethodSelection?.kind === 'plan'
+      ? {
+          code: isPlanPromoResolvedForCurrentSelection ? normalizePromoCodeInput(planPromoCode) || null : null,
+          rubQuote: planPromoPlanId === paymentMethodSelection.planId ? planPromoRubQuote : null,
+          starsQuote: planPromoPlanId === paymentMethodSelection.planId ? planPromoStarsQuote : null,
+        }
+      : null;
+  const paymentMethodSheetMethods =
+    paymentMethodSelection?.kind === 'plan' && selectedPlanForPaymentSheet
+      ? attachPaymentAttemptNotes(
+          {
+            kind: 'plan',
+            planId: paymentMethodSelection.planId,
+            promoCodeByProvider: {
+              yookassa: currentPlanPromoContext?.rubQuote?.promo_code,
+              telegram_stars: currentPlanPromoContext?.starsQuote?.promo_code,
+            },
+          },
+          getAvailablePlanPaymentMethods(
+            selectedPlanForPaymentSheet,
+            isTelegramWebApp,
+            user.balance,
+            currentPlanPromoContext
+          )
+        )
+      : (paymentMethodSelection?.methods ?? []);
   const bottomNavActiveTab: PrimaryAppTab =
     activeTab === 'home' || activeTab === 'plans' || activeTab === 'referral' || activeTab === 'settings'
       ? activeTab
@@ -3594,6 +4176,11 @@ export default function App() {
             onOpenPrivacy={handleOpenPrivacy}
             onOpenTerms={handleOpenTerms}
             onOpenSupport={handleOpenSupport}
+            promoCode={settingsPromoCode}
+            onPromoCodeChange={handleSettingsPromoCodeChange}
+            onRedeemPromo={handleRedeemSettingsPromo}
+            isRedeemingPromo={isRedeemingSettingsPromo}
+            promoMessage={settingsPromoMessage}
           />
         );
       default:
@@ -3768,7 +4355,7 @@ export default function App() {
               ? `Сумма пополнения: ${formatRubles(paymentMethodSelection.amount)} ₽`
               : undefined
         }
-        methods={paymentMethodSelection?.methods ?? []}
+        methods={paymentMethodSheetMethods}
         isSubmitting={Boolean(paymentMethodSubmitting)}
         selectedProvider={paymentMethodSubmitting}
         onClose={() => {
@@ -3779,6 +4366,11 @@ export default function App() {
         onSelect={(provider) => {
           void handlePaymentMethodSelect(provider);
         }}
+        promoCode={paymentMethodSelection?.kind === 'plan' ? planPromoCode : undefined}
+        onPromoCodeChange={paymentMethodSelection?.kind === 'plan' ? handlePlanPromoCodeChange : undefined}
+        onApplyPromo={paymentMethodSelection?.kind === 'plan' ? handleApplyPlanPromo : undefined}
+        isApplyingPromo={isApplyingPlanPromo}
+        promoMessage={paymentMethodSelection?.kind === 'plan' ? planPromoMessage : null}
       />
 
       <div className="mx-auto flex max-w-[1520px] gap-6">
@@ -4110,6 +4702,15 @@ export default function App() {
                   <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Русский</div>
                 </div>
 
+                <PromoRedeemCard
+                  code={settingsPromoCode}
+                  onCodeChange={handleSettingsPromoCodeChange}
+                  onRedeem={handleRedeemSettingsPromo}
+                  isSubmitting={isRedeemingSettingsPromo}
+                  message={settingsPromoMessage}
+                  className="bg-slate-50 dark:bg-slate-900"
+                />
+
                 <div className="grid gap-3">
                   <button
                     onClick={handleOpenPendingPayments}
@@ -4317,7 +4918,7 @@ export default function App() {
               ? `Сумма пополнения: ${formatRubles(paymentMethodSelection.amount)} ₽`
               : undefined
         }
-        methods={paymentMethodSelection?.methods ?? []}
+        methods={paymentMethodSheetMethods}
         isSubmitting={Boolean(paymentMethodSubmitting)}
         selectedProvider={paymentMethodSubmitting}
         onClose={() => {
@@ -4328,6 +4929,11 @@ export default function App() {
         onSelect={(provider) => {
           void handlePaymentMethodSelect(provider);
         }}
+        promoCode={paymentMethodSelection?.kind === 'plan' ? planPromoCode : undefined}
+        onPromoCodeChange={paymentMethodSelection?.kind === 'plan' ? handlePlanPromoCodeChange : undefined}
+        onApplyPromo={paymentMethodSelection?.kind === 'plan' ? handleApplyPlanPromo : undefined}
+        isApplyingPromo={isApplyingPlanPromo}
+        promoMessage={paymentMethodSelection?.kind === 'plan' ? planPromoMessage : null}
       />
 
       <div

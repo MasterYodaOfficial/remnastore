@@ -1,4 +1,4 @@
-"""initialize current development schema
+"""initialize current application schema
 
 Revision ID: 20260314_init_schema
 Revises:

@@ -19,11 +19,13 @@ class CreateYooKassaPlanPurchaseRequest(BaseModel):
     cancel_url: str | None = None
     description: str | None = None
     idempotency_key: str | None = None
+    promo_code: str | None = None
 
 
 class CreateTelegramStarsPlanPurchaseRequest(BaseModel):
     description: str | None = None
     idempotency_key: str | None = None
+    promo_code: str | None = None
 
 
 class SubscriptionPlanResponse(BaseModel):

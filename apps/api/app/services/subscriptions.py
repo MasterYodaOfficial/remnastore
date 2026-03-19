@@ -9,7 +9,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, PromoCode
 from app.integrations.remnawave import (
     RemnawaveConfigurationError,
     RemnawaveRequestError,
@@ -19,15 +19,29 @@ from app.integrations.remnawave import (
 from app.schemas.subscription import SubscriptionStateResponse, TrialEligibilityResponse
 from app.services.cache import get_cache
 from app.services.purchases import (
+    PurchaseConflictError,
     RemnawaveSyncError,
     apply_remote_subscription_snapshot,
     apply_trial_purchase,
     clear_remote_subscription_snapshot,
-    purchase_plan_with_wallet,
+    finalize_wallet_plan_purchase,
+    get_subscription_grant_by_reference,
     normalize_datetime,
+    purchase_plan_with_wallet,
+    PurchaseSource,
+    stage_wallet_plan_purchase,
     target_remnawave_user_uuid,
     utcnow,
 )
+from app.services.promos import (
+    WALLET_PURCHASE_REFERENCE_TYPE,
+    get_promo_redemption_by_reference,
+    mark_promo_redemption_applied,
+    normalize_promo_code,
+    quote_plan_promo,
+    stage_promo_redemption,
+)
+from app.services.plans import get_subscription_plan
 
 
 class SubscriptionServiceError(Exception):
@@ -261,16 +275,90 @@ async def purchase_subscription_with_wallet(
     account: Account,
     plan_code: str,
     idempotency_key: str,
+    promo_code: str | None = None,
 ) -> SubscriptionStateResponse:
     if account.status == AccountStatus.BLOCKED:
         raise SubscriptionPurchaseBlockedError("blocked accounts cannot purchase subscriptions")
 
-    account = await purchase_plan_with_wallet(
+    if promo_code is None:
+        account = await purchase_plan_with_wallet(
+            session,
+            account_id=account.id,
+            plan_code=plan_code,
+            idempotency_key=idempotency_key,
+            gateway_factory=get_remnawave_gateway,
+        )
+        return SubscriptionStateResponse.from_account(account)
+
+    existing_grant = await get_subscription_grant_by_reference(
+        session,
+        purchase_source=PurchaseSource.WALLET,
+        reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+        reference_id=idempotency_key,
+    )
+    if existing_grant is not None:
+        existing_redemption = await get_promo_redemption_by_reference(
+            session,
+            reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+            reference_id=idempotency_key,
+        )
+        if existing_redemption is not None:
+            existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
+            if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
+                raise PurchaseConflictError("idempotency key already used for another promo code")
+            account = await finalize_wallet_plan_purchase(
+                session,
+                account_id=account.id,
+                idempotency_key=idempotency_key,
+                gateway_factory=get_remnawave_gateway,
+            )
+            await mark_promo_redemption_applied(
+                session,
+                reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+                reference_id=idempotency_key,
+                subscription_grant_id=existing_grant.id,
+            )
+            await session.commit()
+            await session.refresh(account)
+            return SubscriptionStateResponse.from_account(account)
+
+    plan = get_subscription_plan(plan_code)
+    quote = await quote_plan_promo(
+        session,
+        account=account,
+        plan_code=plan.code,
+        base_amount=plan.price_rub,
+        currency="RUB",
+        code=promo_code,
+    )
+    grant = await stage_wallet_plan_purchase(
         session,
         account_id=account.id,
-        plan_code=plan_code,
+        plan_code=plan.code,
+        idempotency_key=idempotency_key,
+        amount_override=quote.final_amount,
+        duration_days_override=quote.final_duration_days,
+    )
+    await stage_promo_redemption(
+        session,
+        account_id=account.id,
+        quote=quote,
+        reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+        reference_id=idempotency_key,
+        subscription_grant_id=grant.id,
+    )
+    account = await finalize_wallet_plan_purchase(
+        session,
+        account_id=account.id,
         idempotency_key=idempotency_key,
         gateway_factory=get_remnawave_gateway,
     )
-
+    await mark_promo_redemption_applied(
+        session,
+        reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+        reference_id=idempotency_key,
+        subscription_grant_id=grant.id,
+    )
+    await session.commit()
+    await session.refresh(account)
     return SubscriptionStateResponse.from_account(account)

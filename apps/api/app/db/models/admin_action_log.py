@@ -30,6 +30,8 @@ class AdminActionType(str, enum.Enum):
     BROADCAST_PAUSE = "broadcast_pause"
     BROADCAST_RESUME = "broadcast_resume"
     BROADCAST_CANCEL = "broadcast_cancel"
+    BROADCAST_AUDIENCE_PRESET_UPSERT = "broadcast_audience_preset_upsert"
+    BROADCAST_AUDIENCE_PRESET_DELETE = "broadcast_audience_preset_delete"
 
 
 class AdminActionLog(Base):

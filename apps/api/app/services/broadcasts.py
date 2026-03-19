@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 import html
 from html.parser import HTMLParser
 import re
@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.config import settings
 from app.db.models import (
@@ -21,6 +22,7 @@ from app.db.models import (
     AuthAccount,
     Broadcast,
     BroadcastAudienceSegment,
+    BroadcastAudiencePreset,
     BroadcastChannel,
     BroadcastContentType,
     BroadcastDelivery,
@@ -34,7 +36,7 @@ from app.db.models import (
     NotificationType,
     Payment,
 )
-from app.domain.payments import PaymentStatus
+from app.domain.payments import PaymentFlowType, PaymentStatus
 from app.services.accounts import mark_telegram_bot_blocked
 from app.services.notifications import (
     TelegramNotificationConfigurationError,
@@ -60,11 +62,72 @@ class BroadcastValidationError(BroadcastServiceError):
     pass
 
 
+class BroadcastAudiencePresetNotFoundError(BroadcastServiceError):
+    pass
+
+
 @dataclass(slots=True)
 class BroadcastAudienceEstimate:
     total_accounts: int
     in_app_recipients: int
     telegram_recipients: int
+
+
+@dataclass(slots=True)
+class BroadcastAudiencePreviewItem:
+    account: Account
+    match_reasons: list[str]
+    delivery_channels: list[BroadcastChannel]
+    delivery_notes: list[str]
+
+
+@dataclass(slots=True)
+class BroadcastAudiencePreview:
+    total_accounts: int
+    limit: int
+    has_more: bool
+    items: list[BroadcastAudiencePreviewItem]
+    manual_list_diagnostics: BroadcastAudienceManualListDiagnostics | None = None
+
+
+@dataclass(slots=True)
+class BroadcastAudienceManualListExcludedAccount:
+    account: Account
+    matched_by: list[str]
+    reasons: list[str]
+
+
+@dataclass(slots=True)
+class BroadcastAudienceManualListDiagnostics:
+    requested_account_ids: int
+    requested_emails: int
+    requested_telegram_ids: int
+    matched_accounts: int
+    final_accounts: int
+    unresolved_account_ids: list[str]
+    unresolved_emails: list[str]
+    unresolved_telegram_ids: list[int]
+    excluded_accounts: list[BroadcastAudienceManualListExcludedAccount]
+
+
+@dataclass(slots=True, frozen=True)
+class BroadcastAudienceConfig:
+    segment: BroadcastAudienceSegment
+    exclude_blocked: bool = True
+    manual_account_ids: tuple[uuid.UUID, ...] = ()
+    manual_emails: tuple[str, ...] = ()
+    manual_telegram_ids: tuple[int, ...] = ()
+    last_seen_older_than_days: int | None = None
+    include_never_seen: bool = False
+    pending_payment_older_than_minutes: int | None = None
+    pending_payment_within_last_days: int | None = None
+    failed_payment_within_last_days: int | None = None
+    subscription_expired_from_days: int | None = None
+    subscription_expired_to_days: int | None = None
+    cooldown_days: int | None = None
+    cooldown_key: str | None = None
+    telegram_quiet_hours_start: str | None = None
+    telegram_quiet_hours_end: str | None = None
 
 
 @dataclass(slots=True)
@@ -132,6 +195,22 @@ class BroadcastTestSendResult:
 
 BROADCAST_TZ = ZoneInfo(settings.broadcast_timezone)
 TELEGRAM_PHOTO_CAPTION_MAX_LENGTH = 1024
+ABANDONED_CHECKOUT_DEFAULT_OLDER_THAN_MINUTES = 30
+ABANDONED_CHECKOUT_DEFAULT_WITHIN_LAST_DAYS = 7
+FAILED_PAYMENT_DEFAULT_WITHIN_LAST_DAYS = 7
+MANUAL_LIST_MAX_IDENTIFIERS = 5000
+INACTIVE_AUDIENCE_DEFAULT_OLDER_THAN_DAYS = 7
+MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT = 20
+DIRECT_PLAN_PENDING_STATUSES = (
+    PaymentStatus.CREATED,
+    PaymentStatus.PENDING,
+    PaymentStatus.REQUIRES_ACTION,
+)
+DIRECT_PLAN_FAILED_STATUSES = (
+    PaymentStatus.FAILED,
+    PaymentStatus.CANCELLED,
+    PaymentStatus.EXPIRED,
+)
 
 
 class _TelegramHtmlSubsetValidator(HTMLParser):
@@ -206,6 +285,20 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
+def _normalize_broadcast_audience_preset_name(value: str) -> str:
+    normalized = _normalize_required_text(value, field_name="name")
+    if len(normalized) > 255:
+        raise BroadcastValidationError("name is too long")
+    return normalized
+
+
+def _normalize_broadcast_audience_preset_description(value: str | None) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is not None and len(normalized) > 2000:
+        raise BroadcastValidationError("description is too long")
+    return normalized
+
+
 def _is_allowed_button_url(value: str) -> bool:
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https", "tg"} and bool(parsed.netloc or parsed.path)
@@ -277,16 +370,267 @@ def _now_moscow() -> datetime:
     return datetime.now(BROADCAST_TZ)
 
 
-def _get_broadcast_audience_config(
-    broadcast: Broadcast,
-) -> tuple[BroadcastAudienceSegment, bool]:
-    raw_segment = str((broadcast.audience or {}).get("segment") or BroadcastAudienceSegment.ALL.value)
+def _normalize_optional_int(
+    value: object,
+    *,
+    field_name: str,
+    min_value: int = 0,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise BroadcastValidationError(f"{field_name} must be an integer")
     try:
-        segment = BroadcastAudienceSegment(raw_segment)
-    except ValueError as exc:
-        raise BroadcastValidationError(f"unsupported audience segment: {raw_segment}") from exc
-    exclude_blocked = bool((broadcast.audience or {}).get("exclude_blocked", True))
-    return segment, exclude_blocked
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise BroadcastValidationError(f"{field_name} must be an integer") from exc
+    if normalized < min_value:
+        raise BroadcastValidationError(f"{field_name} must be >= {min_value}")
+    return normalized
+
+
+def _normalize_optional_cooldown_key(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise BroadcastValidationError("cooldown_key must be a string")
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if len(normalized) > 64:
+        raise BroadcastValidationError("cooldown_key must be <= 64 characters")
+    return normalized
+
+
+def _normalize_manual_account_ids(value: object) -> tuple[uuid.UUID, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise BroadcastValidationError("manual_account_ids must be a list")
+
+    normalized_items: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for item in value:
+        try:
+            normalized_value = item if isinstance(item, uuid.UUID) else uuid.UUID(str(item).strip())
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise BroadcastValidationError("manual_account_ids must contain valid UUIDs") from exc
+        if normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        normalized_items.append(normalized_value)
+    return tuple(normalized_items)
+
+
+def _normalize_manual_emails(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise BroadcastValidationError("manual_emails must be a list")
+
+    normalized_items: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise BroadcastValidationError("manual_emails must contain strings")
+        normalized_value = item.strip().lower()
+        if not normalized_value or normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        normalized_items.append(normalized_value)
+    return tuple(normalized_items)
+
+
+def _normalize_manual_telegram_ids(value: object) -> tuple[int, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise BroadcastValidationError("manual_telegram_ids must be a list")
+
+    normalized_items: list[int] = []
+    seen: set[int] = set()
+    for item in value:
+        if isinstance(item, bool):
+            raise BroadcastValidationError("manual_telegram_ids must contain integers")
+        try:
+            normalized_value = int(item)
+        except (TypeError, ValueError) as exc:
+            raise BroadcastValidationError("manual_telegram_ids must contain integers") from exc
+        if normalized_value in seen:
+            continue
+        seen.add(normalized_value)
+        normalized_items.append(normalized_value)
+    return tuple(normalized_items)
+
+
+def _normalize_optional_hhmm_time(value: object, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise BroadcastValidationError(f"{field_name} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    match = re.fullmatch(r"(\d{2}):(\d{2})", normalized)
+    if match is None:
+        raise BroadcastValidationError(f"{field_name} must use HH:MM format")
+    hours = int(match.group(1))
+    minutes = int(match.group(2))
+    if hours > 23 or minutes > 59:
+        raise BroadcastValidationError(f"{field_name} must be a valid time")
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def _parse_hhmm_time(value: str) -> time:
+    hours, minutes = value.split(":", maxsplit=1)
+    return time(hour=int(hours), minute=int(minutes))
+
+
+def normalize_broadcast_audience_config(
+    *,
+    audience: dict[str, object] | None = None,
+) -> BroadcastAudienceConfig:
+    raw_audience = audience or {}
+    raw_segment = raw_audience.get("segment") or BroadcastAudienceSegment.ALL
+    if isinstance(raw_segment, BroadcastAudienceSegment):
+        segment = raw_segment
+    else:
+        try:
+            segment = BroadcastAudienceSegment(str(raw_segment))
+        except ValueError as exc:
+            raise BroadcastValidationError(f"unsupported audience segment: {raw_segment}") from exc
+    exclude_blocked = bool(raw_audience.get("exclude_blocked", True))
+    manual_account_ids = _normalize_manual_account_ids(raw_audience.get("manual_account_ids"))
+    manual_emails = _normalize_manual_emails(raw_audience.get("manual_emails"))
+    manual_telegram_ids = _normalize_manual_telegram_ids(raw_audience.get("manual_telegram_ids"))
+    last_seen_older_than_days = None
+    include_never_seen = bool(raw_audience.get("include_never_seen", False))
+
+    pending_payment_older_than_minutes = None
+    pending_payment_within_last_days = None
+    failed_payment_within_last_days = None
+    subscription_expired_from_days = None
+    subscription_expired_to_days = None
+    cooldown_days = _normalize_optional_int(
+        raw_audience.get("cooldown_days"),
+        field_name="cooldown_days",
+        min_value=1,
+    )
+    cooldown_key = _normalize_optional_cooldown_key(raw_audience.get("cooldown_key"))
+    telegram_quiet_hours_start = _normalize_optional_hhmm_time(
+        raw_audience.get("telegram_quiet_hours_start"),
+        field_name="telegram_quiet_hours_start",
+    )
+    telegram_quiet_hours_end = _normalize_optional_hhmm_time(
+        raw_audience.get("telegram_quiet_hours_end"),
+        field_name="telegram_quiet_hours_end",
+    )
+    manual_identifiers_total = (
+        len(manual_account_ids) + len(manual_emails) + len(manual_telegram_ids)
+    )
+    if manual_identifiers_total > MANUAL_LIST_MAX_IDENTIFIERS:
+        raise BroadcastValidationError(
+            f"manual audience supports at most {MANUAL_LIST_MAX_IDENTIFIERS} identifiers"
+        )
+
+    if segment == BroadcastAudienceSegment.MANUAL_LIST:
+        if manual_identifiers_total == 0:
+            raise BroadcastValidationError(
+                "manual_list audience requires at least one account_id, email or telegram_id"
+            )
+    elif segment in {
+        BroadcastAudienceSegment.INACTIVE_ACCOUNTS,
+        BroadcastAudienceSegment.INACTIVE_PAID_USERS,
+    }:
+        last_seen_older_than_days = (
+            _normalize_optional_int(
+                raw_audience.get("last_seen_older_than_days"),
+                field_name="last_seen_older_than_days",
+                min_value=1,
+            )
+            or INACTIVE_AUDIENCE_DEFAULT_OLDER_THAN_DAYS
+        )
+    elif segment == BroadcastAudienceSegment.ABANDONED_CHECKOUT:
+        pending_payment_older_than_minutes = (
+            _normalize_optional_int(
+                raw_audience.get("pending_payment_older_than_minutes"),
+                field_name="pending_payment_older_than_minutes",
+                min_value=1,
+            )
+            or ABANDONED_CHECKOUT_DEFAULT_OLDER_THAN_MINUTES
+        )
+        pending_payment_within_last_days = (
+            _normalize_optional_int(
+                raw_audience.get("pending_payment_within_last_days"),
+                field_name="pending_payment_within_last_days",
+                min_value=1,
+            )
+            or ABANDONED_CHECKOUT_DEFAULT_WITHIN_LAST_DAYS
+        )
+    elif segment == BroadcastAudienceSegment.FAILED_PAYMENT:
+        failed_payment_within_last_days = (
+            _normalize_optional_int(
+                raw_audience.get("failed_payment_within_last_days"),
+                field_name="failed_payment_within_last_days",
+                min_value=1,
+            )
+            or FAILED_PAYMENT_DEFAULT_WITHIN_LAST_DAYS
+        )
+    elif segment == BroadcastAudienceSegment.EXPIRED:
+        subscription_expired_from_days = _normalize_optional_int(
+            raw_audience.get("subscription_expired_from_days"),
+            field_name="subscription_expired_from_days",
+            min_value=0,
+        )
+        subscription_expired_to_days = _normalize_optional_int(
+            raw_audience.get("subscription_expired_to_days"),
+            field_name="subscription_expired_to_days",
+            min_value=0,
+        )
+        if (
+            subscription_expired_from_days is not None
+            and subscription_expired_to_days is not None
+            and subscription_expired_from_days > subscription_expired_to_days
+        ):
+            raise BroadcastValidationError(
+                "subscription_expired_from_days must be <= subscription_expired_to_days"
+            )
+
+    if (cooldown_days is None) != (cooldown_key is None):
+        raise BroadcastValidationError("cooldown_days and cooldown_key must be provided together")
+    if (telegram_quiet_hours_start is None) != (telegram_quiet_hours_end is None):
+        raise BroadcastValidationError(
+            "telegram_quiet_hours_start and telegram_quiet_hours_end must be provided together"
+        )
+    if (
+        telegram_quiet_hours_start is not None
+        and telegram_quiet_hours_end is not None
+        and telegram_quiet_hours_start == telegram_quiet_hours_end
+    ):
+        raise BroadcastValidationError("telegram quiet hours start and end must differ")
+
+    return BroadcastAudienceConfig(
+        segment=segment,
+        exclude_blocked=exclude_blocked,
+        manual_account_ids=manual_account_ids,
+        manual_emails=manual_emails,
+        manual_telegram_ids=manual_telegram_ids,
+        last_seen_older_than_days=last_seen_older_than_days,
+        include_never_seen=include_never_seen,
+        pending_payment_older_than_minutes=pending_payment_older_than_minutes,
+        pending_payment_within_last_days=pending_payment_within_last_days,
+        failed_payment_within_last_days=failed_payment_within_last_days,
+        subscription_expired_from_days=subscription_expired_from_days,
+        subscription_expired_to_days=subscription_expired_to_days,
+        cooldown_days=cooldown_days,
+        cooldown_key=cooldown_key,
+        telegram_quiet_hours_start=telegram_quiet_hours_start,
+        telegram_quiet_hours_end=telegram_quiet_hours_end,
+    )
+
+
+def _get_broadcast_audience_config(broadcast: Broadcast) -> BroadcastAudienceConfig:
+    return normalize_broadcast_audience_config(audience=broadcast.audience)
 
 
 def validate_broadcast_runtime_constraints(broadcast: Broadcast) -> None:
@@ -449,31 +793,476 @@ def normalize_broadcast_channels(
 
 def build_broadcast_audience_payload(
     *,
-    segment: BroadcastAudienceSegment,
-    exclude_blocked: bool,
-) -> dict[str, str | bool]:
-    return {
-        "segment": segment.value,
-        "exclude_blocked": exclude_blocked,
+    audience: BroadcastAudienceConfig,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "segment": audience.segment.value,
+        "exclude_blocked": audience.exclude_blocked,
     }
+    if audience.manual_account_ids:
+        payload["manual_account_ids"] = [str(item) for item in audience.manual_account_ids]
+    if audience.manual_emails:
+        payload["manual_emails"] = list(audience.manual_emails)
+    if audience.manual_telegram_ids:
+        payload["manual_telegram_ids"] = list(audience.manual_telegram_ids)
+    if audience.last_seen_older_than_days is not None:
+        payload["last_seen_older_than_days"] = audience.last_seen_older_than_days
+    if audience.include_never_seen:
+        payload["include_never_seen"] = audience.include_never_seen
+    if audience.pending_payment_older_than_minutes is not None:
+        payload["pending_payment_older_than_minutes"] = audience.pending_payment_older_than_minutes
+    if audience.pending_payment_within_last_days is not None:
+        payload["pending_payment_within_last_days"] = audience.pending_payment_within_last_days
+    if audience.failed_payment_within_last_days is not None:
+        payload["failed_payment_within_last_days"] = audience.failed_payment_within_last_days
+    if audience.subscription_expired_from_days is not None:
+        payload["subscription_expired_from_days"] = audience.subscription_expired_from_days
+    if audience.subscription_expired_to_days is not None:
+        payload["subscription_expired_to_days"] = audience.subscription_expired_to_days
+    if audience.cooldown_days is not None:
+        payload["cooldown_days"] = audience.cooldown_days
+    if audience.cooldown_key is not None:
+        payload["cooldown_key"] = audience.cooldown_key
+    if audience.telegram_quiet_hours_start is not None:
+        payload["telegram_quiet_hours_start"] = audience.telegram_quiet_hours_start
+    if audience.telegram_quiet_hours_end is not None:
+        payload["telegram_quiet_hours_end"] = audience.telegram_quiet_hours_end
+    return payload
+
+
+def _latest_direct_plan_payment_id_subquery():
+    return (
+        select(Payment.id)
+        .where(
+            Payment.account_id == Account.id,
+            Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+        )
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .limit(1)
+        .correlate(Account)
+        .scalar_subquery()
+    )
+
+
+def _format_preview_relative_age(value: datetime, *, now: datetime) -> str:
+    delta = now - value.astimezone(UTC)
+    if delta.total_seconds() < 0:
+        delta = timedelta(0)
+
+    total_minutes = max(int(delta.total_seconds() // 60), 0)
+    if total_minutes < 60:
+        return f"{max(total_minutes, 1)} мин. назад"
+
+    total_hours = total_minutes // 60
+    if total_hours < 48:
+        return f"{total_hours} ч. назад"
+
+    return f"{delta.days} дн. назад"
+
+
+async def _load_direct_plan_preview_payments(
+    session: AsyncSession,
+    *,
+    account_ids: list[uuid.UUID],
+) -> tuple[dict[uuid.UUID, Payment], dict[uuid.UUID, Payment]]:
+    if not account_ids:
+        return {}, {}
+
+    result = await session.execute(
+        select(Payment)
+        .where(
+            Payment.account_id.in_(account_ids),
+            Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+        )
+        .order_by(Payment.account_id.asc(), Payment.created_at.desc(), Payment.id.desc())
+    )
+
+    latest_by_account: dict[uuid.UUID, Payment] = {}
+    latest_succeeded_by_account: dict[uuid.UUID, Payment] = {}
+    for payment in result.scalars().all():
+        latest_by_account.setdefault(payment.account_id, payment)
+        if payment.status == PaymentStatus.SUCCEEDED:
+            latest_succeeded_by_account.setdefault(payment.account_id, payment)
+
+    return latest_by_account, latest_succeeded_by_account
+
+
+async def _load_auth_emails_for_accounts(
+    session: AsyncSession,
+    *,
+    account_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, set[str]]:
+    if not account_ids:
+        return {}
+
+    result = await session.execute(
+        select(AuthAccount.account_id, AuthAccount.email)
+        .where(
+            AuthAccount.account_id.in_(account_ids),
+            AuthAccount.email.is_not(None),
+        )
+    )
+    emails_by_account: dict[uuid.UUID, set[str]] = {}
+    for account_id, email in result.all():
+        if email is None:
+            continue
+        normalized_email = email.strip().lower()
+        if not normalized_email:
+            continue
+        emails_by_account.setdefault(account_id, set()).add(normalized_email)
+    return emails_by_account
+
+
+async def _resolve_manual_list_accounts(
+    session: AsyncSession,
+    *,
+    audience: BroadcastAudienceConfig,
+) -> tuple[dict[uuid.UUID, Account], dict[uuid.UUID, set[str]], list[str], list[str], list[int]]:
+    accounts_by_id: dict[uuid.UUID, Account] = {}
+    matched_by_account: dict[uuid.UUID, set[str]] = {}
+
+    unresolved_account_ids: list[str] = []
+    if audience.manual_account_ids:
+        result = await session.execute(
+            select(Account).where(Account.id.in_(list(audience.manual_account_ids)))
+        )
+        resolved_account_ids: dict[uuid.UUID, Account] = {
+            account.id: account for account in result.scalars().all()
+        }
+        for account in resolved_account_ids.values():
+            accounts_by_id[account.id] = account
+            matched_by_account.setdefault(account.id, set()).add(f"account_id:{account.id}")
+        unresolved_account_ids = [
+            str(account_id)
+            for account_id in audience.manual_account_ids
+            if account_id not in resolved_account_ids
+        ]
+
+    unresolved_emails: list[str] = []
+    if audience.manual_emails:
+        resolved_by_email = await _resolve_accounts_by_emails(
+            session,
+            emails=list(audience.manual_emails),
+        )
+        for email, account in resolved_by_email.items():
+            accounts_by_id[account.id] = account
+            matched_by_account.setdefault(account.id, set()).add(f"email:{email}")
+        unresolved_emails = [
+            email for email in audience.manual_emails if email not in resolved_by_email
+        ]
+
+    unresolved_telegram_ids: list[int] = []
+    if audience.manual_telegram_ids:
+        resolved_by_telegram_id = await _resolve_accounts_by_telegram_ids(
+            session,
+            telegram_ids=list(audience.manual_telegram_ids),
+        )
+        for telegram_id, account in resolved_by_telegram_id.items():
+            accounts_by_id[account.id] = account
+            matched_by_account.setdefault(account.id, set()).add(f"telegram_id:{telegram_id}")
+        unresolved_telegram_ids = [
+            telegram_id
+            for telegram_id in audience.manual_telegram_ids
+            if telegram_id not in resolved_by_telegram_id
+        ]
+
+    return (
+        accounts_by_id,
+        matched_by_account,
+        unresolved_account_ids,
+        unresolved_emails,
+        unresolved_telegram_ids,
+    )
+
+
+async def _build_manual_list_preview_diagnostics(
+    session: AsyncSession,
+    *,
+    audience: BroadcastAudienceConfig,
+    final_accounts: int,
+) -> BroadcastAudienceManualListDiagnostics | None:
+    if audience.segment != BroadcastAudienceSegment.MANUAL_LIST:
+        return None
+
+    (
+        accounts_by_id,
+        matched_by_account,
+        unresolved_account_ids,
+        unresolved_emails,
+        unresolved_telegram_ids,
+    ) = await _resolve_manual_list_accounts(
+        session,
+        audience=audience,
+    )
+    final_account_ids = set(
+        (
+            await session.execute(
+                _build_base_audience_query(audience=audience)
+            )
+        ).scalars().all()
+    )
+
+    excluded_accounts: list[BroadcastAudienceManualListExcludedAccount] = []
+    for account_id, account in accounts_by_id.items():
+        if account_id in final_account_ids:
+            continue
+
+        reasons: list[str] = []
+        if audience.exclude_blocked and account.status == AccountStatus.BLOCKED:
+            reasons.append("blocked")
+        if (
+            account.status != AccountStatus.BLOCKED
+            and audience.cooldown_days is not None
+            and audience.cooldown_key is not None
+        ):
+            reasons.append("cooldown")
+        if not reasons:
+            reasons.append("excluded")
+
+        excluded_accounts.append(
+            BroadcastAudienceManualListExcludedAccount(
+                account=account,
+                matched_by=sorted(matched_by_account.get(account_id, set())),
+                reasons=reasons,
+            )
+        )
+
+    return BroadcastAudienceManualListDiagnostics(
+        requested_account_ids=len(audience.manual_account_ids),
+        requested_emails=len(audience.manual_emails),
+        requested_telegram_ids=len(audience.manual_telegram_ids),
+        matched_accounts=len(accounts_by_id),
+        final_accounts=final_accounts,
+        unresolved_account_ids=unresolved_account_ids,
+        unresolved_emails=unresolved_emails,
+        unresolved_telegram_ids=unresolved_telegram_ids,
+        excluded_accounts=excluded_accounts,
+    )
+
+
+def _build_broadcast_audience_match_reasons(
+    *,
+    account: Account,
+    audience: BroadcastAudienceConfig,
+    latest_direct_plan_payment: Payment | None,
+    latest_succeeded_direct_plan_payment: Payment | None,
+    auth_emails: set[str] | None,
+    now: datetime,
+) -> list[str]:
+    if audience.segment == BroadcastAudienceSegment.ALL:
+        return ["Входит в общий сегмент без дополнительных ограничений."]
+    if audience.segment == BroadcastAudienceSegment.ACTIVE:
+        return ["Аккаунт активен."]
+    if audience.segment == BroadcastAudienceSegment.WITH_TELEGRAM:
+        return ["Аккаунт привязан к Telegram."]
+    if audience.segment == BroadcastAudienceSegment.PAID:
+        if latest_succeeded_direct_plan_payment is not None:
+            return [
+                "Есть успешная покупка тарифа.",
+                f"Последняя успешная оплата: {_format_preview_relative_age(latest_succeeded_direct_plan_payment.created_at, now=now)}.",
+            ]
+        return ["Есть успешная оплата."]
+    if audience.segment == BroadcastAudienceSegment.MANUAL_LIST:
+        reasons = ["Аккаунт выбран вручную по списку."]
+        if account.id in audience.manual_account_ids:
+            reasons.append(f"Совпал account_id: {account.id}.")
+        matched_emails: list[str] = []
+        if account.email is not None:
+            normalized_account_email = account.email.strip().lower()
+            if normalized_account_email and normalized_account_email in audience.manual_emails:
+                matched_emails.append(normalized_account_email)
+        if auth_emails:
+            matched_emails.extend(
+                email for email in sorted(auth_emails) if email in audience.manual_emails
+            )
+        if matched_emails:
+            reasons.append(f"Совпал email: {', '.join(dict.fromkeys(matched_emails))}.")
+        if account.telegram_id is not None and int(account.telegram_id) in audience.manual_telegram_ids:
+            reasons.append(f"Совпал telegram_id: {account.telegram_id}.")
+        return reasons
+    if audience.segment == BroadcastAudienceSegment.INACTIVE_ACCOUNTS:
+        if account.last_seen_at is not None:
+            return [
+                f"Аккаунт не заходил {_format_preview_relative_age(account.last_seen_at, now=now)}.",
+                f"Порог неактивности: {audience.last_seen_older_than_days} дн.",
+            ]
+        return [
+            "Аккаунт еще ни разу не заходил.",
+            f"Порог неактивности: {audience.last_seen_older_than_days} дн.",
+        ]
+    if audience.segment == BroadcastAudienceSegment.INACTIVE_PAID_USERS:
+        reasons = ["Раньше уже была успешная покупка тарифа."]
+        if latest_succeeded_direct_plan_payment is not None:
+            reasons.append(
+                f"Последняя успешная оплата: {_format_preview_relative_age(latest_succeeded_direct_plan_payment.created_at, now=now)}."
+            )
+        if account.last_seen_at is not None:
+            reasons.append(f"Не заходил {_format_preview_relative_age(account.last_seen_at, now=now)}.")
+        else:
+            reasons.append("После регистрации еще ни разу не заходил.")
+        reasons.append(f"Порог неактивности: {audience.last_seen_older_than_days} дн.")
+        return reasons
+    if audience.segment == BroadcastAudienceSegment.EXPIRED:
+        if account.subscription_expires_at is not None:
+            return [
+                f"Подписка истекла {_format_preview_relative_age(account.subscription_expires_at, now=now)}."
+            ]
+        return ["Подписка уже истекла."]
+    if audience.segment == BroadcastAudienceSegment.ABANDONED_CHECKOUT:
+        if latest_direct_plan_payment is not None:
+            return [
+                "Последняя попытка покупки тарифа не завершена.",
+                f"Платеж создан {_format_preview_relative_age(latest_direct_plan_payment.created_at, now=now)}.",
+            ]
+        return ["Есть незавершенная покупка тарифа."]
+    if audience.segment == BroadcastAudienceSegment.FAILED_PAYMENT:
+        if latest_direct_plan_payment is not None:
+            return [
+                "Последняя попытка покупки тарифа завершилась неуспешно.",
+                f"Платеж создан {_format_preview_relative_age(latest_direct_plan_payment.created_at, now=now)}.",
+            ]
+        return ["Есть неуспешная покупка тарифа."]
+    if audience.segment == BroadcastAudienceSegment.TRIAL_ENDED_NO_CONVERSION:
+        if account.trial_ends_at is not None:
+            return [
+                f"Trial завершился {_format_preview_relative_age(account.trial_ends_at, now=now)}.",
+                "После trial нет успешной покупки тарифа.",
+            ]
+        return ["Trial завершился без конверсии в оплату."]
+    if audience.segment == BroadcastAudienceSegment.PAID_BEFORE_NOT_ACTIVE_NOW:
+        reasons = ["Раньше уже была успешная покупка тарифа."]
+        if latest_succeeded_direct_plan_payment is not None:
+            reasons.append(
+                f"Последняя успешная оплата: {_format_preview_relative_age(latest_succeeded_direct_plan_payment.created_at, now=now)}."
+            )
+        if account.subscription_expires_at is not None:
+            reasons.append(
+                f"Текущая подписка не активна с {_format_preview_relative_age(account.subscription_expires_at, now=now)}."
+            )
+        else:
+            reasons.append("Сейчас активной подписки нет.")
+        return reasons
+    return ["Аккаунт соответствует условиям сегмента."]
+
+
+def _build_broadcast_audience_delivery_preview(
+    *,
+    account: Account,
+    channels: list[str],
+    audience: BroadcastAudienceConfig,
+) -> tuple[list[BroadcastChannel], list[str]]:
+    delivery_channels: list[BroadcastChannel] = []
+    delivery_notes: list[str] = []
+
+    if BroadcastChannel.IN_APP.value in channels:
+        delivery_channels.append(BroadcastChannel.IN_APP)
+
+    if BroadcastChannel.TELEGRAM.value in channels:
+        if account.telegram_id is None:
+            delivery_notes.append("Telegram недоступен: аккаунт не привязан к Telegram.")
+        elif account.telegram_bot_blocked_at is not None:
+            delivery_notes.append("Telegram недоступен: бот заблокирован пользователем.")
+        else:
+            delivery_channels.append(BroadcastChannel.TELEGRAM)
+            quiet_until = _resolve_telegram_quiet_hours_release_at(
+                audience=audience,
+                now_moscow=_now_moscow(),
+            )
+            if quiet_until is not None:
+                delivery_notes.append(
+                    f"Telegram сейчас в quiet hours до {quiet_until.astimezone(BROADCAST_TZ).strftime('%H:%M')}."
+                )
+
+    if not delivery_channels:
+        delivery_notes.append("По выбранным каналам у этого аккаунта не будет доставки.")
+
+    return delivery_channels, delivery_notes
+
+
+def _resolve_telegram_quiet_hours_release_at(
+    *,
+    audience: BroadcastAudienceConfig,
+    now_moscow: datetime,
+) -> datetime | None:
+    if audience.telegram_quiet_hours_start is None or audience.telegram_quiet_hours_end is None:
+        return None
+
+    start_time = _parse_hhmm_time(audience.telegram_quiet_hours_start)
+    end_time = _parse_hhmm_time(audience.telegram_quiet_hours_end)
+    current_time = now_moscow.timetz().replace(tzinfo=None)
+
+    if start_time < end_time:
+        if not (start_time <= current_time < end_time):
+            return None
+        release_date = now_moscow.date()
+    else:
+        if not (current_time >= start_time or current_time < end_time):
+            return None
+        release_date = (
+            now_moscow.date() + timedelta(days=1)
+            if current_time >= start_time
+            else now_moscow.date()
+        )
+
+    release_at = datetime.combine(release_date, end_time, tzinfo=BROADCAST_TZ)
+    if release_at <= now_moscow:
+        release_at += timedelta(days=1)
+    return release_at.astimezone(UTC)
+
+
+def _build_manual_list_account_predicate(
+    *,
+    audience: BroadcastAudienceConfig,
+):
+    conditions = []
+    if audience.manual_account_ids:
+        conditions.append(Account.id.in_(list(audience.manual_account_ids)))
+    if audience.manual_emails:
+        conditions.append(func.lower(func.coalesce(Account.email, "")).in_(list(audience.manual_emails)))
+        conditions.append(
+            exists(
+                select(AuthAccount.id).where(
+                    AuthAccount.account_id == Account.id,
+                    func.lower(func.coalesce(AuthAccount.email, "")).in_(list(audience.manual_emails)),
+                )
+            )
+        )
+    if audience.manual_telegram_ids:
+        conditions.append(Account.telegram_id.in_(list(audience.manual_telegram_ids)))
+    if not conditions:
+        raise BroadcastValidationError(
+            "manual_list audience requires at least one account_id, email or telegram_id"
+        )
+    return or_(*conditions)
+
+
+def _build_inactive_last_seen_predicate(
+    *,
+    audience: BroadcastAudienceConfig,
+    now: datetime,
+):
+    cutoff = now - timedelta(days=audience.last_seen_older_than_days or 0)
+    conditions = [Account.last_seen_at <= cutoff]
+    if audience.include_never_seen:
+        conditions.append(Account.last_seen_at.is_(None))
+    return or_(*conditions)
 
 
 def _build_base_audience_query(
     *,
-    segment: BroadcastAudienceSegment,
-    exclude_blocked: bool,
+    audience: BroadcastAudienceConfig,
 ) -> Select[tuple[Account.id]]:
     now = datetime.now(UTC)
     query = select(Account.id)
 
-    if exclude_blocked:
+    if audience.exclude_blocked:
         query = query.where(Account.status != AccountStatus.BLOCKED)
 
-    if segment == BroadcastAudienceSegment.ACTIVE:
+    if audience.segment == BroadcastAudienceSegment.ACTIVE:
         query = query.where(Account.status == AccountStatus.ACTIVE)
-    elif segment == BroadcastAudienceSegment.WITH_TELEGRAM:
+    elif audience.segment == BroadcastAudienceSegment.WITH_TELEGRAM:
         query = query.where(Account.telegram_id.is_not(None))
-    elif segment == BroadcastAudienceSegment.PAID:
+    elif audience.segment == BroadcastAudienceSegment.PAID:
         query = query.where(
             exists(
                 select(Payment.id).where(
@@ -482,10 +1271,106 @@ def _build_base_audience_query(
                 )
             )
         )
-    elif segment == BroadcastAudienceSegment.EXPIRED:
+    elif audience.segment == BroadcastAudienceSegment.MANUAL_LIST:
+        query = query.where(_build_manual_list_account_predicate(audience=audience))
+    elif audience.segment == BroadcastAudienceSegment.INACTIVE_ACCOUNTS:
+        query = query.where(_build_inactive_last_seen_predicate(audience=audience, now=now))
+    elif audience.segment == BroadcastAudienceSegment.INACTIVE_PAID_USERS:
+        query = query.where(
+            _build_inactive_last_seen_predicate(audience=audience, now=now),
+            exists(
+                select(Payment.id).where(
+                    Payment.account_id == Account.id,
+                    Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    Payment.status == PaymentStatus.SUCCEEDED,
+                )
+            ),
+        )
+    elif audience.segment == BroadcastAudienceSegment.EXPIRED:
         query = query.where(
             Account.subscription_expires_at.is_not(None),
             Account.subscription_expires_at <= now,
+        )
+        if audience.subscription_expired_from_days is not None:
+            query = query.where(
+                Account.subscription_expires_at <= now - timedelta(days=audience.subscription_expired_from_days)
+            )
+        if audience.subscription_expired_to_days is not None:
+            query = query.where(
+                Account.subscription_expires_at >= now - timedelta(days=audience.subscription_expired_to_days)
+            )
+    elif audience.segment == BroadcastAudienceSegment.ABANDONED_CHECKOUT:
+        latest_pending_payment = aliased(Payment)
+        query = query.where(
+            exists(
+                select(latest_pending_payment.id).where(
+                    latest_pending_payment.id == _latest_direct_plan_payment_id_subquery(),
+                    latest_pending_payment.status.in_(DIRECT_PLAN_PENDING_STATUSES),
+                    latest_pending_payment.created_at
+                    <= now - timedelta(minutes=audience.pending_payment_older_than_minutes or 0),
+                    latest_pending_payment.created_at
+                    >= now - timedelta(days=audience.pending_payment_within_last_days or 0),
+                )
+            )
+        )
+    elif audience.segment == BroadcastAudienceSegment.FAILED_PAYMENT:
+        latest_failed_payment = aliased(Payment)
+        query = query.where(
+            exists(
+                select(latest_failed_payment.id).where(
+                    latest_failed_payment.id == _latest_direct_plan_payment_id_subquery(),
+                    latest_failed_payment.status.in_(DIRECT_PLAN_FAILED_STATUSES),
+                    latest_failed_payment.created_at
+                    >= now - timedelta(days=audience.failed_payment_within_last_days or 0),
+                )
+            )
+        )
+    elif audience.segment == BroadcastAudienceSegment.TRIAL_ENDED_NO_CONVERSION:
+        query = query.where(
+            Account.trial_used_at.is_not(None),
+            Account.trial_ends_at.is_not(None),
+            Account.trial_ends_at <= now,
+            or_(
+                Account.subscription_expires_at.is_(None),
+                Account.subscription_expires_at <= now,
+            ),
+            ~exists(
+                select(Payment.id).where(
+                    Payment.account_id == Account.id,
+                    Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    Payment.status == PaymentStatus.SUCCEEDED,
+                )
+            ),
+        )
+    elif audience.segment == BroadcastAudienceSegment.PAID_BEFORE_NOT_ACTIVE_NOW:
+        query = query.where(
+            exists(
+                select(Payment.id).where(
+                    Payment.account_id == Account.id,
+                    Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    Payment.status == PaymentStatus.SUCCEEDED,
+                )
+            ),
+            or_(
+                Account.subscription_expires_at.is_(None),
+                Account.subscription_expires_at <= now,
+            ),
+        )
+
+    if audience.cooldown_days is not None and audience.cooldown_key is not None:
+        cooldown_cutoff = now - timedelta(days=audience.cooldown_days)
+        query = query.where(
+            ~exists(
+                select(BroadcastDelivery.id)
+                .join(Broadcast, Broadcast.id == BroadcastDelivery.broadcast_id)
+                .where(
+                    BroadcastDelivery.account_id == Account.id,
+                    BroadcastDelivery.status == BroadcastDeliveryStatus.DELIVERED,
+                    BroadcastDelivery.delivered_at.is_not(None),
+                    BroadcastDelivery.delivered_at >= cooldown_cutoff,
+                    Broadcast.audience["cooldown_key"].as_string() == audience.cooldown_key,
+                )
+            )
         )
 
     return query
@@ -494,14 +1379,15 @@ def _build_base_audience_query(
 async def estimate_broadcast_audience(
     session: AsyncSession,
     *,
-    segment: BroadcastAudienceSegment,
-    exclude_blocked: bool,
+    audience: BroadcastAudienceConfig | dict[str, object],
     channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
 ) -> BroadcastAudienceEstimate:
+    audience_config = (
+        audience if isinstance(audience, BroadcastAudienceConfig) else normalize_broadcast_audience_config(audience=audience)
+    )
     channel_values = normalize_broadcast_channels(channels)
     base_query = _build_base_audience_query(
-        segment=segment,
-        exclude_blocked=exclude_blocked,
+        audience=audience_config,
     ).subquery()
 
     total_accounts = int(
@@ -533,19 +1419,90 @@ async def estimate_broadcast_audience(
 async def _resolve_audience_accounts(
     session: AsyncSession,
     *,
-    segment: BroadcastAudienceSegment,
-    exclude_blocked: bool,
+    audience: BroadcastAudienceConfig,
+    limit: int | None = None,
 ) -> list[Account]:
     base_query = _build_base_audience_query(
-        segment=segment,
-        exclude_blocked=exclude_blocked,
+        audience=audience,
     ).subquery()
-    result = await session.execute(
+    query = (
         select(Account)
         .join(base_query, Account.id == base_query.c.id)
         .order_by(Account.created_at.asc(), Account.id.asc())
     )
+    if limit is not None:
+        query = query.limit(limit)
+    result = await session.execute(query)
     return list(result.scalars().all())
+
+
+async def preview_broadcast_audience(
+    session: AsyncSession,
+    *,
+    audience: BroadcastAudienceConfig | dict[str, object],
+    channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
+    limit: int,
+) -> BroadcastAudiencePreview:
+    audience_config = (
+        audience if isinstance(audience, BroadcastAudienceConfig) else normalize_broadcast_audience_config(audience=audience)
+    )
+    normalized_channels = normalize_broadcast_channels(channels)
+    base_query = _build_base_audience_query(
+        audience=audience_config,
+    ).subquery()
+    total_accounts = int(
+        await session.scalar(select(func.count()).select_from(base_query)) or 0
+    )
+    manual_list_diagnostics = await _build_manual_list_preview_diagnostics(
+        session,
+        audience=audience_config,
+        final_accounts=total_accounts,
+    )
+    accounts = await _resolve_audience_accounts(
+        session,
+        audience=audience_config,
+        limit=limit,
+    )
+    latest_payments_by_account, latest_succeeded_payments_by_account = await _load_direct_plan_preview_payments(
+        session,
+        account_ids=[account.id for account in accounts],
+    )
+    auth_emails_by_account = await _load_auth_emails_for_accounts(
+        session,
+        account_ids=[account.id for account in accounts],
+    )
+    now = datetime.now(UTC)
+
+    items: list[BroadcastAudiencePreviewItem] = []
+    for account in accounts:
+        delivery_channels, delivery_notes = _build_broadcast_audience_delivery_preview(
+            account=account,
+            channels=normalized_channels,
+            audience=audience_config,
+        )
+        items.append(
+            BroadcastAudiencePreviewItem(
+                account=account,
+                match_reasons=_build_broadcast_audience_match_reasons(
+                    account=account,
+                    audience=audience_config,
+                    latest_direct_plan_payment=latest_payments_by_account.get(account.id),
+                    latest_succeeded_direct_plan_payment=latest_succeeded_payments_by_account.get(account.id),
+                    auth_emails=auth_emails_by_account.get(account.id),
+                    now=now,
+                ),
+                delivery_channels=delivery_channels,
+                delivery_notes=delivery_notes,
+            )
+        )
+
+    return BroadcastAudiencePreview(
+        total_accounts=total_accounts,
+        limit=limit,
+        has_more=total_accounts > len(items),
+        items=items,
+        manual_list_diagnostics=manual_list_diagnostics,
+    )
 
 
 async def _get_latest_broadcast_run(
@@ -625,6 +1582,131 @@ async def list_broadcasts(
     return list(result.scalars().all()), total
 
 
+async def list_broadcast_audience_presets(
+    session: AsyncSession,
+    *,
+    limit: int,
+    offset: int,
+) -> tuple[list[BroadcastAudiencePreset], int]:
+    total = int(
+        await session.scalar(select(func.count()).select_from(BroadcastAudiencePreset)) or 0
+    )
+    result = await session.execute(
+        select(BroadcastAudiencePreset)
+        .order_by(BroadcastAudiencePreset.updated_at.desc(), BroadcastAudiencePreset.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(result.scalars().all()), total
+
+
+async def get_broadcast_audience_preset(
+    session: AsyncSession,
+    *,
+    preset_id: int,
+) -> BroadcastAudiencePreset | None:
+    return await session.get(BroadcastAudiencePreset, preset_id)
+
+
+async def create_broadcast_audience_preset(
+    session: AsyncSession,
+    *,
+    admin_id: uuid.UUID,
+    name: str,
+    description: str | None,
+    audience: dict[str, object] | None,
+) -> BroadcastAudiencePreset:
+    normalized_name = _normalize_broadcast_audience_preset_name(name)
+    normalized_description = _normalize_broadcast_audience_preset_description(description)
+    audience_config = normalize_broadcast_audience_config(audience=audience)
+
+    preset = BroadcastAudiencePreset(
+        name=normalized_name,
+        description=normalized_description,
+        audience=build_broadcast_audience_payload(audience=audience_config),
+        created_by_admin_id=admin_id,
+        updated_by_admin_id=admin_id,
+    )
+    session.add(preset)
+    await session.flush()
+
+    session.add(
+        AdminActionLog(
+            admin_id=admin_id,
+            action_type=AdminActionType.BROADCAST_AUDIENCE_PRESET_UPSERT,
+            payload={
+                "preset_id": preset.id,
+                "operation": "create",
+                "audience": preset.audience,
+            },
+        )
+    )
+    await session.flush()
+    return preset
+
+
+async def update_broadcast_audience_preset(
+    session: AsyncSession,
+    *,
+    preset_id: int,
+    admin_id: uuid.UUID,
+    name: str,
+    description: str | None,
+    audience: dict[str, object] | None,
+) -> BroadcastAudiencePreset:
+    preset = await session.get(BroadcastAudiencePreset, preset_id)
+    if preset is None:
+        raise BroadcastAudiencePresetNotFoundError(f"broadcast audience preset not found: {preset_id}")
+
+    normalized_name = _normalize_broadcast_audience_preset_name(name)
+    normalized_description = _normalize_broadcast_audience_preset_description(description)
+    audience_config = normalize_broadcast_audience_config(audience=audience)
+
+    preset.name = normalized_name
+    preset.description = normalized_description
+    preset.audience = build_broadcast_audience_payload(audience=audience_config)
+    preset.updated_by_admin_id = admin_id
+    await session.flush()
+
+    session.add(
+        AdminActionLog(
+            admin_id=admin_id,
+            action_type=AdminActionType.BROADCAST_AUDIENCE_PRESET_UPSERT,
+            payload={
+                "preset_id": preset.id,
+                "operation": "update",
+                "audience": preset.audience,
+            },
+        )
+    )
+    await session.flush()
+    return preset
+
+
+async def delete_broadcast_audience_preset(
+    session: AsyncSession,
+    *,
+    preset_id: int,
+    admin_id: uuid.UUID,
+) -> None:
+    preset = await session.get(BroadcastAudiencePreset, preset_id)
+    if preset is None:
+        raise BroadcastAudiencePresetNotFoundError(f"broadcast audience preset not found: {preset_id}")
+
+    session.add(
+        AdminActionLog(
+            admin_id=admin_id,
+            action_type=AdminActionType.BROADCAST_AUDIENCE_PRESET_DELETE,
+            payload={
+                "preset_id": preset.id,
+                "name": preset.name,
+            },
+        )
+    )
+    await session.flush()
+    await session.delete(preset)
+
+
 async def get_broadcast(
     session: AsyncSession,
     *,
@@ -644,8 +1726,7 @@ async def create_broadcast_draft(
     image_url: str | None,
     channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
     buttons: list[dict[str, str]],
-    audience_segment: BroadcastAudienceSegment,
-    audience_exclude_blocked: bool,
+    audience: dict[str, object] | None,
 ) -> Broadcast:
     normalized_name = _normalize_required_text(name, field_name="name")
     normalized_title = _normalize_required_text(title, field_name="title")
@@ -653,6 +1734,7 @@ async def create_broadcast_draft(
     normalized_channels = normalize_broadcast_channels(channels)
     normalized_buttons = normalize_broadcast_buttons(buttons)
     normalized_image_url = _normalize_optional_text(image_url)
+    audience_config = normalize_broadcast_audience_config(audience=audience)
 
     if content_type == BroadcastContentType.PHOTO and normalized_image_url is None:
         raise BroadcastValidationError("image_url is required for photo broadcast")
@@ -661,8 +1743,7 @@ async def create_broadcast_draft(
 
     estimate = await estimate_broadcast_audience(
         session,
-        segment=audience_segment,
-        exclude_blocked=audience_exclude_blocked,
+        audience=audience_config,
         channels=channels,
     )
 
@@ -674,10 +1755,7 @@ async def create_broadcast_draft(
         image_url=normalized_image_url,
         channels=normalized_channels,
         buttons=normalized_buttons,
-        audience=build_broadcast_audience_payload(
-            segment=audience_segment,
-            exclude_blocked=audience_exclude_blocked,
-        ),
+        audience=build_broadcast_audience_payload(audience=audience_config),
         status=BroadcastStatus.DRAFT,
         estimated_total_accounts=estimate.total_accounts,
         estimated_in_app_recipients=estimate.in_app_recipients,
@@ -718,8 +1796,7 @@ async def update_broadcast_draft(
     image_url: str | None,
     channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
     buttons: list[dict[str, str]],
-    audience_segment: BroadcastAudienceSegment,
-    audience_exclude_blocked: bool,
+    audience: dict[str, object] | None,
 ) -> Broadcast:
     broadcast = await session.get(Broadcast, broadcast_id)
     if broadcast is None:
@@ -733,6 +1810,7 @@ async def update_broadcast_draft(
     normalized_channels = normalize_broadcast_channels(channels)
     normalized_buttons = normalize_broadcast_buttons(buttons)
     normalized_image_url = _normalize_optional_text(image_url)
+    audience_config = normalize_broadcast_audience_config(audience=audience)
 
     if content_type == BroadcastContentType.PHOTO and normalized_image_url is None:
         raise BroadcastValidationError("image_url is required for photo broadcast")
@@ -741,8 +1819,7 @@ async def update_broadcast_draft(
 
     estimate = await estimate_broadcast_audience(
         session,
-        segment=audience_segment,
-        exclude_blocked=audience_exclude_blocked,
+        audience=audience_config,
         channels=channels,
     )
 
@@ -753,10 +1830,7 @@ async def update_broadcast_draft(
     broadcast.image_url = normalized_image_url
     broadcast.channels = normalized_channels
     broadcast.buttons = normalized_buttons
-    broadcast.audience = build_broadcast_audience_payload(
-        segment=audience_segment,
-        exclude_blocked=audience_exclude_blocked,
-    )
+    broadcast.audience = build_broadcast_audience_payload(audience=audience_config)
     broadcast.estimated_total_accounts = estimate.total_accounts
     broadcast.estimated_in_app_recipients = estimate.in_app_recipients
     broadcast.estimated_telegram_recipients = estimate.telegram_recipients
@@ -845,11 +1919,10 @@ async def _create_runtime_run(
     if active_run is not None:
         raise BroadcastConflictError("broadcast already has an active run")
 
-    segment, exclude_blocked = _get_broadcast_audience_config(broadcast)
+    audience_config = _get_broadcast_audience_config(broadcast)
     accounts = await _resolve_audience_accounts(
         session,
-        segment=segment,
-        exclude_blocked=exclude_blocked,
+        audience=audience_config,
     )
     channels = normalize_broadcast_channels(broadcast.channels)
     telegram_targets = [
@@ -1357,6 +2430,19 @@ async def _mark_broadcast_delivery_failed(
     return False
 
 
+def _defer_broadcast_delivery_for_quiet_hours(
+    *,
+    delivery: BroadcastDelivery,
+    quiet_until: datetime,
+) -> None:
+    delivery.status = BroadcastDeliveryStatus.PENDING
+    delivery.next_retry_at = quiet_until
+    delivery.error_code = "quiet_hours"
+    delivery.error_message = (
+        f"telegram delivery deferred until {quiet_until.astimezone(BROADCAST_TZ).strftime('%Y-%m-%d %H:%M %Z')}"
+    )
+
+
 async def process_pending_broadcast_deliveries(
     session: AsyncSession,
     *,
@@ -1386,6 +2472,7 @@ async def process_pending_broadcast_deliveries(
     )
 
     runs_to_sync: dict[int, BroadcastRun] = {}
+    audience_config_by_broadcast_id: dict[int, BroadcastAudienceConfig] = {}
     for delivery, run, broadcast, account in deliveries_result.all():
         result.processed += 1
         runs_to_sync[run.id] = run
@@ -1448,6 +2535,22 @@ async def process_pending_broadcast_deliveries(
             delivery.error_message = "account previously blocked the Telegram bot"
             delivery.next_retry_at = None
             result.skipped += 1
+            continue
+
+        audience_config = audience_config_by_broadcast_id.get(broadcast.id)
+        if audience_config is None:
+            audience_config = _get_broadcast_audience_config(broadcast)
+            audience_config_by_broadcast_id[broadcast.id] = audience_config
+        quiet_until = _resolve_telegram_quiet_hours_release_at(
+            audience=audience_config,
+            now_moscow=_now_moscow(),
+        )
+        if quiet_until is not None:
+            _defer_broadcast_delivery_for_quiet_hours(
+                delivery=delivery,
+                quiet_until=quiet_until,
+            )
+            result.scheduled_retry += 1
             continue
 
         try:

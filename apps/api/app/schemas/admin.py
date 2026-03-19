@@ -17,6 +17,12 @@ from app.db.models.broadcast import (
     BroadcastStatus,
 )
 from app.db.models.ledger import LedgerEntryType
+from app.db.models.promo import (
+    PromoCampaignStatus,
+    PromoEffectType,
+    PromoRedemptionContext,
+    PromoRedemptionStatus,
+)
 from app.db.models.withdrawal import WithdrawalDestinationType, WithdrawalStatus
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.services.broadcasts import BroadcastValidationError, validate_telegram_html_subset
@@ -274,6 +280,216 @@ class AdminSubscriptionGrantResponse(BaseModel):
     subscription_url: str | None = None
 
 
+class AdminPromoCampaignCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    status: PromoCampaignStatus = PromoCampaignStatus.DRAFT
+    effect_type: PromoEffectType
+    effect_value: int
+    currency: str = Field(default="RUB", min_length=1, max_length=8)
+    plan_codes: list[str] | None = None
+    first_purchase_only: bool = False
+    requires_active_subscription: bool = False
+    requires_no_active_subscription: bool = False
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    total_redemptions_limit: int | None = Field(default=None, ge=1)
+    per_account_redemptions_limit: int | None = Field(default=None, ge=1)
+
+    @field_validator("name", "currency")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
+
+    @field_validator("description")
+    @classmethod
+    def validate_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("plan_codes")
+    @classmethod
+    def validate_plan_codes(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+
+        normalized: list[str] = []
+        for item in value:
+            code = item.strip()
+            if not code:
+                raise ValueError("plan codes must not contain blank values")
+            if code not in normalized:
+                normalized.append(code)
+        return normalized or None
+
+    @model_validator(mode="after")
+    def validate_window(self) -> "AdminPromoCampaignCreateRequest":
+        if self.starts_at is not None and self.ends_at is not None and self.ends_at <= self.starts_at:
+            raise ValueError("ends_at must be later than starts_at")
+        return self
+
+
+class AdminPromoCampaignResponse(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    status: PromoCampaignStatus
+    effect_type: PromoEffectType
+    effect_value: int
+    currency: str
+    plan_codes: list[str] | None = None
+    first_purchase_only: bool
+    requires_active_subscription: bool
+    requires_no_active_subscription: bool
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    total_redemptions_limit: int | None = None
+    per_account_redemptions_limit: int | None = None
+    created_by_admin_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+    codes_count: int = 0
+    redemptions_count: int = 0
+
+
+class AdminPromoCampaignListResponse(BaseModel):
+    items: list[AdminPromoCampaignResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class AdminPromoCampaignUpdateRequest(AdminPromoCampaignCreateRequest):
+    pass
+
+
+class AdminPromoCodeCreateRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    max_redemptions: int | None = Field(default=None, ge=1)
+    assigned_account_id: UUID | None = None
+    is_active: bool = True
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("code must not be blank")
+        return value.strip()
+
+
+class AdminPromoCodeResponse(BaseModel):
+    id: int
+    campaign_id: int
+    code: str
+    is_active: bool
+    assigned_account_id: UUID | None = None
+    max_redemptions: int | None = None
+    created_by_admin_id: UUID | None = None
+    created_at: datetime
+    redemptions_count: int = 0
+
+
+class AdminPromoCodeListResponse(BaseModel):
+    items: list[AdminPromoCodeResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class AdminPromoCodeUpdateRequest(BaseModel):
+    max_redemptions: int | None = Field(default=None, ge=1)
+    assigned_account_id: UUID | None = None
+    is_active: bool = True
+
+
+class AdminPromoCodeBatchCreateRequest(BaseModel):
+    quantity: int = Field(..., ge=1, le=500)
+    prefix: str | None = Field(default=None, max_length=32)
+    suffix_length: int = Field(default=8, ge=4, le=24)
+    max_redemptions: int | None = Field(default=None, ge=1)
+    assigned_account_id: UUID | None = None
+    is_active: bool = True
+
+    @field_validator("prefix")
+    @classmethod
+    def validate_prefix(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class AdminPromoCodeBatchCreateResponse(BaseModel):
+    items: list["AdminPromoCodeResponse"]
+    created_count: int
+
+
+class AdminPromoCodeImportRequest(BaseModel):
+    codes_text: str = Field(..., min_length=1, max_length=50000)
+    max_redemptions: int | None = Field(default=None, ge=1)
+    assigned_account_id: UUID | None = None
+    is_active: bool = True
+    skip_duplicates: bool = True
+
+    @field_validator("codes_text")
+    @classmethod
+    def validate_codes_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("codes_text must not be blank")
+        return normalized
+
+
+class AdminPromoCodeImportResponse(BaseModel):
+    items: list["AdminPromoCodeResponse"]
+    created_count: int
+    skipped_count: int
+    skipped_codes: list[str]
+
+
+class AdminPromoCodeExportResponse(BaseModel):
+    items: list["AdminPromoCodeResponse"]
+    exported_count: int
+
+
+class AdminPromoRedemptionResponse(BaseModel):
+    id: int
+    campaign_id: int
+    promo_code_id: int
+    promo_code: str
+    account_id: UUID
+    status: PromoRedemptionStatus
+    redemption_context: PromoRedemptionContext
+    plan_code: str | None = None
+    effect_type: PromoEffectType
+    effect_value: int
+    currency: str
+    original_amount: int | None = None
+    discount_amount: int | None = None
+    final_amount: int | None = None
+    granted_duration_days: int | None = None
+    balance_credit_amount: int | None = None
+    payment_id: int | None = None
+    subscription_grant_id: int | None = None
+    ledger_entry_id: int | None = None
+    reference_type: str | None = None
+    reference_id: str | None = None
+    failure_reason: str | None = None
+    created_at: datetime
+    applied_at: datetime | None = None
+
+
+class AdminPromoRedemptionListResponse(BaseModel):
+    items: list[AdminPromoRedemptionResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class AdminAccountStatusChangeRequest(BaseModel):
     status: AccountStatus
     comment: str = Field(..., min_length=1, max_length=500)
@@ -363,11 +579,96 @@ class AdminBroadcastButtonResponse(BaseModel):
 class AdminBroadcastAudienceRequest(BaseModel):
     segment: BroadcastAudienceSegment = BroadcastAudienceSegment.ALL
     exclude_blocked: bool = True
+    manual_account_ids: list[UUID] = Field(default_factory=list)
+    manual_emails: list[str] = Field(default_factory=list)
+    manual_telegram_ids: list[int] = Field(default_factory=list)
+    last_seen_older_than_days: int | None = Field(default=None, ge=1)
+    include_never_seen: bool = False
+    pending_payment_older_than_minutes: int | None = Field(default=None, ge=1)
+    pending_payment_within_last_days: int | None = Field(default=None, ge=1)
+    failed_payment_within_last_days: int | None = Field(default=None, ge=1)
+    subscription_expired_from_days: int | None = Field(default=None, ge=0)
+    subscription_expired_to_days: int | None = Field(default=None, ge=0)
+    cooldown_days: int | None = Field(default=None, ge=1)
+    cooldown_key: str | None = Field(default=None, min_length=1, max_length=64)
+    telegram_quiet_hours_start: str | None = Field(default=None, min_length=1, max_length=5)
+    telegram_quiet_hours_end: str | None = Field(default=None, min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def validate_windows(self) -> "AdminBroadcastAudienceRequest":
+        self.manual_account_ids = list(dict.fromkeys(self.manual_account_ids))
+        normalized_manual_emails: list[str] = []
+        seen_emails: set[str] = set()
+        for item in self.manual_emails:
+            normalized = item.strip().lower()
+            if not normalized or normalized in seen_emails:
+                continue
+            seen_emails.add(normalized)
+            normalized_manual_emails.append(normalized)
+        self.manual_emails = normalized_manual_emails
+        self.manual_telegram_ids = list(dict.fromkeys(int(item) for item in self.manual_telegram_ids))
+
+        if (
+            self.subscription_expired_from_days is not None
+            and self.subscription_expired_to_days is not None
+            and self.subscription_expired_from_days > self.subscription_expired_to_days
+        ):
+            raise ValueError(
+                "subscription_expired_from_days must be <= subscription_expired_to_days"
+            )
+        if (self.cooldown_days is None) != (self.cooldown_key is None):
+            raise ValueError("cooldown_days and cooldown_key must be provided together")
+        if self.cooldown_key is not None:
+            self.cooldown_key = self.cooldown_key.strip().lower()
+        if (self.telegram_quiet_hours_start is None) != (self.telegram_quiet_hours_end is None):
+            raise ValueError(
+                "telegram_quiet_hours_start and telegram_quiet_hours_end must be provided together"
+            )
+        if self.telegram_quiet_hours_start is not None:
+            self.telegram_quiet_hours_start = self.telegram_quiet_hours_start.strip()
+        if self.telegram_quiet_hours_end is not None:
+            self.telegram_quiet_hours_end = self.telegram_quiet_hours_end.strip()
+        if (
+            self.telegram_quiet_hours_start is not None
+            and self.telegram_quiet_hours_end is not None
+            and self.telegram_quiet_hours_start == self.telegram_quiet_hours_end
+        ):
+            raise ValueError("telegram quiet hours start and end must differ")
+        if (
+            self.segment == BroadcastAudienceSegment.MANUAL_LIST
+            and not self.manual_account_ids
+            and not self.manual_emails
+            and not self.manual_telegram_ids
+        ):
+            raise ValueError("manual_list audience requires at least one account_id, email or telegram_id")
+        if (
+            self.segment in {
+                BroadcastAudienceSegment.INACTIVE_ACCOUNTS,
+                BroadcastAudienceSegment.INACTIVE_PAID_USERS,
+            }
+            and self.last_seen_older_than_days is None
+        ):
+            self.last_seen_older_than_days = 7
+        return self
 
 
 class AdminBroadcastAudienceResponse(BaseModel):
     segment: BroadcastAudienceSegment
     exclude_blocked: bool
+    manual_account_ids: list[UUID] = Field(default_factory=list)
+    manual_emails: list[str] = Field(default_factory=list)
+    manual_telegram_ids: list[int] = Field(default_factory=list)
+    last_seen_older_than_days: int | None = None
+    include_never_seen: bool = False
+    pending_payment_older_than_minutes: int | None = None
+    pending_payment_within_last_days: int | None = None
+    failed_payment_within_last_days: int | None = None
+    subscription_expired_from_days: int | None = None
+    subscription_expired_to_days: int | None = None
+    cooldown_days: int | None = None
+    cooldown_key: str | None = None
+    telegram_quiet_hours_start: str | None = None
+    telegram_quiet_hours_end: str | None = None
 
 
 class AdminBroadcastEstimateRequest(BaseModel):
@@ -393,6 +694,120 @@ class AdminBroadcastEstimateResponse(BaseModel):
     estimated_total_accounts: int
     estimated_in_app_recipients: int
     estimated_telegram_recipients: int
+
+
+class AdminBroadcastAudiencePreviewRequest(BaseModel):
+    channels: list[BroadcastChannel] = Field(default_factory=lambda: [BroadcastChannel.IN_APP])
+    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+    limit: int = Field(default=10, ge=1, le=50)
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value: list[BroadcastChannel]) -> list[BroadcastChannel]:
+        if not value:
+            raise ValueError("at least one channel is required")
+
+        unique_channels: list[BroadcastChannel] = []
+        for channel in value:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+        return unique_channels
+
+
+class AdminBroadcastAudiencePreviewItemResponse(BaseModel):
+    account_id: UUID
+    email: str | None = None
+    display_name: str | None = None
+    username: str | None = None
+    telegram_id: int | None = None
+    account_status: AccountStatus
+    last_seen_at: datetime | None = None
+    subscription_expires_at: datetime | None = None
+    trial_ends_at: datetime | None = None
+    delivery_channels: list[BroadcastChannel]
+    delivery_notes: list[str]
+    match_reasons: list[str]
+
+
+class AdminBroadcastAudienceManualListExcludedAccountResponse(BaseModel):
+    account_id: UUID
+    email: str | None = None
+    display_name: str | None = None
+    username: str | None = None
+    telegram_id: int | None = None
+    account_status: AccountStatus
+    matched_by: list[str]
+    reasons: list[str]
+
+
+class AdminBroadcastAudienceManualListDiagnosticsResponse(BaseModel):
+    requested_account_ids: int
+    requested_emails: int
+    requested_telegram_ids: int
+    matched_accounts: int
+    final_accounts: int
+    unresolved_account_ids_count: int
+    unresolved_account_ids_sample: list[str]
+    unresolved_emails_count: int
+    unresolved_emails_sample: list[str]
+    unresolved_telegram_ids_count: int
+    unresolved_telegram_ids_sample: list[int]
+    excluded_accounts_count: int
+    excluded_blocked_count: int
+    excluded_cooldown_count: int
+    excluded_accounts_sample: list[AdminBroadcastAudienceManualListExcludedAccountResponse]
+
+
+class AdminBroadcastAudiencePreviewResponse(BaseModel):
+    channels: list[BroadcastChannel]
+    audience: AdminBroadcastAudienceResponse
+    total_accounts: int
+    preview_count: int
+    limit: int
+    has_more: bool
+    items: list[AdminBroadcastAudiencePreviewItemResponse]
+    manual_list_diagnostics: AdminBroadcastAudienceManualListDiagnosticsResponse | None = None
+
+
+class AdminBroadcastAudiencePresetUpsertRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be blank")
+        return value.strip()
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+
+class AdminBroadcastAudiencePresetResponse(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    audience: AdminBroadcastAudienceResponse
+    created_by_admin_id: UUID
+    updated_by_admin_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AdminBroadcastAudiencePresetListResponse(BaseModel):
+    items: list[AdminBroadcastAudiencePresetResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class AdminBroadcastTestSendRequest(BaseModel):

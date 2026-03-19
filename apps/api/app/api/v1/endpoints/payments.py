@@ -28,6 +28,12 @@ from app.services.payments import (
     get_payment_for_account,
     list_account_payments,
 )
+from app.services.promos import (
+    PromoBlockedError,
+    PromoCodeNotFoundError,
+    PromoConflictError,
+    PromoValidationError,
+)
 
 router = APIRouter()
 
@@ -168,8 +174,14 @@ async def create_yookassa_plan_purchase(
             cancel_url=payload.cancel_url,
             description=payload.description,
             idempotency_key=payload.idempotency_key,
+            promo_code=payload.promo_code,
         )
     except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PromoCodeNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
@@ -184,9 +196,24 @@ async def create_yookassa_plan_purchase(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except PromoConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except PaymentAccountBlockedError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PromoBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PromoValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     except PaymentGatewayError as exc:
@@ -212,8 +239,14 @@ async def create_telegram_stars_plan_purchase(
             plan_code=plan_code,
             description=payload.description,
             idempotency_key=payload.idempotency_key,
+            promo_code=payload.promo_code,
         )
     except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PromoCodeNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
@@ -228,9 +261,24 @@ async def create_telegram_stars_plan_purchase(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except PromoConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except PaymentAccountBlockedError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PromoBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PromoValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     except PaymentGatewayError as exc:

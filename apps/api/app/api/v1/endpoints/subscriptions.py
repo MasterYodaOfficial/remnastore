@@ -12,6 +12,12 @@ from app.schemas.subscription import (
 from app.services.ledger import InsufficientFundsError
 from app.services.plans import SubscriptionPlanError
 from app.services.purchases import PurchaseConflictError
+from app.services.promos import (
+    PromoBlockedError,
+    PromoCodeNotFoundError,
+    PromoConflictError,
+    PromoValidationError,
+)
 from app.services.subscriptions import (
     RemnawaveSyncError,
     TrialEligibilityError,
@@ -84,8 +90,14 @@ async def purchase_with_wallet(
             account=current_account,
             plan_code=plan_code,
             idempotency_key=payload.idempotency_key,
+            promo_code=payload.promo_code,
         )
     except SubscriptionPlanError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except PromoCodeNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
@@ -100,9 +112,24 @@ async def purchase_with_wallet(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except PromoConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except SubscriptionPurchaseBlockedError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PromoBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except PromoValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
     except RemnawaveSyncError as exc:

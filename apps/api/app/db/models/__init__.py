@@ -21,6 +21,7 @@ from app.db.models.broadcast import (
     BroadcastRunType,
     BroadcastStatus,
 )
+from app.db.models.broadcast_audience_preset import BroadcastAudiencePreset
 from app.db.models.ledger import LedgerEntry, LedgerEntryType
 from app.db.models.notification import (
     Notification,
@@ -31,6 +32,15 @@ from app.db.models.notification import (
     NotificationType,
 )
 from app.db.models.payment import Payment, PaymentEvent
+from app.db.models.promo import (
+    PromoCampaign,
+    PromoCampaignStatus,
+    PromoCode,
+    PromoEffectType,
+    PromoRedemption,
+    PromoRedemptionContext,
+    PromoRedemptionStatus,
+)
 from app.db.models.referral import ReferralAttribution, ReferralReward, TelegramReferralIntent
 from app.db.models.subscription_grant import SubscriptionGrant
 from app.db.models.withdrawal import Withdrawal, WithdrawalDestinationType, WithdrawalStatus
@@ -51,6 +61,7 @@ __all__ = [
     "BroadcastRunStatus",
     "BroadcastRunType",
     "BroadcastStatus",
+    "BroadcastAudiencePreset",
     "LoginSource",
     "AuthAccount",
     "AuthProvider",
@@ -66,6 +77,13 @@ __all__ = [
     "NotificationType",
     "Payment",
     "PaymentEvent",
+    "PromoCampaign",
+    "PromoCampaignStatus",
+    "PromoCode",
+    "PromoEffectType",
+    "PromoRedemption",
+    "PromoRedemptionContext",
+    "PromoRedemptionStatus",
     "ReferralAttribution",
     "ReferralReward",
     "TelegramReferralIntent",

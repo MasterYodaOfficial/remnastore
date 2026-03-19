@@ -20,6 +20,7 @@ class TrialEligibilityResponse(BaseModel):
 
 class WalletPlanPurchaseRequest(BaseModel):
     idempotency_key: str = Field(min_length=1)
+    promo_code: str | None = None
 
 
 class SubscriptionStateResponse(BaseModel):
