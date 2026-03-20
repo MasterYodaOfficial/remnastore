@@ -13,6 +13,9 @@ permissions:
 jobs:
   python-quality:
     runs-on: ubuntu-latest
+    env:
+      # API tests replace sessions per suite, but imports still need a parseable URL in CI.
+      DATABASE_URL: sqlite+aiosqlite:///./ci-python-quality.sqlite3
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

@@ -119,7 +119,7 @@
 Проверено 2026-03-20:
 
 - [x] В репозитории добавлены `.github/workflows/ci.yml` и `.github/pull_request_template.md`, фиксирующие базовый процесс проверки и PR.
-- [ ] Branch protection и запрет прямого push живут вне репозитория; ruleset уже добавлен в GitHub UI, bypass list пока пустой, но до отдельной ручной проверки required checks и реального запрета direct push фазу считаем незакрытой.
+- [ ] Branch protection и запрет прямого push живут вне репозитория; ruleset `protect-main` уже активен для `main`, bypass list пустой, required checks (`python-quality`, `web-quality`, `admin-quality`) уже выбраны, dry-run PR `dev -> main` подтвердил блокировку merge при падающем CI, но отдельной ручной проверки прямого push в `main` еще не было.
 - [x] В репозитории зафиксированы release, smoke и rollback checklists для `dev -> main`.
 - [ ] Формат release note и tagging ritual еще не закреплены как обязательный repo-процесс.
 
@@ -165,8 +165,9 @@
 - [x] Для `web` и `admin` добавлены `lint` контракты на ESLint; `npm run lint` проходит локально в обоих приложениях.
 - [x] CI-подобный порядок команд подтвержден локально: `uv sync --frozen --group dev`, `npm ci` в `apps/web` и `apps/admin`, затем `lint`, `test`, `typecheck` и `build`.
 - [x] Для `web` и `admin` добавлены минимальные `test` контракты на `Vitest`; `npm run test` проходит локально в обоих приложениях.
+- [x] Для `python-quality` в GitHub Actions добавлен явный тестовый `DATABASE_URL`; Python-контур больше не зависит от локального `.env` и проходит в чистой копии репозитория.
 - [ ] `ruff format --check` пока не готов к роли blocking gate: форматирование затронет большой пласт уже активных файлов.
-- [ ] Branch protection и обязательность CI на PR в `main` пока не подтверждены настройками репозитория.
+- [x] Branch protection и обязательность CI на PR в `main` подтверждены dry-run PR: merge блокируется, пока required checks не зелёные.
 
 Цель: сначала сделать проверяемый baseline, а уже потом наращивать требования.
 
@@ -279,7 +280,7 @@
 - [x] Для `web` и `admin` появился минимальный frontend test contour на `Vitest` для pure utility/runtime logic.
 - [x] В репозитории добавлен `Vitest` для `web` и `admin`.
 - [ ] В репозитории пока нет `Playwright`.
-- [ ] Нет подтвержденных blocking quality checks на PR в `main`; это зависит от branch protection вне репозитория.
+- [x] Blocking quality checks на PR в `main` подтверждены dry-run PR с required checks `python-quality`, `web-quality` и `admin-quality`.
 - [ ] Для `web` и `admin` пока нет компонентных и flow-тестов, которые проверяют UI-сценарии через DOM/browser.
 - [ ] Не зафиксированы и не автоматизированы пороги покрытия, которые должны блокировать merge.
 
