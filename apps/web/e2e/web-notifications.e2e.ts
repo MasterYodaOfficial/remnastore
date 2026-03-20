@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const browserAccessToken = "playwright-web-browser-token";
 const browserTokenStorageKey = "remnastore.browser_access_token";
+const telegramAuthStorageKey = "remnastore.telegram_auth";
 
 const bootstrapPayload = {
   account: {
@@ -674,6 +675,9 @@ test.describe("web mobile browser smoke", () => {
     });
 
     await page.goto("/");
+    await page.waitForFunction((storageKey) => {
+      return window.localStorage.getItem(storageKey) !== null;
+    }, telegramAuthStorageKey);
     await page.getByRole("button", { name: "Настройки" }).click();
 
     await expect(page.getByRole("heading", { name: "Настройки" })).toBeVisible();
