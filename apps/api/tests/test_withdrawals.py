@@ -21,6 +21,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.main import create_app
+from app.services.i18n import translate
 
 
 class DummyCache:
@@ -203,7 +204,10 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "minimum withdrawal amount is 30 RUB")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.withdrawals.errors.minimum_amount", amount=30),
+        )
 
     async def test_create_withdrawal_rejects_when_referral_availability_is_lower_than_balance(self) -> None:
         account = await self._create_account(balance=200, referral_earnings=35)
@@ -218,7 +222,10 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "insufficient referral funds for withdrawal")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.withdrawals.errors.insufficient_available"),
+        )
 
     async def test_create_withdrawal_rejects_invalid_card_number(self) -> None:
         account = await self._create_account(balance=120, referral_earnings=120)
@@ -234,7 +241,10 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()["detail"], "invalid bank card number")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.withdrawals.errors.invalid_card"),
+        )
 
     async def test_list_withdrawals_returns_newest_first_with_availability(self) -> None:
         account = await self._create_account(balance=120, referral_earnings=120)

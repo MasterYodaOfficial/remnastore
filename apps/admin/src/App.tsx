@@ -1,4 +1,10 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  formatAccountIdentity,
+  formatCompactId,
+  parseManualAudienceTargetsInput,
+  parseOptionalIntegerInput,
+} from "./lib/admin-helpers";
 
 type AdminProfile = {
   id: string;
@@ -979,16 +985,6 @@ function humanizeLedgerEntryFilter(entryType: LedgerEntryFilterOption): string {
   return humanizeLedgerType(entryType);
 }
 
-function formatCompactId(value: string | null): string {
-  if (!value) {
-    return "-";
-  }
-  if (value.length <= 14) {
-    return value;
-  }
-  return `${value.slice(0, 8)}...${value.slice(-4)}`;
-}
-
 function describeLedgerEntryContext(entry: AdminAccountLedgerEntry): string {
   const context: string[] = [];
 
@@ -1313,82 +1309,6 @@ function humanizeBroadcastAudienceSegment(segment: BroadcastAudienceSegment): st
   }
 }
 
-function parseOptionalIntegerInput(value: string, minimum: number, fieldLabel: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < minimum) {
-    throw new Error(`${fieldLabel} должно быть целым числом не меньше ${minimum}`);
-  }
-  return parsed;
-}
-
-function parseManualAudienceTargetsInput(value: string): {
-  manualAccountIds: string[];
-  manualEmails: string[];
-  manualTelegramIds: number[];
-} {
-  const tokens = value
-    .split(/[\s,;]+/g)
-    .map((item) => item.trim().replace(/^["']+|["']+$/g, ""))
-    .filter(Boolean)
-    .filter(
-      (item) =>
-        !["account_id", "accountid", "email", "telegram_id", "telegramid", "tg_id", "tgid"].includes(
-          item.toLowerCase(),
-        ),
-    );
-
-  const manualAccountIds: string[] = [];
-  const manualEmails: string[] = [];
-  const manualTelegramIds: number[] = [];
-  const seenAccountIds = new Set<string>();
-  const seenEmails = new Set<string>();
-  const seenTelegramIds = new Set<number>();
-  const uuidPattern =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
-
-  for (const token of tokens) {
-    if (uuidPattern.test(token)) {
-      const normalized = token.toLowerCase();
-      if (!seenAccountIds.has(normalized)) {
-        seenAccountIds.add(normalized);
-        manualAccountIds.push(normalized);
-      }
-      continue;
-    }
-    if (emailPattern.test(token)) {
-      const normalized = token.toLowerCase();
-      if (!seenEmails.has(normalized)) {
-        seenEmails.add(normalized);
-        manualEmails.push(normalized);
-      }
-      continue;
-    }
-    if (/^-?\d+$/.test(token)) {
-      const normalized = Number.parseInt(token, 10);
-      if (!seenTelegramIds.has(normalized)) {
-        seenTelegramIds.add(normalized);
-        manualTelegramIds.push(normalized);
-      }
-      continue;
-    }
-    throw new Error(
-      `Не удалось распознать идентификатор из ручного списка: ${token}. Используй account_id, email или telegram_id.`,
-    );
-  }
-
-  return {
-    manualAccountIds,
-    manualEmails,
-    manualTelegramIds,
-  };
-}
-
 function formatBroadcastAudienceSummary(audience: AdminBroadcastAudience): string {
   const parts = [humanizeBroadcastAudienceSegment(audience.segment)];
 
@@ -1494,16 +1414,6 @@ function humanizeBroadcastChannel(channel: BroadcastChannel): string {
 
 function humanizeBroadcastChannels(channels: BroadcastChannel[]): string {
   return channels.map((channel) => humanizeBroadcastChannel(channel)).join(" + ");
-}
-
-function formatAccountIdentity(account: {
-  account_id?: string;
-  id?: string;
-  display_name?: string | null;
-  username?: string | null;
-  email?: string | null;
-}): string {
-  return account.display_name || account.username || account.email || account.account_id || account.id || "Безымянный аккаунт";
 }
 
 function formatRewardRate(value: number): string {
@@ -1836,7 +1746,7 @@ export default function App() {
   const [broadcastRunsLoading, setBroadcastRunsLoading] = useState(false);
   const [broadcastRunDetailLoading, setBroadcastRunDetailLoading] = useState(false);
   const [broadcastRunDeliveries, setBroadcastRunDeliveries] = useState<AdminBroadcastRunDelivery[]>([]);
-  const [broadcastRunDeliveriesTotal, setBroadcastRunDeliveriesTotal] = useState(0);
+  const [, setBroadcastRunDeliveriesTotal] = useState(0);
   const [broadcastRunStatusFilter, setBroadcastRunStatusFilter] = useState<BroadcastRunStatus | "all">("all");
   const [broadcastRunTypeFilter, setBroadcastRunTypeFilter] = useState<BroadcastRunType | "all">("all");
   const [broadcastRunChannelFilter, setBroadcastRunChannelFilter] = useState<BroadcastChannel | "all">("all");

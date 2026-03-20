@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.db.models import Account, AccountStatus, LedgerEntryType, Withdrawal, WithdrawalStatus
 from app.db.models.withdrawal import WithdrawalDestinationType
 from app.services.account_events import append_account_event
+from app.services.i18n import translate
 from app.services.ledger import apply_debit_in_transaction
 from app.services.notifications import notify_withdrawal_created
 
@@ -41,6 +42,10 @@ class WithdrawalInsufficientAvailableError(WithdrawalServiceError):
 
 class WithdrawalAccountBlockedError(WithdrawalServiceError):
     pass
+
+
+def _withdrawal_error(key: str, **kwargs: object) -> str:
+    return translate(f"api.withdrawals.errors.{key}", **kwargs)
 
 
 @dataclass(slots=True)
@@ -89,13 +94,13 @@ def normalize_withdrawal_destination_value(
     normalized = _normalize_required_text(
         destination_value,
         error_type=WithdrawalDestinationRequiredError,
-        message="destination value is required",
+        message=_withdrawal_error("destination_required"),
     )
 
     if destination_type == WithdrawalDestinationType.CARD:
         digits = _only_digits(normalized)
         if len(digits) < 16 or len(digits) > 19 or not _is_luhn_valid(digits):
-            raise WithdrawalInvalidCardError("invalid bank card number")
+            raise WithdrawalInvalidCardError(_withdrawal_error("invalid_card"))
         return digits
 
     return normalized
@@ -128,7 +133,7 @@ async def _load_account_for_update(session: AsyncSession, account_id: uuid.UUID)
     )
     account = result.scalar_one_or_none()
     if account is None:
-        raise WithdrawalServiceError(f"account not found: {account_id}")
+        raise WithdrawalServiceError(_withdrawal_error("account_not_found"))
     return account
 
 
@@ -186,13 +191,11 @@ async def create_withdrawal_request(
     user_comment: str | None,
 ) -> Withdrawal:
     if amount <= 0:
-        raise ValueError("amount must be positive")
+        raise ValueError(_withdrawal_error("amount_positive"))
 
     minimum_amount_rub = _get_minimum_withdrawal_amount_rub()
     if amount < minimum_amount_rub:
-        raise WithdrawalAmountTooLowError(
-            f"minimum withdrawal amount is {minimum_amount_rub} RUB"
-        )
+        raise WithdrawalAmountTooLowError(_withdrawal_error("minimum_amount", amount=minimum_amount_rub))
 
     normalized_destination_value = normalize_withdrawal_destination_value(
         destination_type=destination_type,
@@ -202,11 +205,11 @@ async def create_withdrawal_request(
 
     account = await _load_account_for_update(session, account_id)
     if account.status == AccountStatus.BLOCKED:
-        raise WithdrawalAccountBlockedError("blocked accounts cannot create withdrawals")
+        raise WithdrawalAccountBlockedError(_withdrawal_error("account_blocked"))
 
     availability = await get_withdrawal_availability(session, account=account)
     if amount > availability.available_for_withdraw:
-        raise WithdrawalInsufficientAvailableError("insufficient referral funds for withdrawal")
+        raise WithdrawalInsufficientAvailableError(_withdrawal_error("insufficient_available"))
 
     withdrawal = Withdrawal(
         account_id=account.id,

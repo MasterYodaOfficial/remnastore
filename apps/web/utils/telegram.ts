@@ -1,8 +1,39 @@
+export type TelegramTheme = 'light' | 'dark';
+
+export interface TelegramWebAppUser {
+  id: number;
+  photo_url?: string;
+}
+
+export interface TelegramWebAppLike {
+  initData?: string;
+  initDataUnsafe?: {
+    user?: TelegramWebAppUser;
+  };
+  platform?: string;
+  colorScheme?: TelegramTheme;
+  expand?: () => void;
+  setHeaderColor?: (color: string) => void;
+  setBottomBarColor?: (color: string) => void;
+  onEvent?: (event: 'themeChanged', handler: () => void) => void;
+  offEvent?: (event: 'themeChanged', handler: () => void) => void;
+  openInvoice?: (invoiceUrl: string, callback?: (status: string) => void) => void;
+  openTelegramLink?: (url: string) => void;
+  openLink?: (url: string, options?: { try_browser?: boolean }) => void;
+}
+
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: TelegramWebAppLike;
+    };
+  }
+}
+
 // Load Telegram WebApp script dynamically
 export const loadTelegramScript = (): Promise<void> => {
   return new Promise((resolve) => {
     if (typeof window !== 'undefined') {
-      // @ts-ignore
       if (window.Telegram?.WebApp) {
         resolve();
         return;
@@ -20,10 +51,9 @@ export const loadTelegramScript = (): Promise<void> => {
 };
 
 // Get Telegram WebApp instance
-export const getTelegramWebApp = () => {
+export const getTelegramWebApp = (): TelegramWebAppLike | null => {
   if (typeof window !== 'undefined') {
-    // @ts-ignore
-    return window.Telegram?.WebApp;
+    return window.Telegram?.WebApp ?? null;
   }
   return null;
 };

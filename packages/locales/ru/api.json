@@ -1,0 +1,236 @@
+{
+  "api": {
+    "auth": {
+      "errors": {
+        "bot_token_not_configured": "Вход через Telegram временно недоступен.",
+        "hash_missing": "Не удалось проверить данные Telegram. Откройте приложение заново.",
+        "invalid_signature": "Не удалось подтвердить вход через Telegram. Попробуйте открыть приложение заново.",
+        "auth_date_invalid": "Не удалось проверить данные Telegram. Откройте приложение заново.",
+        "init_data_expired": "Сессия Telegram устарела. Откройте приложение заново.",
+        "user_payload_invalid": "Не удалось прочитать данные Telegram-профиля.",
+        "init_data_missing_user": "Не удалось определить пользователя Telegram. Откройте приложение заново."
+      }
+    },
+    "accounts": {
+      "errors": {
+        "account_not_found": "Аккаунт не найден.",
+        "account_blocked": "Аккаунт заблокирован."
+      }
+    },
+    "linking": {
+      "errors": {
+        "token_not_found": "Ссылка для привязки не найдена.",
+        "token_expired": "Ссылка для привязки истекла. Запросите новую.",
+        "token_already_used": "Эта ссылка для привязки уже использована.",
+        "token_type_invalid": "Ссылка для привязки не подходит для этого действия.",
+        "cannot_modify_another_account": "Нельзя изменять другой аккаунт.",
+        "telegram_already_linked": "Telegram уже привязан к этому аккаунту.",
+        "telegram_required": "Для этого действия нужен аккаунт Telegram.",
+        "webapp_url_missing": "Веб-приложение временно недоступно. Попробуйте позже.",
+        "browser_complete_in_browser": "Завершите привязку в браузере после входа в аккаунт.",
+        "account_not_found": "Аккаунт не найден.",
+        "merge_conflict": "Не удалось объединить аккаунты из-за конфликта данных.",
+        "remnawave_merge_failed": "Не удалось синхронизировать подписку при объединении аккаунтов. Попробуйте позже."
+      }
+    },
+    "plans": {
+      "errors": {
+        "config_unavailable": "Каталог тарифов временно недоступен.",
+        "unknown_plan": "Тариф не найден.",
+        "stars_price_not_configured": "Для этого тарифа оплата через Telegram Stars пока недоступна."
+      }
+    },
+    "ledger": {
+      "errors": {
+        "account_not_found": "Аккаунт не найден.",
+        "idempotency_conflict": "Этот запрос уже используется для другой операции.",
+        "insufficient_funds": "Недостаточно средств."
+      }
+    },
+    "payments": {
+      "providers": {
+        "yookassa": "YooKassa",
+        "telegram_stars": "Telegram Stars"
+      },
+      "invoice_title": "RemnaStore: {plan_name}",
+      "descriptions": {
+        "plan": "Оплата тарифа {plan_name}",
+        "plan_stars": "Оплата тарифа {plan_name} в Telegram Stars"
+      },
+      "pre_checkout_errors": {
+        "payment_not_found": "Платёж не найден",
+        "payment_already_processed": "Платёж уже обработан",
+        "currency_mismatch": "Неверная валюта платежа",
+        "amount_mismatch": "Неверная сумма платежа",
+        "account_not_found": "Аккаунт не найден",
+        "account_blocked": "Аккаунт полностью заблокирован",
+        "telegram_account_mismatch": "Платёж не принадлежит текущему Telegram-аккаунту",
+        "unsupported_flow_type": "Неподдерживаемый тип платежа"
+      },
+      "errors": {
+        "yookassa_not_configured": "Оплата через YooKassa временно недоступна.",
+        "stars_bot_token_required": "Оплата через Telegram Stars временно недоступна.",
+        "stars_callback_not_configured": "Оплата через Telegram Stars временно недоступна.",
+        "payment_not_found": "Платёж не найден.",
+        "account_not_found": "Аккаунт не найден.",
+        "account_blocked": "Заблокированные аккаунты не могут создавать платежи.",
+        "idempotency_account_conflict": "Этот ключ уже используется для другого аккаунта.",
+        "idempotency_flow_conflict": "Этот ключ уже используется для другого сценария оплаты.",
+        "idempotency_amount_conflict": "Этот ключ уже используется для другой суммы.",
+        "idempotency_plan_conflict": "Этот ключ уже используется для другого тарифа.",
+        "idempotency_promo_conflict": "Этот ключ уже используется с другим промокодом.",
+        "promo_idempotency_required": "Для оплаты с промокодом нужен ключ запроса.",
+        "promo_payment_not_found": "Не удалось подготовить оплату с промокодом. Попробуйте ещё раз.",
+        "stars_telegram_required": "Telegram Stars доступны только для Telegram-аккаунтов.",
+        "telegram_stars_account_not_found": "Аккаунт Telegram для этого платежа не найден.",
+        "telegram_stars_account_mismatch": "Платёж относится к другому Telegram-аккаунту.",
+        "gateway_failed": "Не удалось создать платёж. Попробуйте позже."
+      }
+    },
+    "purchases": {
+      "errors": {
+        "account_not_found": "Аккаунт не найден.",
+        "remnawave_not_configured": "Сервис подписки временно недоступен.",
+        "remnawave_unavailable": "Не удалось связаться с сервисом подписки. Попробуйте позже.",
+        "remnawave_subscription_url_missing": "Сервис подписки не вернул ссылку на подключение.",
+        "idempotency_required": "Укажите ключ запроса и попробуйте снова.",
+        "idempotency_account_conflict": "Этот ключ уже используется для другого аккаунта.",
+        "idempotency_plan_conflict": "Этот ключ уже используется для другого тарифа.",
+        "idempotency_amount_conflict": "Этот ключ уже используется для другой суммы покупки.",
+        "idempotency_duration_conflict": "Этот ключ уже используется для другого срока подписки.",
+        "wallet_amount_invalid": "Сумма покупки должна быть больше нуля.",
+        "wallet_duration_invalid": "Срок подписки должен быть больше нуля.",
+        "wallet_staging_failed": "Не удалось подготовить покупку с баланса. Попробуйте ещё раз.",
+        "wallet_grant_account_conflict": "Эта покупка с баланса относится к другому аккаунту."
+      }
+    },
+    "subscriptions": {
+      "errors": {
+        "account_not_found": "Аккаунт не найден.",
+        "account_blocked_purchase": "Заблокированные аккаунты не могут покупать подписку.",
+        "idempotency_promo_conflict": "Этот ключ уже используется с другим промокодом."
+      }
+    },
+    "promos": {
+      "errors": {
+        "code_required": "Введите промокод.",
+        "code_not_found": "Промокод не найден.",
+        "campaign_not_found": "Промокампания не найдена.",
+        "code_disabled": "Промокод отключен.",
+        "campaign_inactive": "Промокод сейчас недоступен.",
+        "campaign_not_started": "Промокод ещё не начал действовать.",
+        "campaign_ended": "Срок действия промокода уже закончился.",
+        "account_blocked": "Заблокированные аккаунты не могут использовать промокоды.",
+        "code_belongs_to_another_account": "Промокод привязан к другому аккаунту.",
+        "selected_plans_only": "Промокод доступен только для выбранных тарифов.",
+        "not_for_plan": "Этот промокод не подходит для выбранного тарифа.",
+        "first_purchase_only": "Промокод доступен только для первой платной покупки.",
+        "requires_active_subscription": "Промокод доступен только при активной подписке.",
+        "requires_no_subscription": "Промокод доступен только без активной подписки.",
+        "campaign_limit_reached": "Лимит активаций по промоакции исчерпан.",
+        "account_limit_reached": "Вы уже использовали этот промокод максимальное число раз.",
+        "code_limit_reached": "Лимит активаций этого промокода исчерпан.",
+        "cannot_use_for_plan_purchase": "Этот промокод нельзя применить к покупке тарифа.",
+        "cannot_redeem_directly": "Этот промокод нельзя активировать напрямую.",
+        "currency_mismatch": "Промокод не подходит для выбранного способа оплаты.",
+        "no_price_improvement": "Промокод не улучшает цену выбранного тарифа.",
+        "unsupported_discount_effect": "Этот тип промоакции сейчас не поддерживается.",
+        "zero_payment_use_direct": "Промокод полностью покрывает оплату. Используйте прямую активацию.",
+        "idempotency_required": "Укажите ключ запроса и попробуйте снова.",
+        "idempotency_account_conflict": "Этот ключ уже используется для другого аккаунта.",
+        "idempotency_promo_conflict": "Этот ключ уже используется с другим промокодом.",
+        "idempotency_plan_conflict": "Этот ключ уже используется для другого тарифа.",
+        "idempotency_effect_conflict": "Этот ключ уже используется для другой промоакции.",
+        "idempotency_original_amount_conflict": "Этот ключ уже используется для другой исходной суммы.",
+        "idempotency_discount_amount_conflict": "Этот ключ уже используется для другой скидки.",
+        "idempotency_final_amount_conflict": "Этот ключ уже используется для другой итоговой суммы.",
+        "idempotency_duration_conflict": "Этот ключ уже используется для другого срока подписки.",
+        "redemption_staging_failed": "Не удалось подготовить применение промокода. Попробуйте ещё раз.",
+        "already_another_payment": "Этот промокод уже привязан к другому платежу.",
+        "already_another_subscription_grant": "Этот промокод уже привязан к другой подписке.",
+        "already_another_ledger_entry": "Этот промокод уже привязан к другой операции по балансу.",
+        "already_in_progress": "Промокод уже обрабатывается. Дождитесь завершения операции.",
+        "unsupported_currency": "Этот способ оплаты не поддерживается для выбранного промокода."
+      }
+    },
+    "notifications": {
+      "units": {
+        "day": {
+          "one": "день",
+          "few": "дня",
+          "many": "дней"
+        }
+      },
+      "plan_fallback": "тариф",
+      "payment_succeeded": {
+        "topup": {
+          "title": "Баланс пополнен",
+          "body": "Баланс пополнен на {amount} через {provider}."
+        },
+        "plan": {
+          "title": "Оплата прошла",
+          "body": "Оплата тарифа «{plan_name}» подтверждена. Подписка обновлена."
+        }
+      },
+      "payment_failed": {
+        "topup": {
+          "title": "Пополнение не завершено",
+          "body": "Платеж на {amount} через {provider} не завершен."
+        },
+        "plan": {
+          "title": "Оплата не завершена",
+          "body": "Оплата тарифа «{plan_name}» через {provider} не завершена."
+        }
+      },
+      "referral_reward_received": {
+        "title": "Реферальное начисление",
+        "body": "Начислено {amount} за первую оплату приглашенного пользователя."
+      },
+      "subscription_expiring": {
+        "title": "Подписка скоро закончится",
+        "body": "Подписка закончится через {days_left}.",
+        "deadline_suffix": " Доступ действует до {expires_at}."
+      },
+      "subscription_expired": {
+        "title": "Подписка закончилась",
+        "body": "Срок действия подписки истек.",
+        "deadline_suffix": " Подписка завершилась {expires_at}.",
+        "action_hint": " Чтобы продолжить пользоваться сервисом, продлите тариф."
+      },
+      "withdrawal_created": {
+        "title": "Заявка на вывод создана",
+        "body": "Мы получили заявку на вывод {amount} и передали ее администратору на рассмотрение."
+      },
+      "withdrawal_paid": {
+        "title": "Заявка на вывод выплачена",
+        "body": "Мы отметили заявку на вывод {amount} как выплаченную."
+      },
+      "withdrawal_rejected": {
+        "title": "Заявка на вывод отклонена",
+        "body": "Заявка на вывод {amount} отклонена. Резерв возвращен на баланс."
+      }
+    },
+    "referrals": {
+      "fallback_user_name": "Пользователь",
+      "errors": {
+        "account_not_found": "Аккаунт не найден.",
+        "code_required": "Введите реферальный код.",
+        "code_not_found": "Реферальный код не найден.",
+        "self_referral": "Нельзя использовать собственный реферальный код.",
+        "already_claimed": "Реферальный код уже привязан к этому аккаунту.",
+        "window_closed": "Привязать реферальный код после первой платной покупки уже нельзя."
+      }
+    },
+    "withdrawals": {
+      "errors": {
+        "account_not_found": "Аккаунт не найден.",
+        "amount_positive": "Сумма должна быть больше нуля.",
+        "destination_required": "Укажите реквизиты для вывода.",
+        "invalid_card": "Проверьте номер банковской карты.",
+        "minimum_amount": "Минимальная сумма вывода — {amount} RUB.",
+        "account_blocked": "Заблокированные аккаунты не могут создавать заявки на вывод.",
+        "insufficient_available": "Недостаточно доступных реферальных средств для вывода."
+      }
+    }
+  }
+}

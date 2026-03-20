@@ -29,13 +29,13 @@ from app.domain.payments import (
     PaymentGateway,
     PaymentGatewayConfigurationError,
     PaymentGatewayError,
-    PaymentGatewaySignatureError,
     PaymentIntentSnapshot,
     PaymentProvider,
     PaymentStatus,
     PaymentWebhookEvent,
 )
 from app.services.account_events import append_account_event
+from app.services.i18n import translate
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
 from app.services.notifications import (
     FINAL_FAILED_PAYMENT_STATUSES,
@@ -65,6 +65,10 @@ logger = logging.getLogger(__name__)
 
 class PaymentAccountBlockedError(PaymentGatewayError):
     pass
+
+
+def _payment_error(key: str) -> str:
+    return translate(f"api.payments.errors.{key}")
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -197,7 +201,7 @@ class YooKassaGateway:
 
     def _assert_configured(self) -> None:
         if not self._shop_id or not self._secret_key:
-            raise PaymentGatewayConfigurationError("YooKassa credentials are not configured")
+            raise PaymentGatewayConfigurationError(_payment_error("yookassa_not_configured"))
 
     def _configure_sdk(self) -> None:
         self._assert_configured()
@@ -449,9 +453,9 @@ class TelegramStarsGateway:
 
     def _assert_configured(self) -> None:
         if not self._bot_token:
-            raise PaymentGatewayConfigurationError("BOT_TOKEN is required for Telegram Stars")
+            raise PaymentGatewayConfigurationError(_payment_error("stars_bot_token_required"))
         if not settings.api_token:
-            raise PaymentGatewayConfigurationError("API_TOKEN is required for Telegram Stars callbacks")
+            raise PaymentGatewayConfigurationError(_payment_error("stars_callback_not_configured"))
 
     async def _call_bot_api(self, method: str, payload: dict[str, object]) -> dict:
         self._assert_configured()
@@ -494,12 +498,15 @@ class TelegramStarsGateway:
             flow_type=command.flow_type,
             payment_reference=payment_reference,
         )
-        description = command.description or f"Оплата тарифа {command.plan_code}"
+        description = command.description or translate(
+            "api.payments.descriptions.plan",
+            plan_name=str(command.plan_code or ""),
+        )
         plan_name = command.metadata.get("rm_plan_name") or command.plan_code
         result = await self._call_bot_api(
             "createInvoiceLink",
             {
-                "title": f"Remnastore: {plan_name}",
+                "title": translate("api.payments.invoice_title", plan_name=str(plan_name or "")),
                 "description": description,
                 "payload": invoice_payload,
                 "currency": "XTR",
@@ -733,7 +740,7 @@ async def get_payment_for_account(
     )
     payment = result.scalar_one_or_none()
     if payment is None:
-        raise PaymentNotFoundError("payment not found")
+        raise PaymentNotFoundError(_payment_error("payment_not_found"))
     return payment
 
 
@@ -818,7 +825,7 @@ async def _load_account_for_update(
     result = await session.execute(select(Account).where(Account.id == account_id).with_for_update())
     account = result.scalar_one_or_none()
     if account is None:
-        raise PaymentServiceError(f"Account not found: {account_id}")
+        raise PaymentServiceError(_payment_error("account_not_found"))
     return account
 
 
@@ -908,13 +915,13 @@ def _validate_existing_idempotent_payment(
     plan_code: str | None = None,
 ) -> None:
     if payment.account_id != account.id:
-        raise PaymentConflictError("idempotency key already belongs to another account")
+        raise PaymentConflictError(_payment_error("idempotency_account_conflict"))
     if payment.flow_type != flow_type:
-        raise PaymentConflictError("idempotency key already used for another payment flow")
+        raise PaymentConflictError(_payment_error("idempotency_flow_conflict"))
     if payment.amount != amount:
-        raise PaymentConflictError("idempotency key already used for another amount")
+        raise PaymentConflictError(_payment_error("idempotency_amount_conflict"))
     if payment.plan_code != plan_code:
-        raise PaymentConflictError("idempotency key already used for another plan")
+        raise PaymentConflictError(_payment_error("idempotency_plan_conflict"))
 
 
 def _is_stale_pending_payment(payment: Payment, *, now: datetime) -> bool:
@@ -1148,7 +1155,7 @@ async def create_payment(
     source: str = "api",
 ) -> PaymentIntentSnapshot:
     if account.status == AccountStatus.BLOCKED:
-        raise PaymentAccountBlockedError("blocked accounts cannot create payments")
+        raise PaymentAccountBlockedError(_payment_error("account_blocked"))
 
     if idempotency_key:
         existing_payment = await _get_payment_by_idempotency_key(
@@ -1300,7 +1307,7 @@ async def create_yookassa_plan_purchase_payment(
             if existing_redemption is not None:
                 existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
                 if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
-                    raise PaymentConflictError("idempotency key already used for another promo code")
+                    raise PaymentConflictError(_payment_error("idempotency_promo_conflict"))
                 return _payment_to_snapshot(existing_payment)
 
     quote = None
@@ -1308,7 +1315,7 @@ async def create_yookassa_plan_purchase_payment(
     duration_days = plan.duration_days
     if promo_code is not None:
         if not idempotency_key:
-            raise PaymentConflictError("idempotency_key is required when promo_code is used")
+            raise PaymentConflictError(_payment_error("promo_idempotency_required"))
         quote = await quote_plan_promo(
             session,
             account=account,
@@ -1319,7 +1326,7 @@ async def create_yookassa_plan_purchase_payment(
         )
         amount = quote.final_amount
         duration_days = quote.final_duration_days
-    plan_description = description or f"Оплата тарифа {plan.name}"
+    plan_description = description or translate("api.payments.descriptions.plan", plan_name=plan.name)
     snapshot = await create_payment(
         session,
         gateway=get_yookassa_gateway(),
@@ -1357,7 +1364,7 @@ async def create_yookassa_plan_purchase_payment(
             provider_payment_id=snapshot.provider_payment_id,
         )
         if payment is None or payment.id is None:
-            raise PaymentGatewayError("payment not found after creating promo payment intent")
+            raise PaymentGatewayError(_payment_error("promo_payment_not_found"))
         await stage_promo_redemption(
             session,
             account_id=account.id,
@@ -1380,13 +1387,11 @@ async def create_telegram_stars_plan_purchase_payment(
     source: str = "api",
 ) -> PaymentIntentSnapshot:
     if account.telegram_id is None:
-        raise PaymentConflictError("Telegram Stars доступны только для Telegram-аккаунтов")
+        raise PaymentConflictError(_payment_error("stars_telegram_required"))
 
     plan = get_subscription_plan(plan_code)
     if plan.price_stars is None:
-        raise PaymentGatewayConfigurationError(
-            f"Telegram Stars price is not configured for plan {plan.code}"
-        )
+        raise PaymentGatewayConfigurationError(translate("api.plans.errors.stars_price_not_configured"))
 
     if promo_code is not None and idempotency_key:
         existing_payment = await _get_payment_by_idempotency_key(
@@ -1403,7 +1408,7 @@ async def create_telegram_stars_plan_purchase_payment(
             if existing_redemption is not None:
                 existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
                 if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
-                    raise PaymentConflictError("idempotency key already used for another promo code")
+                    raise PaymentConflictError(_payment_error("idempotency_promo_conflict"))
                 return _payment_to_snapshot(existing_payment)
 
     quote = None
@@ -1411,7 +1416,7 @@ async def create_telegram_stars_plan_purchase_payment(
     duration_days = plan.duration_days
     if promo_code is not None:
         if not idempotency_key:
-            raise PaymentConflictError("idempotency_key is required when promo_code is used")
+            raise PaymentConflictError(_payment_error("promo_idempotency_required"))
         quote = await quote_plan_promo(
             session,
             account=account,
@@ -1423,7 +1428,10 @@ async def create_telegram_stars_plan_purchase_payment(
         amount = quote.final_amount
         duration_days = quote.final_duration_days
 
-    plan_description = description or f"Оплата тарифа {plan.name} в Telegram Stars"
+    plan_description = description or translate(
+        "api.payments.descriptions.plan_stars",
+        plan_name=plan.name,
+    )
     snapshot = await create_payment(
         session,
         gateway=get_telegram_stars_gateway(),
@@ -1460,7 +1468,7 @@ async def create_telegram_stars_plan_purchase_payment(
             provider_payment_id=snapshot.provider_payment_id,
         )
         if payment is None or payment.id is None:
-            raise PaymentGatewayError("payment not found after creating promo payment intent")
+            raise PaymentGatewayError(_payment_error("promo_payment_not_found"))
         await stage_promo_redemption(
             session,
             account_id=account.id,
@@ -1486,23 +1494,23 @@ async def validate_telegram_stars_pre_checkout(
         provider_payment_id=invoice_payload,
     )
     if payment is None:
-        return False, "Платёж не найден"
+        return False, translate("api.payments.pre_checkout_errors.payment_not_found")
     if payment.status in FINAL_PAYMENT_STATUSES:
-        return False, "Платёж уже обработан"
+        return False, translate("api.payments.pre_checkout_errors.payment_already_processed")
     if payment.currency != currency:
-        return False, "Неверная валюта платежа"
+        return False, translate("api.payments.pre_checkout_errors.currency_mismatch")
     if payment.amount != total_amount:
-        return False, "Неверная сумма платежа"
+        return False, translate("api.payments.pre_checkout_errors.amount_mismatch")
 
     account = await session.get(Account, payment.account_id)
     if account is None:
-        return False, "Аккаунт не найден"
+        return False, translate("api.payments.pre_checkout_errors.account_not_found")
     if account.status == AccountStatus.BLOCKED:
-        return False, "Аккаунт полностью заблокирован"
+        return False, translate("api.payments.pre_checkout_errors.account_blocked")
     if account.telegram_id != telegram_id:
-        return False, "Платёж не принадлежит текущему Telegram-аккаунту"
+        return False, translate("api.payments.pre_checkout_errors.telegram_account_mismatch")
     if payment.flow_type != PaymentFlowType.DIRECT_PLAN_PURCHASE:
-        return False, "Неподдерживаемый тип платежа"
+        return False, translate("api.payments.pre_checkout_errors.unsupported_flow_type")
 
     return True, None
 
@@ -1518,9 +1526,9 @@ async def _validate_telegram_stars_actor(
 
     account = await session.get(Account, event.account_id)
     if account is None:
-        raise PaymentConflictError("Telegram Stars account not found")
+        raise PaymentConflictError(_payment_error("telegram_stars_account_not_found"))
     if account.telegram_id != raw_telegram_id:
-        raise PaymentConflictError("Telegram Stars payment belongs to another Telegram account")
+        raise PaymentConflictError(_payment_error("telegram_stars_account_mismatch"))
 
 
 async def _stage_plan_purchase_grant(

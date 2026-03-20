@@ -38,28 +38,43 @@
 - потом добавляем воспроизводимые команды качества
 - и только после этого начинаем делать часть проверок обязательными для merge
 
+## Статус на 2026-03-20
+
+- Фаза 0: `В работе`
+- Фаза 1: `В работе`
+- Фаза 2: `В работе`
+- Фаза 3: `В работе`
+- Фаза 4: `В работе`
+- Фаза 5: `В работе`
+- Фаза 6: `В работе`
+
+Текущий следующий шаг:
+
+1. Завершить и отдельно проверить branch protection / запрет прямого push в GitHub UI, чтобы Phase 0 можно было считать реально закрытой.
+2. Решить, когда и как вводить `ruff format --check`: сейчас он затронет большой пласт активных файлов и не подходит как мгновенный blocking gate.
+3. Выбрать следующий repo-local приоритет после runbooks: dependency triage, Playwright/component tests или rollout декомпозиции крупных модулей.
+
 ## Что видно по репозиторию сейчас
 
-- В проекте уже есть сильная база по продуктовым и инфраструктурным документам: `README`, `docs/launch-roadmap.md`, `docs/launch-progress.md`, `docs/security-checklist.md`, `docs/production-env.md`, `apps/web/FRONTEND_CONTRACT.md`.
-- В репозитории нет `.github/workflows`, значит merge в `dev/main` сейчас не защищен автоматическими проверками.
-- Не обнаружены настроенные `ruff`, `eslint`, `prettier`, `pytest`, `vitest`, `playwright`, `mypy`, `pre-commit`.
-- Автотесты есть только у `api` и `bot`. Сейчас это `29` test-функций в `apps/api/tests` и `apps/bot/tests`.
-- Скрипты покрытия есть только для `api` и `bot`. Для `web` и `admin` автоматизированного тестового контура нет.
-- Текущий baseline покрытия через [`scripts/coverage.sh`](../scripts/coverage.sh):
-  - `api` — `62%`
-  - `bot` — `42%`
-- Для `web` и `admin` baseline пока отсутствует, потому что там нет автоматизированного тестового контура.
-- Локализация сделана неравномерно:
-  - `bot` уже использует `translate()` и общий каталог `packages/locales`
-  - в `web` есть [`apps/web/src/lib/i18n.ts`](../apps/web/src/lib/i18n.ts), но он фактически не используется в UI
-  - [`packages/locales/ru/web.json`](../packages/locales/ru/web.json) содержит только `3` строки
-  - `admin` не имеет собственного i18n-слоя, и для `v1` это допустимо
-- В кодовой базе есть крупные монолиты, которые повышают стоимость доработок и риск регрессий:
+- В проекте уже есть сильная база по продуктовым и инфраструктурным документам: `README`, `docs/launch-roadmap.md`, `docs/launch-progress.md`, `docs/security-checklist.md`, `docs/production-env.md`, `docs/release-checklist.md`, `docs/smoke-checklist.md`, `docs/rollback-checklist.md`, `docs/runbooks/README.md`, `docs/code-documentation.md`, `docs/architecture.md`, `apps/web/FRONTEND_CONTRACT.md`.
+- В репозитории теперь есть процессные repo-артефакты: `.github/workflows/ci.yml` и `.github/pull_request_template.md`.
+- Для Python уже есть воспроизводимые локальные команды тестов и покрытия: [`scripts/test.sh`](../scripts/test.sh) и [`scripts/coverage.sh`](../scripts/coverage.sh).
+- Проверено 2026-03-20: `scripts/test.sh all` проходит локально (`api`: `164` tests, `bot`: `25` tests).
+- `web` и `admin` уже собираются локально через `npm run build`, имеют явные `typecheck`, `test` и `lint` контракты.
+- В `pyproject.toml` уже добавлен `ruff`, и `uv run --group dev ruff check apps/api apps/bot common scripts` проходит локально; при этом `prettier`, `playwright`, `mypy`, `pre-commit` по-прежнему не обнаружены.
+- `uv run --group dev ruff format --check apps/api apps/bot common scripts` пока не проходит: для этого нужен отдельный rollout форматирования, а не мгновенный blocking gate.
+- Локализация уже сдвинулась дальше, чем было на старте плана:
+  - `bot` использует `translate()` и общий каталог `packages/locales`
+  - `web` активно использует [`apps/web/src/lib/i18n.ts`](../apps/web/src/lib/i18n.ts) в [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) и продуктовых компонентах
+  - [`packages/locales/ru/web.json`](../packages/locales/ru/web.json) уже содержит полноценный каталог пользовательских строк
+  - в backend появился каталог [`packages/locales/ru/api.json`](../packages/locales/ru/api.json) для backend-facing ошибок и уведомлений
+  - `admin` по-прежнему не имеет собственного i18n-слоя, и для `v1` это допустимо
+- В кодовой базе все еще есть крупные монолиты, которые повышают стоимость доработок и риск регрессий:
   - [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) `8986` строк
-  - [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) `4978` строк
-  - [`apps/bot/bot/services/menu_renderer.py`](../apps/bot/bot/services/menu_renderer.py) `1083` строки
-  - [`apps/api/app/services/account_linking.py`](../apps/api/app/services/account_linking.py) `1118` строк
-- Кодовая документация точечная: отдельные docstring есть, но нет общего стандарта, обязательного набора и покрытия для публичных сервисов, endpoint-ов и сложных модулей.
+  - [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) `5125` строк
+  - [`apps/bot/bot/services/menu_renderer.py`](../apps/bot/bot/services/menu_renderer.py) `1092` строки
+  - [`apps/api/app/services/account_linking.py`](../apps/api/app/services/account_linking.py) `1119` строк
+- Общий стандарт кодовой документации уже появился в [`docs/code-documentation.md`](./code-documentation.md), а release/smoke/rollback checklist-артефакты и incident runbook-и теперь оформлены отдельными документами.
 
 ## Что считаем готовностью к merge в `main`
 
@@ -89,11 +104,24 @@
 - [`docs/product-readiness-plan.md`](./product-readiness-plan.md) — hardening-план перед `main`
 - [`apps/web/FRONTEND_CONTRACT.md`](../apps/web/FRONTEND_CONTRACT.md) — frontend-контракт
 - [`docs/production-env.md`](./production-env.md) — env-контракт
+- [`docs/release-checklist.md`](./release-checklist.md) — выпуск `dev -> main`
+- [`docs/smoke-checklist.md`](./smoke-checklist.md) — ручной smoke
+- [`docs/rollback-checklist.md`](./rollback-checklist.md) — rollback ritual
+- [`docs/runbooks/README.md`](./runbooks/README.md) — incident response runbooks
 - [`docs/security-checklist.md`](./security-checklist.md) — security baseline
 
 Новые одноразовые summary-файлы не создаем. Изменения статуса вносим в существующие документы.
 
 ## Фаза 0. Release governance и правила merge
+
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] В репозитории добавлены `.github/workflows/ci.yml` и `.github/pull_request_template.md`, фиксирующие базовый процесс проверки и PR.
+- [ ] Branch protection и запрет прямого push живут вне репозитория; ruleset уже добавлен в GitHub UI, bypass list пока пустой, но до отдельной ручной проверки required checks и реального запрета direct push фазу считаем незакрытой.
+- [x] В репозитории зафиксированы release, smoke и rollback checklists для `dev -> main`.
+- [ ] Формат release note и tagging ritual еще не закреплены как обязательный repo-процесс.
 
 Цель: перестать относиться к `dev` как к единственной рабочей ветке без формализованного выхода в `main`.
 
@@ -105,7 +133,7 @@
 - когда появятся другие разработчики, поднять правило до обязательного review минимум от одного человека
 - договориться о схеме релизов: минимум `v0.x.y` с git tag и коротким release note
 - зафиксировать Definition of Done для PR: код, тесты, docs, changelog-контекст
-- добавить `pull_request_template.md` с чеклистом по тестам, миграциям, docs, env и UI-скриншотам
+- довести `pull_request_template.md` до рабочего ритуала использования при каждом `dev -> main`
 
 Рекомендуемый режим для текущего этапа:
 
@@ -123,21 +151,38 @@
 
 ## Фаза 1. Базовый quality gate
 
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] Для Python есть воспроизводимые локальные команды тестов и покрытия через `scripts/test.sh` и `scripts/coverage.sh`.
+- [x] `scripts/test.sh all` проходит локально после выравнивания тестов под локализованный backend error contract.
+- [x] `web` и `admin` успешно собираются локально через `npm run build`.
+- [x] Для `web` добавлены `typescript`, `@types/*`, `tsconfig.json` и `typecheck` script; `npm run typecheck` проходит локально.
+- [x] Для `admin` добавлен `typecheck` script, и `npm run typecheck` проходит локально.
+- [x] В `pyproject.toml` настроен `ruff`, и `uv run --group dev ruff check apps/api apps/bot common scripts` проходит локально.
+- [x] В репозитории добавлен минимальный `ci.yml`, который повторяет текущий локальный baseline для Python, `web` и `admin`.
+- [x] Для `web` и `admin` добавлены `lint` контракты на ESLint; `npm run lint` проходит локально в обоих приложениях.
+- [x] CI-подобный порядок команд подтвержден локально: `uv sync --frozen --group dev`, `npm ci` в `apps/web` и `apps/admin`, затем `lint`, `test`, `typecheck` и `build`.
+- [x] Для `web` и `admin` добавлены минимальные `test` контракты на `Vitest`; `npm run test` проходит локально в обоих приложениях.
+- [ ] `ruff format --check` пока не готов к роли blocking gate: форматирование затронет большой пласт уже активных файлов.
+- [ ] Branch protection и обязательность CI на PR в `main` пока не подтверждены настройками репозитория.
+
 Цель: сначала сделать проверяемый baseline, а уже потом наращивать требования.
 
 Сделать:
 
-- добавить `ruff` в Python-часть как минимальный и быстрый standard gate
-- настроить `ruff check` и `ruff format --check` для `apps/api`, `apps/bot`, `common`, `scripts`
-- для `web` и `admin` добавить явные команды `typecheck`
-- для `web` добавить `typescript` и `@types/*`, если они реально еще не оформлены как devDependencies
-- зафиксировать единые `npm` scripts: `build`, `typecheck`, `test`, позже `lint`
+- привязать `ci.yml` к branch protection для PR в `main`
+- определить rollout-план для `ruff format`: либо массовая нормализация отдельным коммитом, либо поэтапное выравнивание по каталогам
+- держать единые `npm` scripts (`lint`, `test`, `typecheck`, `build`) синхронизированными между `web` и `admin`
 - не мигрировать тестовый стек на `pytest` только ради моды; сначала стабилизировать текущий `unittest`-контур
-- подготовить CI-команды так, чтобы они были воспроизводимы локально без GitHub Actions-магии
+- держать CI-команды воспроизводимыми локально без GitHub Actions-магии
 
 Минимальный обязательный pipeline:
 
 - `python-lint`
+- `web-lint`
+- `admin-lint`
 - `python-tests`
 - `web-build`
 - `admin-build`
@@ -150,6 +195,18 @@
 - локальный и CI-запуск используют один и тот же контракт команд
 
 ## Фаза 2. Локализация и все пользовательские тексты
+
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] `bot` использует единый каталог переводов и `translate()`.
+- [x] `web` использует `t(...)` в основном приложении и продуктовых компонентах.
+- [x] В backend появился централизованный каталог `packages/locales/ru/api.json` для пользовательских ошибок и уведомлений.
+- [ ] Единый `LocaleProvider` или явный верхнеуровневый слой locale-state в `web` не оформлен.
+- [ ] Маппинг `stable error code -> translation key` не доведен до системного контракта: часть endpoint-ов все еще отдает `detail=str(exc)`.
+- [ ] Источники locale (`accounts.locale`, `language_code`, browser/session`) не выровнены и не зафиксированы как единый runtime-контракт.
+- [ ] Операторские тексты `admin` не проходили отдельную инвентаризацию на единообразие и отсутствие внутренних деталей.
 
 Цель: довести проект хотя бы до состояния "один язык, но все строки централизованы", а не оставлять тексты размазанными по коду.
 
@@ -176,6 +233,16 @@
 
 ## Фаза 3. Cleanup, декомпозиция и снижение связности
 
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] Из [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) вынесен первый набор pure helper-функций в [`apps/admin/src/lib/admin-helpers.ts`](../apps/admin/src/lib/admin-helpers.ts) и покрыт тестами.
+- [ ] [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) остается монолитом на `8986` строк.
+- [ ] [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) остается монолитом на `5125` строк.
+- [ ] [`apps/bot/bot/services/menu_renderer.py`](../apps/bot/bot/services/menu_renderer.py) и [`apps/api/app/services/account_linking.py`](../apps/api/app/services/account_linking.py) по-прежнему требуют предметной декомпозиции.
+- [ ] В репозитории не зафиксирован пошаговый план разрезания самых рискованных модулей на поддерживаемые части.
+
 Цель: убрать основные точки, где сопровождение уже стало дорогим и рискованным.
 
 Сделать:
@@ -199,6 +266,22 @@
 - чтение и ревью критичных модулей больше не требует навигации по тысячам строк
 
 ## Фаза 4. Тесты и измеримый baseline качества
+
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] У `api` есть сильный backend integration contour для auth, linking, trial, payments, referrals, withdrawals и admin flow.
+- [x] У `bot` есть собственные автотесты на i18n, handlers и menu rendering.
+- [x] Для `api` и `bot` есть локальные команды тестов и покрытия.
+- [x] Текущий локальный backend baseline подтвержден прогоном `scripts/test.sh all` на 2026-03-20.
+- [x] В репозитории добавлен минимальный CI workflow, который гоняет `ruff check`, Python tests, `web` lint/test/typecheck/build и `admin` lint/test/typecheck/build.
+- [x] Для `web` и `admin` появился минимальный frontend test contour на `Vitest` для pure utility/runtime logic.
+- [x] В репозитории добавлен `Vitest` для `web` и `admin`.
+- [ ] В репозитории пока нет `Playwright`.
+- [ ] Нет подтвержденных blocking quality checks на PR в `main`; это зависит от branch protection вне репозитория.
+- [ ] Для `web` и `admin` пока нет компонентных и flow-тестов, которые проверяют UI-сценарии через DOM/browser.
+- [ ] Не зафиксированы и не автоматизированы пороги покрытия, которые должны блокировать merge.
 
 Цель: сделать регрессии заметными до merge, а не после.
 
@@ -228,6 +311,16 @@
 
 ## Фаза 5. Кодовая документация и эксплуатационные docs
 
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] В репозитории появился общий стандарт документации в [`docs/code-documentation.md`](./code-documentation.md).
+- [x] Уже есть базовые документы по env, security, architecture, launch scope и frontend contract.
+- [x] Release checklist, smoke checklist и rollback checklist зафиксированы в отдельных документах.
+- [x] Incident runbook-и по платежам, webhook, Mini App, bot и withdrawals выделены в явный набор документов в `docs/runbooks/`.
+- [ ] Нет отдельной ревизии, что [`apps/web/FRONTEND_CONTRACT.md`](../apps/web/FRONTEND_CONTRACT.md) полностью синхронизирован с текущим UI.
+
 Цель: код и docs должны объяснять систему, а не требовать устных знаний.
 
 Сделать:
@@ -236,8 +329,8 @@
 - не документировать очевидное, но обязательно описывать side effects, идемпотентность, внешние интеграции и доменные инварианты
 - добавить короткие `README` в сложные каталоги, если без них вход слишком дорогой
 - синхронизировать `apps/web/FRONTEND_CONTRACT.md` с фактическим состоянием UI
-- зафиксировать release checklist, smoke checklist и rollback checklist
-- добавить runbook по инцидентам: платеж не дошел, webhook не пришел, бот не отвечает, не открывается Mini App, ошибочные withdrawal-заявки
+- держать release checklist, smoke checklist и rollback checklist синхронизированными с реальным процессом
+- держать runbooks по инцидентам синхронизированными с текущим operational flow и лог-контуром
 
 Критерий выхода:
 
@@ -245,6 +338,18 @@
 - операционные действия не хранятся только "в голове"
 
 ## Фаза 6. Production hardening и release candidate
+
+Статус: `В работе`
+
+Проверено 2026-03-20:
+
+- [x] В репозитории уже есть [`docs/security-checklist.md`](./security-checklist.md) и [`docs/production-env.md`](./production-env.md).
+- [x] В репозитории оформлены [`docs/release-checklist.md`](./release-checklist.md), [`docs/smoke-checklist.md`](./smoke-checklist.md) и [`docs/rollback-checklist.md`](./rollback-checklist.md).
+- [ ] `npm ci` сигнализирует о dependency-risk: на 2026-03-20 `apps/web` тянет `6` уязвимостей (`1` moderate, `5` high), `apps/admin` — `1` moderate; нужна отдельная triage-ревизия.
+- [ ] Не зафиксирован результат отдельной ревизии логов на утечки токенов, `initData` и платежных секретов.
+- [ ] Не подтвержден backup/restore сценарий БД.
+- [ ] Не подтверждено фактическое выполнение ручного regression smoke перед релизом по browser, Mini App, bot и admin; пока есть только checklist.
+- [ ] Не описан финальный release candidate ritual для `dev -> main` с тегом и коротким release note.
 
 Цель: перед merge в `main` закрыть то, что влияет уже не на красоту кода, а на коммерческую надежность.
 

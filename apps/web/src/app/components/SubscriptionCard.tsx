@@ -1,5 +1,6 @@
 import React from 'react';
 import { ExternalLink, Shield, Sparkles } from 'lucide-react';
+import { t } from '../../lib/i18n';
 
 interface SubscriptionCardProps {
   subscription: {
@@ -33,20 +34,20 @@ function getStatusTone(daysLeft?: number) {
   if (!daysLeft || daysLeft > 7) {
     return {
       accent: 'var(--tg-theme-button-color,#3390ec)',
-      label: 'Спокойный запас',
+      label: t('web.subscriptionCard.toneComfort'),
     };
   }
 
   if (daysLeft > 3) {
     return {
       accent: 'var(--app-warning-color,#ca8a04)',
-      label: 'Лучше продлить заранее',
+      label: t('web.subscriptionCard.toneWarning'),
     };
   }
 
   return {
     accent: 'var(--app-danger-bg,#ef4444)',
-    label: 'Заканчивается скоро',
+    label: t('web.subscriptionCard.toneUrgent'),
   };
 }
 
@@ -73,10 +74,12 @@ export function SubscriptionCard({
             </div>
             <div>
               <h2 className="text-base font-semibold text-[var(--tg-theme-text-color,#000000)]">
-                Подписка
+                {t('web.subscriptionCard.title')}
               </h2>
               <p className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-                {subscription.isActive ? 'Доступ активен' : 'Доступ не запущен'}
+                {subscription.isActive
+                  ? t('web.subscriptionCard.subtitleActive')
+                  : t('web.subscriptionCard.subtitleInactive')}
               </p>
             </div>
           </div>
@@ -90,11 +93,11 @@ export function SubscriptionCard({
           >
             {subscription.isActive
               ? subscription.isTrial
-                ? 'Trial'
-                : 'Активна'
+                ? t('web.subscriptionCard.badgeTrial')
+                : t('web.subscriptionCard.badgeActive')
               : subscription.hasTrial && !subscription.hasUsedTrial
-                ? 'Можно стартовать'
-                : 'Не активна'}
+                ? t('web.subscriptionCard.badgeCanStart')
+                : t('web.subscriptionCard.badgeInactive')}
           </div>
         </div>
       </div>
@@ -107,11 +110,11 @@ export function SubscriptionCard({
                 <div className="text-3xl font-semibold leading-none text-[var(--tg-theme-text-color,#000000)]">
                   {daysLeft}{' '}
                   <span className="text-base font-medium text-[var(--tg-theme-hint-color,#999999)]">
-                    дн.
+                    {t('web.subscriptionCard.daysShort')}
                   </span>
                 </div>
                 <div className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-                  До окончания доступа
+                  {t('web.subscriptionCard.daysLeftLabel')}
                 </div>
               </div>
               <div className="flex flex-col items-end gap-2">
@@ -126,10 +129,14 @@ export function SubscriptionCard({
                       : 'var(--app-warning-color,#ca8a04)',
                   }}
                 >
-                  {configReady ? 'Конфиг готов' : 'Синхронизация'}
+                  {configReady
+                    ? t('web.subscriptionCard.configReady')
+                    : t('web.subscriptionCard.configSync')}
                 </div>
                 <div className="text-xs font-medium text-[var(--tg-theme-hint-color,#999999)]">
-                  {subscription.isTrial ? 'Пробный период' : 'Платный период'}
+                  {subscription.isTrial
+                    ? t('web.subscriptionCard.trialPeriod')
+                    : t('web.subscriptionCard.paidPeriod')}
                 </div>
               </div>
             </div>
@@ -139,7 +146,9 @@ export function SubscriptionCard({
                 {statusTone.label}
               </div>
               <div className="text-[var(--tg-theme-hint-color,#999999)]">
-                {Math.round(progressValue)}% периода
+                {t('web.subscriptionCard.periodProgress', {
+                  progress: Math.round(progressValue),
+                })}
               </div>
             </div>
 
@@ -154,10 +163,8 @@ export function SubscriptionCard({
             </div>
 
             <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--tg-theme-hint-color,#999999)]">
-              <span>Запас периода</span>
-              <span>
-                {daysLeft} из {totalDays} дн.
-              </span>
+              <span>{t('web.subscriptionCard.stockLabel')}</span>
+              <span>{t('web.subscriptionCard.stockValue', { daysLeft, totalDays })}</span>
             </div>
           </div>
 
@@ -167,14 +174,14 @@ export function SubscriptionCard({
               disabled={!configReady}
               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Получить конфиг
+              {t('web.subscriptionCard.openAccess')}
               <ExternalLink className="h-4 w-4" />
             </button>
             <button
               onClick={onRenew}
               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
             >
-              Продлить подписку
+              {t('web.subscriptionCard.renew')}
               <Sparkles className="h-4 w-4" />
             </button>
           </div>
@@ -183,8 +190,7 @@ export function SubscriptionCard({
         <div className="space-y-3 px-4 pb-4">
           <div className="rounded-[20px] bg-[var(--tg-theme-bg-color,#ffffff)] p-4 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.06)]">
             <div className="text-sm text-[var(--tg-theme-text-color,#000000)]">
-              Сначала активируйте пробный период или купите тариф. После этого появится ссылка на
-              конфиг.
+              {t('web.subscriptionCard.inactiveHint')}
             </div>
           </div>
 
@@ -193,7 +199,7 @@ export function SubscriptionCard({
               onClick={onActivateTrial}
               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
             >
-              Активировать пробный период
+              {t('web.subscriptionCard.activateTrial')}
               <Sparkles className="h-4 w-4" />
             </button>
           ) : null}
@@ -202,7 +208,7 @@ export function SubscriptionCard({
             onClick={onBuy}
             className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
           >
-            Купить подписку
+            {t('web.subscriptionCard.buyPlan')}
             <ExternalLink className="h-4 w-4" />
           </button>
         </div>

@@ -1,6 +1,5 @@
 from datetime import UTC, datetime
 from typing import Optional
-from uuid import UUID
 import uuid
 
 from sqlalchemy import select
@@ -11,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.db.models import Account, AccountStatus, AuthAccount, AuthProvider, LoginSource
 from app.integrations.supabase.models import SupabaseIdentity, SupabaseUser
 from app.services.cache import get_cache
+from app.services.i18n import translate
 
 
 class AccountIdentityConflictError(Exception):
@@ -287,7 +287,7 @@ async def upsert_telegram_account(
         session.add(account)
     else:
         if account.status == AccountStatus.BLOCKED:
-            raise AccountBlockedError("account blocked")
+            raise AccountBlockedError(translate("api.accounts.errors.account_blocked"))
         account.username = username or account.username
         account.first_name = first_name or account.first_name
         account.last_name = last_name or account.last_name

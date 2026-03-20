@@ -34,6 +34,7 @@ from app.services.promos import (
     PromoConflictError,
     PromoValidationError,
 )
+from app.services.i18n import translate
 
 router = APIRouter()
 
@@ -152,7 +153,7 @@ async def create_yookassa_topup(
     except PaymentGatewayError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=translate("api.payments.errors.gateway_failed"),
         ) from exc
 
     return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)
@@ -219,7 +220,7 @@ async def create_yookassa_plan_purchase(
     except PaymentGatewayError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=translate("api.payments.errors.gateway_failed"),
         ) from exc
 
     return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)
@@ -284,7 +285,7 @@ async def create_telegram_stars_plan_purchase(
     except PaymentGatewayError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=translate("api.payments.errors.gateway_failed"),
         ) from exc
 
     return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)

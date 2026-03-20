@@ -1,5 +1,6 @@
 import React from 'react';
 import { Gift, Sparkles } from 'lucide-react';
+import { t } from '../../lib/i18n';
 
 export interface PromoRedeemMessage {
   tone: 'neutral' | 'success' | 'error';
@@ -40,10 +41,10 @@ export function PromoRedeemCard({
         </div>
         <div className="min-w-0">
           <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-            Активировать промокод
+            {t('web.promoRedeem.title')}
           </div>
           <div className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-300">
-            Для gift-кодов, бонуса на баланс и бесплатных дней доступа.
+            {t('web.promoRedeem.subtitle')}
           </div>
         </div>
       </div>
@@ -53,7 +54,7 @@ export function PromoRedeemCard({
           type="text"
           value={code}
           onChange={(event) => onCodeChange(event.target.value)}
-          placeholder="Введите код"
+          placeholder={t('web.promoRedeem.placeholder')}
           autoCapitalize="characters"
           autoCorrect="off"
           spellCheck={false}
@@ -66,12 +67,12 @@ export function PromoRedeemCard({
           className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
         >
           <Sparkles className="h-4 w-4" />
-          {isSubmitting ? 'Активируем...' : 'Активировать'}
+          {isSubmitting ? t('web.promoRedeem.submitting') : t('web.promoRedeem.submit')}
         </button>
       </div>
 
       <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm leading-6 ${messageClassName}`}>
-        {message?.text ?? 'Если код подходит, доступ или баланс обновятся сразу без отдельной оплаты.'}
+        {message?.text ?? t('web.promoRedeem.hint')}
       </div>
     </div>
   );

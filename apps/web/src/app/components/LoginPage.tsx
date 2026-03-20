@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, Lock, Mail, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../../utils/supabase/client';
 import { getActiveReferralCode, buildTelegramReferralBotUrl } from '../lib/referrals';
+import { t } from '../../lib/i18n';
 
 type LoginFormMode = 'signin' | 'signup' | 'forgot';
 
@@ -22,6 +23,13 @@ function TelegramIcon() {
       />
     </svg>
   );
+}
+
+function loginT(
+  key: string,
+  params: Record<string, string | number | boolean | null | undefined> = {}
+) {
+  return t(`web.login.${key}`, params);
 }
 
 export function LoginPage({
@@ -89,7 +97,7 @@ export function LoginPage({
       }
     } catch (err) {
       console.error('Google login error:', err);
-      toast.error('Не удалось запустить вход через Google.');
+      toast.error(loginT('toasts.googleStartError'));
     } finally {
       setActiveProvider(null);
     }
@@ -100,7 +108,7 @@ export function LoginPage({
 
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
-      toast.error('Укажите email.');
+      toast.error(loginT('toasts.emailRequired'));
       return;
     }
 
@@ -111,13 +119,13 @@ export function LoginPage({
       try {
         await requestPasswordReset(normalizedEmail);
 
-        toast.success('Письмо для восстановления отправлено. Проверьте почту.');
+        toast.success(loginT('toasts.resetSent'));
         setFormMode('signin');
         setPassword('');
         setConfirmPassword('');
       } catch (err) {
         const message =
-          err instanceof Error && err.message ? err.message : 'Не удалось отправить письмо.';
+          err instanceof Error && err.message ? err.message : loginT('toasts.resetSendError');
         console.error('Password reset request error:', err);
         toast.error(message);
       } finally {
@@ -129,18 +137,18 @@ export function LoginPage({
     }
 
     if (!password) {
-      toast.error('Укажите пароль.');
+      toast.error(loginT('toasts.passwordRequired'));
       return;
     }
 
     if (formMode === 'signup') {
       if (password.length < 8) {
-        toast.error('Пароль должен быть не короче 8 символов.');
+        toast.error(loginT('toasts.passwordTooShort'));
         return;
       }
 
       if (password !== confirmPassword) {
-        toast.error('Пароли не совпадают.');
+        toast.error(loginT('toasts.passwordsMismatch'));
         return;
       }
     }
@@ -159,7 +167,7 @@ export function LoginPage({
           throw error;
         }
 
-        toast.success('Вход выполнен.');
+        toast.success(loginT('toasts.signInSuccess'));
         return;
       }
 
@@ -176,9 +184,9 @@ export function LoginPage({
       }
 
       if (data.session) {
-        toast.success('Аккаунт создан. Выполняем вход.');
+        toast.success(loginT('toasts.signUpAndSignIn'));
       } else {
-        toast.success('Аккаунт создан. Подтвердите email и затем войдите.');
+        toast.success(loginT('toasts.signUpConfirmEmail'));
         setFormMode('signin');
       }
 
@@ -186,7 +194,7 @@ export function LoginPage({
       setConfirmPassword('');
     } catch (err) {
       const message =
-        err instanceof Error && err.message ? err.message : 'Операция не выполнена.';
+        err instanceof Error && err.message ? err.message : loginT('toasts.authFallbackError');
       console.error('Email auth error:', err);
       toast.error(message);
     } finally {
@@ -199,17 +207,17 @@ export function LoginPage({
     event.preventDefault();
 
     if (!password || !confirmPassword) {
-      toast.error('Заполните оба поля с новым паролем.');
+      toast.error(loginT('toasts.recoveryFieldsRequired'));
       return;
     }
 
     if (password.length < 8) {
-      toast.error('Пароль должен быть не короче 8 символов.');
+      toast.error(loginT('toasts.passwordTooShort'));
       return;
     }
 
     if (password !== confirmPassword) {
-      toast.error('Пароли не совпадают.');
+      toast.error(loginT('toasts.passwordsMismatch'));
       return;
     }
 
@@ -222,9 +230,7 @@ export function LoginPage({
       } = await supabase.auth.getSession();
 
       if (!session?.access_token) {
-        throw new Error(
-          'Сессия восстановления не найдена. Откройте ссылку из письма еще раз в том же браузере.'
-        );
+        throw new Error(loginT('toasts.recoverySessionMissing'));
       }
 
       const { error } = await supabase.auth.updateUser({ password });
@@ -233,13 +239,13 @@ export function LoginPage({
         throw error;
       }
 
-      toast.success('Пароль обновлен.');
+      toast.success(loginT('toasts.recoverySuccess'));
       setPassword('');
       setConfirmPassword('');
       await onRecoveryComplete?.();
     } catch (err) {
       const message =
-        err instanceof Error && err.message ? err.message : 'Не удалось обновить пароль.';
+        err instanceof Error && err.message ? err.message : loginT('toasts.recoveryError');
       console.error('Password recovery update error:', err);
       toast.error(message);
     } finally {
@@ -278,7 +284,7 @@ export function LoginPage({
               />
             </svg>
           )}
-          Продолжить через Google
+          {loginT('googleAction')}
         </button>
 
         <a
@@ -293,13 +299,13 @@ export function LoginPage({
           }`}
         >
           <TelegramIcon />
-          Войти через Telegram
+          {loginT('telegramAction')}
         </a>
       </div>
 
       <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-[0.24em] text-slate-400">
         <span className="h-px flex-1 bg-slate-200" />
-        или
+        {loginT('divider')}
         <span className="h-px flex-1 bg-slate-200" />
       </div>
 
@@ -314,7 +320,7 @@ export function LoginPage({
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            Вход по email
+            {loginT('emailSignInTab')}
           </button>
           <button
             type="button"
@@ -325,21 +331,21 @@ export function LoginPage({
                 : 'text-slate-500 hover:text-slate-800'
             }`}
           >
-            Регистрация
+            {loginT('signUpTab')}
           </button>
         </div>
       </div>
 
       <form className="space-y-4" onSubmit={handleEmailSubmit}>
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700">Email</span>
+          <span className="text-sm font-medium text-slate-700">{loginT('emailLabel')}</span>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 focus-within:border-slate-400">
             <Mail className="h-5 w-5 text-slate-400" />
             <input
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@company.com"
+              placeholder={loginT('emailPlaceholder')}
               autoComplete="email"
               className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             />
@@ -348,16 +354,14 @@ export function LoginPage({
 
         {formMode !== 'forgot' && (
           <label className="block space-y-2">
-            <span className="text-sm font-medium text-slate-700">Пароль</span>
+            <span className="text-sm font-medium text-slate-700">{loginT('passwordLabel')}</span>
             <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 focus-within:border-slate-400">
               <Lock className="h-5 w-5 text-slate-400" />
               <input
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder={
-                  formMode === 'signup' ? 'Минимум 8 символов' : 'Введите пароль'
-                }
+                placeholder={formMode === 'signup' ? loginT('passwordMinPlaceholder') : loginT('passwordPlaceholder')}
                 autoComplete={formMode === 'signup' ? 'new-password' : 'current-password'}
                 className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
               />
@@ -367,14 +371,16 @@ export function LoginPage({
 
         {formMode === 'signup' && (
           <label className="block space-y-2">
-            <span className="text-sm font-medium text-slate-700">Повторите пароль</span>
+            <span className="text-sm font-medium text-slate-700">
+              {loginT('passwordRepeatLabel')}
+            </span>
             <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 focus-within:border-slate-400">
               <Lock className="h-5 w-5 text-slate-400" />
               <input
                 type="password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
-                placeholder="Повторите пароль"
+                placeholder={loginT('passwordRepeatPlaceholder')}
                 autoComplete="new-password"
                 className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
               />
@@ -390,14 +396,14 @@ export function LoginPage({
           {isSubmitting ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
-              Обработка...
+              {loginT('submitting')}
             </>
           ) : formMode === 'signin' ? (
-            'Войти по email'
+            loginT('submitSignIn')
           ) : formMode === 'signup' ? (
-            'Создать аккаунт'
+            loginT('submitSignUp')
           ) : (
-            'Отправить письмо для сброса'
+            loginT('submitForgot')
           )}
         </button>
 
@@ -407,7 +413,7 @@ export function LoginPage({
             onClick={() => setFormMode('forgot')}
             className="w-full text-center text-sm font-medium text-slate-500 transition hover:text-slate-900"
           >
-            Забыли пароль?
+            {loginT('forgotPassword')}
           </button>
         ) : formMode === 'forgot' ? (
           <button
@@ -416,17 +422,14 @@ export function LoginPage({
             className="flex w-full items-center justify-center gap-2 text-center text-sm font-medium text-slate-500 transition hover:text-slate-900"
           >
             <ArrowLeft className="h-4 w-4" />
-            Вернуться ко входу
+            {loginT('backToSignIn')}
           </button>
         ) : null}
       </form>
 
       <div className="space-y-2 text-center text-xs leading-5 text-slate-500">
-        <p>Для браузера используйте тот же способ входа, которым создавали аккаунт.</p>
-        <p>
-          Если в `Supabase` включено подтверждение почты, после регистрации нужно
-          подтвердить email и затем войти.
-        </p>
+        <p>{loginT('browserHint')}</p>
+        <p>{loginT('confirmEmailHint')}</p>
       </div>
     </>
   );
@@ -434,22 +437,24 @@ export function LoginPage({
   const renderRecoveryForm = () => (
     <>
       <div className="space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-slate-900">Новый пароль</h2>
+        <h2 className="text-xl font-semibold text-slate-900">{loginT('recoveryTitle')}</h2>
         <p className="text-sm leading-6 text-slate-500">
-          Установите новый пароль для браузерного входа по email.
+          {loginT('recoverySubtitle')}
         </p>
       </div>
 
       <form className="space-y-4" onSubmit={handleRecoverySubmit}>
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700">Новый пароль</span>
+          <span className="text-sm font-medium text-slate-700">
+            {loginT('recoveryNewPasswordLabel')}
+          </span>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 focus-within:border-slate-400">
             <Lock className="h-5 w-5 text-slate-400" />
             <input
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="Минимум 8 символов"
+              placeholder={loginT('recoveryNewPasswordPlaceholder')}
               autoComplete="new-password"
               className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             />
@@ -457,14 +462,16 @@ export function LoginPage({
         </label>
 
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700">Повторите пароль</span>
+          <span className="text-sm font-medium text-slate-700">
+            {loginT('recoveryRepeatLabel')}
+          </span>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 focus-within:border-slate-400">
             <Lock className="h-5 w-5 text-slate-400" />
             <input
               type="password"
               value={confirmPassword}
               onChange={(event) => setConfirmPassword(event.target.value)}
-              placeholder="Повторите новый пароль"
+              placeholder={loginT('recoveryRepeatPlaceholder')}
               autoComplete="new-password"
               className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             />
@@ -479,10 +486,10 @@ export function LoginPage({
           {activeProvider === 'recovery' ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
-              Сохраняем...
+              {loginT('recoverySaving')}
             </>
           ) : (
-            'Сохранить новый пароль'
+            loginT('recoverySave')
           )}
         </button>
 
@@ -491,7 +498,7 @@ export function LoginPage({
           onClick={() => void onRecoveryCancel?.()}
           className="w-full text-center text-sm font-medium text-slate-500 transition hover:text-slate-900"
         >
-          Отменить
+          {loginT('cancel')}
         </button>
       </form>
     </>
@@ -504,10 +511,9 @@ export function LoginPage({
           <Mail className="h-8 w-8" />
         </div>
         <div className="space-y-2">
-          <h2 className="text-xl font-semibold text-slate-900">Ссылка больше не действует</h2>
+          <h2 className="text-xl font-semibold text-slate-900">{loginT('expiredTitle')}</h2>
           <p className="text-sm leading-6 text-slate-500">
-            Письмо для восстановления могло истечь или быть открыто не в том браузере.
-            Запросите новую ссылку и откройте ее в том же браузере, где вы начали восстановление.
+            {loginT('expiredDescription')}
           </p>
         </div>
       </div>
@@ -519,7 +525,7 @@ export function LoginPage({
 
           const normalizedEmail = email.trim().toLowerCase();
           if (!normalizedEmail) {
-            toast.error('Укажите email.');
+            toast.error(loginT('toasts.emailRequired'));
             return;
           }
 
@@ -528,12 +534,12 @@ export function LoginPage({
 
           try {
             await requestPasswordReset(normalizedEmail);
-            toast.success('Новое письмо для восстановления отправлено. Проверьте почту.');
+            toast.success(loginT('toasts.resetSentAgain'));
             await onAuthViewReset?.();
             setFormMode('signin');
           } catch (err) {
             const message =
-              err instanceof Error && err.message ? err.message : 'Не удалось отправить письмо.';
+              err instanceof Error && err.message ? err.message : loginT('toasts.resetSendError');
             console.error('Recovery link refresh error:', err);
             toast.error(message);
           } finally {
@@ -543,14 +549,14 @@ export function LoginPage({
         }}
       >
         <label className="block space-y-2">
-          <span className="text-sm font-medium text-slate-700">Email</span>
+          <span className="text-sm font-medium text-slate-700">{loginT('emailLabel')}</span>
           <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 focus-within:border-slate-400">
             <Mail className="h-5 w-5 text-slate-400" />
             <input
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@company.com"
+              placeholder={loginT('emailPlaceholder')}
               autoComplete="email"
               className="w-full bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             />
@@ -565,10 +571,10 @@ export function LoginPage({
           {activeProvider === 'email' ? (
             <>
               <Loader2 className="h-5 w-5 animate-spin" />
-              Отправляем...
+              {loginT('resendLoading')}
             </>
           ) : (
-            'Запросить новое письмо'
+            loginT('resend')
           )}
         </button>
 
@@ -578,7 +584,7 @@ export function LoginPage({
           className="flex w-full items-center justify-center gap-2 text-center text-sm font-medium text-slate-500 transition hover:text-slate-900"
         >
           <ArrowLeft className="h-4 w-4" />
-          Вернуться ко входу
+          {loginT('backToSignIn')}
         </button>
       </form>
     </>
@@ -597,14 +603,14 @@ export function LoginPage({
               </div>
               <div className="space-y-2">
                 <h1 className="text-3xl font-bold text-[var(--tg-theme-text-color,#000000)]">
-                  RemnaStore
+                  {loginT('heroTitle')}
                 </h1>
                 <p className="text-sm leading-6 text-[var(--tg-theme-hint-color,#6b7280)]">
                   {view === 'recovery'
-                    ? 'Безопасная смена пароля для browser access.'
+                    ? loginT('heroRecoverySubtitle')
                     : view === 'recovery-expired'
-                      ? 'Восстановление нужно запустить заново через новое письмо.'
-                      : 'Единый вход для браузера: Google, email и Telegram без разрозненных аккаунтов.'}
+                      ? loginT('heroRecoveryExpiredSubtitle')
+                      : loginT('heroDefaultSubtitle')}
                 </p>
               </div>
             </div>

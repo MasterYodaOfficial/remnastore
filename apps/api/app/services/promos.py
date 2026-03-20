@@ -22,6 +22,7 @@ from app.db.models import (
     PromoRedemptionStatus,
     SubscriptionGrant,
 )
+from app.services.i18n import translate
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
 from app.services.plans import SubscriptionPlan, SubscriptionPlanError, get_subscription_plan
 from app.services.purchases import (
@@ -64,6 +65,10 @@ class PromoBlockedError(PromoServiceError):
     pass
 
 
+def _promo_error(key: str) -> str:
+    return translate(f"api.promos.errors.{key}")
+
+
 @dataclass(slots=True)
 class PromoPlanQuote:
     campaign: PromoCampaign
@@ -88,7 +93,7 @@ class PromoDirectRedeemResult:
 def normalize_promo_code(raw_code: str) -> str:
     normalized = raw_code.strip().upper()
     if not normalized:
-        raise PromoValidationError("promo code is required")
+        raise PromoValidationError(_promo_error("code_required"))
     return normalized
 
 
@@ -200,50 +205,50 @@ async def _load_validated_promo_for_context(
     normalized_code = normalize_promo_code(code)
     promo_code = await _get_promo_code_by_code(session, code=normalized_code, for_update=for_update)
     if promo_code is None:
-        raise PromoCodeNotFoundError("promo code not found")
+        raise PromoCodeNotFoundError(_promo_error("code_not_found"))
     if not promo_code.is_active:
-        raise PromoValidationError("promo code is disabled")
+        raise PromoValidationError(_promo_error("code_disabled"))
 
     campaign = await session.get(PromoCampaign, promo_code.campaign_id)
     if campaign is None:
-        raise PromoCodeNotFoundError("promo campaign not found")
+        raise PromoCodeNotFoundError(_promo_error("campaign_not_found"))
     if campaign.status != PromoCampaignStatus.ACTIVE:
-        raise PromoValidationError("promo campaign is not active")
+        raise PromoValidationError(_promo_error("campaign_inactive"))
 
     now = _now()
     if campaign.starts_at is not None:
         starts_at = campaign.starts_at if campaign.starts_at.tzinfo is not None else campaign.starts_at.replace(tzinfo=UTC)
         if starts_at > now:
-            raise PromoValidationError("promo campaign has not started yet")
+            raise PromoValidationError(_promo_error("campaign_not_started"))
     if campaign.ends_at is not None:
         ends_at = campaign.ends_at if campaign.ends_at.tzinfo is not None else campaign.ends_at.replace(tzinfo=UTC)
         if ends_at <= now:
-            raise PromoValidationError("promo campaign has already ended")
+            raise PromoValidationError(_promo_error("campaign_ended"))
 
     if account.status == AccountStatus.BLOCKED:
-        raise PromoBlockedError("blocked accounts cannot redeem promo codes")
+        raise PromoBlockedError(_promo_error("account_blocked"))
 
     if promo_code.assigned_account_id is not None and promo_code.assigned_account_id != account.id:
-        raise PromoValidationError("promo code belongs to another account")
+        raise PromoValidationError(_promo_error("code_belongs_to_another_account"))
 
     if campaign.plan_codes and plan_code is None:
-        raise PromoValidationError("promo code can be used only for selected plans")
+        raise PromoValidationError(_promo_error("selected_plans_only"))
     if plan_code is not None and campaign.plan_codes and plan_code not in set(campaign.plan_codes):
-        raise PromoValidationError("promo code is not available for this plan")
+        raise PromoValidationError(_promo_error("not_for_plan"))
 
     if campaign.first_purchase_only and await _account_has_paid_purchase(session, account_id=account.id):
-        raise PromoValidationError("promo code is available only for the first paid purchase")
+        raise PromoValidationError(_promo_error("first_purchase_only"))
 
     has_active_subscription = _has_active_subscription(account)
     if campaign.requires_active_subscription and not has_active_subscription:
-        raise PromoValidationError("promo code requires an active subscription")
+        raise PromoValidationError(_promo_error("requires_active_subscription"))
     if campaign.requires_no_active_subscription and has_active_subscription:
-        raise PromoValidationError("promo code requires no active subscription")
+        raise PromoValidationError(_promo_error("requires_no_subscription"))
 
     if campaign.total_redemptions_limit is not None:
         total_redemptions = await _count_campaign_redemptions(session, campaign_id=campaign.id)
         if total_redemptions >= campaign.total_redemptions_limit:
-            raise PromoValidationError("promo campaign redemption limit reached")
+            raise PromoValidationError(_promo_error("campaign_limit_reached"))
 
     if campaign.per_account_redemptions_limit is not None:
         account_redemptions = await _count_campaign_redemptions(
@@ -252,7 +257,7 @@ async def _load_validated_promo_for_context(
             account_id=account.id,
         )
         if account_redemptions >= campaign.per_account_redemptions_limit:
-            raise PromoValidationError("promo code redemption limit reached for this account")
+            raise PromoValidationError(_promo_error("account_limit_reached"))
 
     if promo_code.max_redemptions is not None:
         code_redemptions = await _count_campaign_redemptions(
@@ -261,7 +266,7 @@ async def _load_validated_promo_for_context(
             promo_code_id=promo_code.id,
         )
         if code_redemptions >= promo_code.max_redemptions:
-            raise PromoValidationError("promo code redemption limit reached")
+            raise PromoValidationError(_promo_error("code_limit_reached"))
 
     if context == PromoRedemptionContext.PLAN_PURCHASE and campaign.effect_type not in (
         PromoEffectType.PERCENT_DISCOUNT,
@@ -269,14 +274,14 @@ async def _load_validated_promo_for_context(
         PromoEffectType.FIXED_PRICE,
         PromoEffectType.EXTRA_DAYS,
     ):
-        raise PromoValidationError("promo code cannot be used for plan purchase")
+        raise PromoValidationError(_promo_error("cannot_use_for_plan_purchase"))
 
     if context == PromoRedemptionContext.DIRECT and campaign.effect_type not in (
         PromoEffectType.FREE_DAYS,
         PromoEffectType.EXTRA_DAYS,
         PromoEffectType.BALANCE_CREDIT,
     ):
-        raise PromoValidationError("promo code cannot be redeemed directly")
+        raise PromoValidationError(_promo_error("cannot_redeem_directly"))
 
     return campaign, promo_code
 
@@ -294,7 +299,7 @@ def _compute_discounted_amount(
         return base_amount - discount_amount, discount_amount
 
     if campaign_currency != currency:
-        raise PromoValidationError("promo code currency does not match selected payment method")
+        raise PromoValidationError(_promo_error("currency_mismatch"))
 
     if effect_type == PromoEffectType.FIXED_DISCOUNT:
         discount_amount = min(base_amount, effect_value)
@@ -302,10 +307,10 @@ def _compute_discounted_amount(
 
     if effect_type == PromoEffectType.FIXED_PRICE:
         if effect_value >= base_amount:
-            raise PromoValidationError("promo code does not improve the selected plan price")
+            raise PromoValidationError(_promo_error("no_price_improvement"))
         return effect_value, base_amount - effect_value
 
-    raise PromoValidationError("unsupported discount effect")
+    raise PromoValidationError(_promo_error("unsupported_discount_effect"))
 
 
 async def quote_plan_promo(
@@ -342,7 +347,7 @@ async def quote_plan_promo(
             campaign_currency=campaign.currency,
         )
         if final_amount <= 0:
-            raise PromoValidationError("promo code reduces payment amount to zero; use direct redemption instead")
+            raise PromoValidationError(_promo_error("zero_payment_use_direct"))
     elif campaign.effect_type == PromoEffectType.EXTRA_DAYS:
         final_duration_days += campaign.effect_value
 
@@ -373,21 +378,21 @@ def _validate_existing_redemption(
     granted_duration_days: int | None,
 ) -> None:
     if redemption.account_id != account_id:
-        raise PromoConflictError("idempotency key already belongs to another account")
+        raise PromoConflictError(_promo_error("idempotency_account_conflict"))
     if redemption.promo_code_id != promo_code_id:
-        raise PromoConflictError("idempotency key already used for another promo code")
+        raise PromoConflictError(_promo_error("idempotency_promo_conflict"))
     if redemption.plan_code != plan_code:
-        raise PromoConflictError("idempotency key already used for another plan")
+        raise PromoConflictError(_promo_error("idempotency_plan_conflict"))
     if redemption.effect_type != effect_type or redemption.effect_value != effect_value:
-        raise PromoConflictError("idempotency key already used for another promo effect")
+        raise PromoConflictError(_promo_error("idempotency_effect_conflict"))
     if redemption.original_amount != original_amount:
-        raise PromoConflictError("idempotency key already used for another original amount")
+        raise PromoConflictError(_promo_error("idempotency_original_amount_conflict"))
     if redemption.discount_amount != discount_amount:
-        raise PromoConflictError("idempotency key already used for another discount amount")
+        raise PromoConflictError(_promo_error("idempotency_discount_amount_conflict"))
     if redemption.final_amount != final_amount:
-        raise PromoConflictError("idempotency key already used for another final amount")
+        raise PromoConflictError(_promo_error("idempotency_final_amount_conflict"))
     if redemption.granted_duration_days != granted_duration_days:
-        raise PromoConflictError("idempotency key already used for another duration")
+        raise PromoConflictError(_promo_error("idempotency_duration_conflict"))
 
 
 async def stage_promo_redemption(
@@ -465,7 +470,7 @@ async def stage_promo_redemption(
                 granted_duration_days=quote.final_duration_days,
             )
             return existing
-        raise PromoConflictError("promo redemption staging failed") from exc
+        raise PromoConflictError(_promo_error("redemption_staging_failed")) from exc
 
     await session.refresh(redemption)
     return redemption
@@ -490,12 +495,12 @@ async def mark_promo_redemption_applied(
         return None
 
     if redemption.payment_id is not None and payment_id is not None and redemption.payment_id != payment_id:
-        raise PromoConflictError("promo redemption already belongs to another payment")
+        raise PromoConflictError(_promo_error("already_another_payment"))
     if redemption.subscription_grant_id is not None and subscription_grant_id is not None:
         if redemption.subscription_grant_id != subscription_grant_id:
-            raise PromoConflictError("promo redemption already belongs to another subscription grant")
+            raise PromoConflictError(_promo_error("already_another_subscription_grant"))
     if redemption.ledger_entry_id is not None and ledger_entry_id is not None and redemption.ledger_entry_id != ledger_entry_id:
-        raise PromoConflictError("promo redemption already belongs to another ledger entry")
+        raise PromoConflictError(_promo_error("already_another_ledger_entry"))
 
     redemption.payment_id = payment_id if payment_id is not None else redemption.payment_id
     redemption.subscription_grant_id = (
@@ -518,7 +523,7 @@ async def redeem_promo_code(
 ) -> PromoDirectRedeemResult:
     normalized_idempotency_key = idempotency_key.strip()
     if not normalized_idempotency_key:
-        raise PromoValidationError("idempotency_key is required")
+        raise PromoValidationError(_promo_error("idempotency_required"))
 
     existing = await _get_promo_redemption_by_reference(
         session,
@@ -529,11 +534,11 @@ async def redeem_promo_code(
     if existing is not None:
         normalized_code = normalize_promo_code(code)
         if existing.account_id != account.id:
-            raise PromoConflictError("idempotency key already belongs to another account")
+            raise PromoConflictError(_promo_error("idempotency_account_conflict"))
         if existing.status == PromoRedemptionStatus.APPLIED:
             promo_code = await session.get(PromoCode, existing.promo_code_id)
             if promo_code is None or promo_code.code != normalized_code:
-                raise PromoConflictError("idempotency key already used for another promo code")
+                raise PromoConflictError(_promo_error("idempotency_promo_conflict"))
             refreshed_account = await load_purchase_account_for_update(session, account_id=account.id)
             ledger_entry = None if existing.ledger_entry_id is None else await session.get(LedgerEntry, existing.ledger_entry_id)
             subscription_grant = (
@@ -547,7 +552,7 @@ async def redeem_promo_code(
                 ledger_entry=ledger_entry,
                 subscription_grant=subscription_grant,
             )
-        raise PromoConflictError("promo redemption is already in progress")
+        raise PromoConflictError(_promo_error("already_in_progress"))
 
     managed_account = await load_purchase_account_for_update(session, account_id=account.id)
     campaign, promo_code = await _load_validated_promo_for_context(
@@ -641,6 +646,6 @@ def resolve_plan_checkout_amount(*, plan_code: str, currency: str) -> int:
         return plan.price_rub
     if currency == "XTR":
         if plan.price_stars is None:
-            raise SubscriptionPlanError(f"Telegram Stars price is not configured for plan {plan.code}")
+            raise SubscriptionPlanError(translate("api.plans.errors.stars_price_not_configured"))
         return plan.price_stars
-    raise PromoValidationError(f"unsupported checkout currency: {currency}")
+    raise PromoValidationError(_promo_error("unsupported_currency"))

@@ -237,7 +237,13 @@ def _plans_overview(plans: list[dict[str, Any]], *, locale: str | None) -> str:
         translate(
             "bot.menu.plan_line",
             locale=locale,
-            name=_safe_string(plan.get("name"), fallback=_safe_string(plan.get("code"), fallback="Plan")),
+            name=_safe_string(
+                plan.get("name"),
+                fallback=_safe_string(
+                    plan.get("code"),
+                    fallback=translate("bot.menu.values.plan_fallback", locale=locale),
+                ),
+            ),
             price_rub=_format_integer(plan.get("price_rub")),
             duration_days=_format_integer(plan.get("duration_days")),
             price_stars=_price_stars_label(plan, locale=locale),
@@ -791,7 +797,10 @@ async def build_rendered_menu(
                 locale=locale,
                 plan_name=_safe_string(
                     params.get("plan_name"),
-                    fallback=_safe_string(params.get("plan_code"), fallback="Тариф"),
+                    fallback=_safe_string(
+                        params.get("plan_code"),
+                        fallback=translate("bot.menu.values.plan_fallback", locale=locale),
+                    ),
                 ),
                 provider_label=_provider_label(
                     _safe_string(params.get("provider"), fallback=""),

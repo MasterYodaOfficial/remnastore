@@ -20,6 +20,7 @@ from app.services.account_linking import (
     LinkTokenTypeMismatchError,
 )
 from app.db.models import LinkType
+from app.services.i18n import translate
 
 router = APIRouter()
 
@@ -42,22 +43,22 @@ def _link_token_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, LinkTokenNotFoundError):
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Link token not found",
+            detail=translate("api.linking.errors.token_not_found"),
         )
     if isinstance(exc, LinkTokenExpiredError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Link token expired",
+            detail=translate("api.linking.errors.token_expired"),
         )
     if isinstance(exc, LinkTokenAlreadyConsumedError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Link token already used",
+            detail=translate("api.linking.errors.token_already_used"),
         )
     if isinstance(exc, LinkTokenTypeMismatchError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid link token type",
+            detail=translate("api.linking.errors.token_type_invalid"),
         )
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -144,5 +145,5 @@ async def confirm_browser_link(
     del payload, session
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Browser linking must be completed in the browser after OAuth login",
+        detail=translate("api.linking.errors.browser_complete_in_browser"),
     )

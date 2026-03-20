@@ -1,5 +1,6 @@
 import React from 'react';
 import { Moon, Sun } from 'lucide-react';
+import { t } from '../../lib/i18n';
 
 interface ThemeToggleProps {
   theme: 'light' | 'dark';
@@ -14,7 +15,7 @@ export function ThemeToggle({ theme, onToggle }: ThemeToggleProps) {
       type="button"
       role="switch"
       aria-checked={isDark}
-      aria-label="Переключить тему"
+      aria-label={t('web.themeToggle.ariaLabel')}
       onClick={onToggle}
       className="relative inline-flex h-8 w-14 shrink-0 items-center overflow-hidden rounded-full border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-toggle-track,#dbe7ff)] p-1 transition"
     >

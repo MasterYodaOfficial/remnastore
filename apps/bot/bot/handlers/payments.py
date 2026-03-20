@@ -29,11 +29,15 @@ async def _post_api(path: str, payload: dict, *, timeout: float) -> httpx.Respon
 
 @router.pre_checkout_query()
 async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot) -> None:
+    locale = pre_checkout_query.from_user.language_code if pre_checkout_query.from_user else None
     if pre_checkout_query.currency != "XTR":
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
             ok=False,
-            error_message="Поддерживаются только платежи в Telegram Stars.",
+            error_message=translate(
+                "bot.payments.pre_checkout_unsupported_currency",
+                locale=locale,
+            ),
         )
         return
 
@@ -53,7 +57,10 @@ async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: B
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
             ok=False,
-            error_message="Платёжный сервис временно недоступен. Попробуйте позже.",
+            error_message=translate(
+                "bot.payments.pre_checkout_service_unavailable",
+                locale=locale,
+            ),
         )
         return
 
@@ -61,7 +68,10 @@ async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: B
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,
             ok=False,
-            error_message="Не удалось подтвердить платёж. Попробуйте позже.",
+            error_message=translate(
+                "bot.payments.pre_checkout_confirmation_failed",
+                locale=locale,
+            ),
         )
         return
 

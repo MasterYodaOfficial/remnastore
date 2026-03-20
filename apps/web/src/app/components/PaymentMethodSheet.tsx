@@ -1,5 +1,6 @@
 import React from 'react';
 import { CreditCard, ExternalLink, Sparkles, Wallet, X } from 'lucide-react';
+import { t } from '../../lib/i18n';
 
 export type PaymentMethodProvider = 'yookassa' | 'telegram_stars' | 'wallet';
 
@@ -94,10 +95,10 @@ export function PaymentMethodSheet({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold text-[var(--tg-theme-text-color,#000000)]">
-                    Промокод для этого тарифа
+                    {t('web.paymentMethods.promoTitle')}
                   </div>
                   <p className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-                    Применим скидку или дополнительные дни до создания оплаты.
+                    {t('web.paymentMethods.promoSubtitle')}
                   </p>
                 </div>
               </div>
@@ -107,7 +108,7 @@ export function PaymentMethodSheet({
                   type="text"
                   value={promoCode ?? ''}
                   onChange={(event) => onPromoCodeChange(event.target.value)}
-                  placeholder="Введите код"
+                  placeholder={t('web.paymentMethods.promoPlaceholder')}
                   autoCapitalize="characters"
                   autoCorrect="off"
                   spellCheck={false}
@@ -119,12 +120,14 @@ export function PaymentMethodSheet({
                   disabled={isSubmitting || isApplyingPromo || !(promoCode ?? '').trim()}
                   className="inline-flex h-12 items-center justify-center rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isApplyingPromo ? 'Проверяем...' : 'Применить'}
+                  {isApplyingPromo
+                    ? t('web.paymentMethods.promoChecking')
+                    : t('web.paymentMethods.promoApply')}
                 </button>
               </div>
 
               <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm leading-6 ${promoMessageClassName}`}>
-                {promoMessage?.text ?? 'Поддерживаются скидки, бонусные дни и gift-коды на покупку тарифа.'}
+                {promoMessage?.text ?? t('web.paymentMethods.promoHint')}
               </div>
             </div>
           ) : null}
@@ -161,7 +164,7 @@ export function PaymentMethodSheet({
                 </div>
                 {isSelected ? (
                   <span className="text-sm font-medium text-[var(--tg-theme-button-color,#3390ec)]">
-                    Открываем...
+                    {t('web.paymentMethods.opening')}
                   </span>
                 ) : null}
               </button>

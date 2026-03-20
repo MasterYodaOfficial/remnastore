@@ -10,6 +10,7 @@ from app.schemas.account import AccountResponse
 from app.schemas.auth import AuthResponse, TelegramAuthRequest, TelegramReferralResultResponse
 from app.services.account_events import append_account_event
 from app.services.accounts import AccountBlockedError, upsert_telegram_account
+from app.services.i18n import translate
 from app.services.referrals import (
     ReferralCodeNotFoundError,
     apply_telegram_referral_intent,
@@ -51,7 +52,10 @@ async def auth_telegram_webapp(
             reason="init_data_missing_user",
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="init data missing user")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=translate("api.auth.errors.init_data_missing_user"),
+        )
 
     telegram_id = int(user.get("id"))
     try:

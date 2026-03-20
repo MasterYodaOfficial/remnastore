@@ -93,10 +93,8 @@ async def handle_browser_link(message: Message, link_token: str) -> None:
             await message.answer(
                 translate("bot.linking.generic_error", locale=locale)
             )
-    except Exception as e:
-        await message.answer(
-            translate("bot.linking.exception_error", locale=locale, error=str(e))
-        )
+    except Exception:
+        await message.answer(translate("bot.linking.generic_error", locale=locale))
 
 
 async def handle_telegram_link(message: Message, link_token: str) -> None:
@@ -142,10 +140,8 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
             await message.answer(
                 translate("bot.linking.generic_error", locale=locale)
             )
-    except Exception as e:
-        await message.answer(
-            translate("bot.linking.exception_error", locale=locale, error=str(e))
-        )
+    except Exception:
+        await message.answer(translate("bot.linking.generic_error", locale=locale))
 
 
 async def handle_referral_start(message: Message, referral_code: str) -> None:

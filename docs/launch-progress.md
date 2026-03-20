@@ -599,8 +599,8 @@
 - [ ] Настроить `api.domain.ru/bot/webhook`
 - [ ] Выпустить TLS сертификаты
 - [ ] Проверить backup и restore Postgres
-- [ ] Подготовить release checklist
-- [ ] Подготовить rollback steps
+- [x] Подготовить release checklist
+- [x] Подготовить rollback steps
 - [ ] Сделать первый production deploy
 
 ## Критические правила перед запуском

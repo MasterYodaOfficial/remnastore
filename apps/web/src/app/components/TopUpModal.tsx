@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LoaderCircle, Wallet, X } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 
 interface TopUpModalProps {
   isOpen: boolean;
@@ -44,10 +45,10 @@ export function TopUpModal({
               <Wallet className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />
             </div>
             <h2 className="text-xl font-bold text-[var(--tg-theme-text-color,#000000)]">
-              Пополнение баланса
+              {t('web.topUpModal.title')}
             </h2>
             <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-              Выбери сумму и откроем YooKassa для оплаты.
+              {t('web.topUpModal.subtitle')}
             </p>
           </div>
           <button
@@ -62,12 +63,13 @@ export function TopUpModal({
         <div className="space-y-5 px-5 py-5">
           <div>
             <p className="mb-3 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-              Выберите сумму пополнения
+              {t('web.topUpModal.chooseAmount')}
             </p>
             {activeAttemptAmount ? (
               <div className="mb-3 rounded-2xl border border-[var(--tg-theme-button-color,#3390ec)] border-opacity-20 bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 text-xs text-[var(--tg-theme-hint-color,#999999)]">
-                Есть незавершенное пополнение на {formatRubles(activeAttemptAmount)} ₽. Если выберете ту же сумму,
-                откроем текущую попытку, пока она не истекла.
+                {t('web.topUpModal.activeAttempt', {
+                  amount: formatRubles(activeAttemptAmount),
+                })}
               </div>
             ) : null}
             <div className="grid grid-cols-2 gap-3">
@@ -82,7 +84,7 @@ export function TopUpModal({
                     {formatRubles(amount)} ₽
                   </span>
                   <span className="block text-xs text-[var(--tg-theme-hint-color,#999999)]">
-                    Быстрый выбор
+                    {t('web.topUpModal.quickChoice')}
                   </span>
                 </button>
               ))}
@@ -91,7 +93,7 @@ export function TopUpModal({
 
           <div>
             <p className="mb-2 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-              Или введите свою сумму
+              {t('web.topUpModal.customAmount')}
             </p>
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_144px]">
               <label className="flex items-center gap-3 rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 focus-within:ring-2 focus-within:ring-[var(--tg-theme-button-color,#3390ec)]">
@@ -100,7 +102,7 @@ export function TopUpModal({
                   type="number"
                   value={customAmount}
                   onChange={(e) => setCustomAmount(e.target.value)}
-                  placeholder="Введите сумму"
+                  placeholder={t('web.topUpModal.amountPlaceholder')}
                   disabled={isSubmitting}
                   className="w-full bg-transparent text-[var(--tg-theme-text-color,#000000)] placeholder:text-[var(--tg-theme-hint-color,#999999)] focus:outline-none"
                   min="1"
@@ -120,20 +122,20 @@ export function TopUpModal({
                 {isSubmitting ? (
                   <>
                     <LoaderCircle className="h-4 w-4 animate-spin" />
-                    <span className="whitespace-nowrap">Создаем...</span>
+                    <span className="whitespace-nowrap">{t('web.topUpModal.creating')}</span>
                   </>
                 ) : (
-                  <span className="whitespace-nowrap">Продолжить</span>
+                  <span className="whitespace-nowrap">{t('web.topUpModal.continue')}</span>
                 )}
               </button>
             </div>
             <p className="mt-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">
-              Минимальная сумма пополнения: 1 ₽
+              {t('web.topUpModal.minAmount', { amount: 1 })}
             </p>
           </div>
 
           <div className="rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 text-xs text-[var(--tg-theme-hint-color,#999999)]">
-            После подтверждения откроем YooKassa. В Telegram Mini App переход откроется во внешнем браузере.
+            {t('web.topUpModal.footer')}
           </div>
         </div>
       </div>

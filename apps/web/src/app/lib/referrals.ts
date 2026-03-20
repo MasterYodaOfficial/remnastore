@@ -1,3 +1,5 @@
+import { t } from '../../lib/i18n';
+
 const TELEGRAM_BOT_URL = (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim().replace(/\/+$/, '');
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = 'remnastore.pending_referral_code';
@@ -92,9 +94,6 @@ export function buildTelegramShareReferralUrl(referralCode: string | null | unde
 
   const shareUrl = new URL('https://t.me/share/url');
   shareUrl.searchParams.set('url', telegramReferralUrl);
-  shareUrl.searchParams.set(
-    'text',
-    'Открой витрину по моей реферальной ссылке и оформи подписку в Telegram.'
-  );
+  shareUrl.searchParams.set('text', t('web.share.referralText'));
   return shareUrl.toString();
 }

@@ -74,6 +74,15 @@ export function t(key: string, params: TranslationParams = {}, locale?: string |
   });
 }
 
+export function getTranslationValue<T = unknown>(key: string, locale?: string | null): T | null {
+  const normalizedLocale = normalizeLocale(locale);
+  const catalog = catalogs[normalizedLocale] ?? catalogs[DEFAULT_LOCALE];
+  const fallbackCatalog = catalogs[DEFAULT_LOCALE];
+
+  const rawValue = resolveValue(catalog, key) ?? resolveValue(fallbackCatalog, key);
+  return rawValue === null ? null : (rawValue as T);
+}
+
 export function getLocaleCatalog(locale?: string | null): Record<string, unknown> {
   return catalogs[normalizeLocale(locale)] ?? catalogs[DEFAULT_LOCALE];
 }

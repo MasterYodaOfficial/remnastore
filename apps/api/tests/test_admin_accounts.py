@@ -35,6 +35,7 @@ from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.integrations.remnawave.client import RemnawaveUser
 from app.main import create_app
 from app.services.admin_auth import create_admin
+from app.services.i18n import translate
 
 
 class DummyCache:
@@ -608,7 +609,7 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             headers={"Authorization": f"Bearer {token}"},
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "insufficient funds")
+        self.assertEqual(response.json()["detail"], translate("api.ledger.errors.insufficient_funds"))
 
         async with self._session_factory() as session:
             stored_account = await session.get(Account, uuid.UUID(account_id))

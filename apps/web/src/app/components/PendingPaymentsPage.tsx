@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowUpRight, Clock3, CreditCard, RefreshCw, Wallet } from 'lucide-react';
 
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 import { InfoPageLayout } from './InfoPageLayout';
 
 export interface PendingPaymentView {
@@ -27,38 +28,45 @@ interface PendingPaymentsPageProps {
 }
 
 function getProviderLabel(provider: PendingPaymentView['provider']): string {
-  return provider === 'telegram_stars' ? 'Telegram Stars' : 'YooKassa';
+  return provider === 'telegram_stars'
+    ? t('web.pendingPayments.providerStars')
+    : t('web.pendingPayments.providerYooKassa');
 }
 
 function getPaymentTitle(item: PendingPaymentView): string {
   if (item.kind === 'plan') {
-    return item.planName || item.description || 'Оплата тарифа';
+    return item.planName || item.description || t('web.pendingPayments.defaultPlanTitle');
   }
-  return item.description || `Пополнение на ${formatRubles(item.amount)} ₽`;
+  return (
+    item.description ||
+    t('web.pendingPayments.topUpTitle', { amount: formatRubles(item.amount) })
+  );
 }
 
 function formatDeadline(value: string | null): string {
   if (!value) {
-    return 'Срок не указан';
+    return t('web.pendingPayments.deadlineUnknown');
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return 'Срок не указан';
+    return t('web.pendingPayments.deadlineUnknown');
   }
 
   const diffMs = date.getTime() - Date.now();
   const diffMinutes = Math.round(diffMs / 60000);
   if (diffMinutes > 0 && diffMinutes < 60) {
-    return `Истекает через ${diffMinutes} мин`;
+    return t('web.pendingPayments.deadlineMinutes', { minutes: diffMinutes });
   }
 
-  return `Доступно до ${new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)}`;
+  return t('web.pendingPayments.deadlineUntil', {
+    date: new Intl.DateTimeFormat('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date),
+  });
 }
 
 export function PendingPaymentsPage({
@@ -69,21 +77,21 @@ export function PendingPaymentsPage({
 }: PendingPaymentsPageProps) {
   return (
     <InfoPageLayout
-      title="Незавершенные оплаты"
-      subtitle="Текущие попытки оплаты, которые еще можно продолжить без создания новой ссылки."
+      title={t('web.pendingPayments.title')}
+      subtitle={t('web.pendingPayments.subtitle')}
       onBack={onBack}
     >
       <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(135deg,var(--tg-theme-secondary-bg-color,#f4f4f5)_0%,var(--app-surface-color,#dbe4f2)_100%)] p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--tg-theme-hint-color,#999999)]">
-              Активные попытки
+              {t('web.pendingPayments.summaryLabel')}
             </div>
             <div className="mt-3 text-3xl font-semibold text-[var(--tg-theme-text-color,#000000)]">
               {items.length}
             </div>
             <p className="mt-2 text-sm leading-6 text-[var(--app-muted-contrast,#475569)]">
-              Если ссылка оплаты еще жива, ее можно открыть повторно и завершить без создания новой операции.
+              {t('web.pendingPayments.summaryDescription')}
             </p>
           </div>
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]">
@@ -94,7 +102,7 @@ export function PendingPaymentsPage({
 
       {isLoading ? (
         <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-5 py-6 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-          Проверяем активные оплаты...
+          {t('web.pendingPayments.loading')}
         </div>
       ) : items.length > 0 ? (
         <div className="space-y-3">
@@ -114,7 +122,10 @@ export function PendingPaymentsPage({
                         {getPaymentTitle(item)}
                       </div>
                       <div className="mt-1 text-xs uppercase tracking-[0.14em] text-[var(--tg-theme-hint-color,#999999)]">
-                        {item.kind === 'plan' ? 'Покупка тарифа' : 'Пополнение баланса'} • {getProviderLabel(item.provider)}
+                        {item.kind === 'plan'
+                          ? t('web.pendingPayments.kindPlan')
+                          : t('web.pendingPayments.kindTopUp')}{' '}
+                        • {getProviderLabel(item.provider)}
                       </div>
                     </div>
                     <div className="text-right">
@@ -122,7 +133,9 @@ export function PendingPaymentsPage({
                         {item.currency === 'RUB' ? `${formatRubles(item.amount)} ₽` : `${item.amount} ${item.currency}`}
                       </div>
                       <div className="mt-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">
-                        {item.status === 'requires_action' ? 'Нужно действие' : 'Ожидает оплату'}
+                        {item.status === 'requires_action'
+                          ? t('web.pendingPayments.statusRequiresAction')
+                          : t('web.pendingPayments.statusPending')}
                       </div>
                     </div>
                   </div>
@@ -142,7 +155,7 @@ export function PendingPaymentsPage({
                     disabled={!item.confirmationUrl}
                     className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-2.5 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Продолжить оплату
+                    {t('web.pendingPayments.resume')}
                     <ArrowUpRight className="h-4 w-4" />
                   </button>
                 </div>
@@ -154,10 +167,10 @@ export function PendingPaymentsPage({
         <div className="rounded-2xl border border-dashed border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-5 py-10 text-center">
           <CreditCard className="mx-auto mb-4 h-14 w-14 text-[var(--tg-theme-hint-color,#999999)] opacity-60" />
           <div className="text-base font-semibold text-[var(--tg-theme-text-color,#000000)]">
-            Активных оплат нет
+            {t('web.pendingPayments.emptyTitle')}
           </div>
           <p className="mt-2 text-sm leading-6 text-[var(--tg-theme-hint-color,#999999)]">
-            Когда появится незавершенная оплата, ее можно будет продолжить отсюда без лишних действий.
+            {t('web.pendingPayments.emptyDescription')}
           </p>
         </div>
       )}

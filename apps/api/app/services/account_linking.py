@@ -37,6 +37,7 @@ from app.integrations.remnawave import (
 )
 from app.services.account_events import append_account_event
 from app.services.cache import get_cache
+from app.services.i18n import translate
 from app.services.ledger import transfer_balance_for_merge
 
 
@@ -63,6 +64,10 @@ class LinkTokenTypeMismatchError(Exception):
 class AccountMergeConflictError(Exception):
     """Raised when accounts cannot be merged safely."""
     pass
+
+
+def _linking_error(key: str) -> str:
+    return translate(f"api.linking.errors.{key}")
 
 
 def _utcnow() -> datetime:
@@ -365,18 +370,16 @@ async def get_link_token(
     token = result.scalar_one_or_none()
 
     if token is None:
-        raise LinkTokenNotFoundError("link token not found")
+        raise LinkTokenNotFoundError(_linking_error("token_not_found"))
 
     if token.consumed_at is not None:
-        raise LinkTokenAlreadyConsumedError("link token already consumed")
+        raise LinkTokenAlreadyConsumedError(_linking_error("token_already_used"))
 
     if _utcnow() >= token.expires_at:
-        raise LinkTokenExpiredError("link token expired")
+        raise LinkTokenExpiredError(_linking_error("token_expired"))
 
     if expected_link_type is not None and token.link_type != expected_link_type:
-        raise LinkTokenTypeMismatchError(
-            f"Unexpected link token type: {token.link_type}"
-        )
+        raise LinkTokenTypeMismatchError(_linking_error("token_type_invalid"))
 
     return token
 
@@ -396,7 +399,7 @@ async def _load_account_for_update(
     )
     account = result.scalar_one_or_none()
     if account is None:
-        raise ValueError(f"Account not found: {account_id}")
+        raise ValueError(_linking_error("account_not_found"))
     return account
 
 
@@ -410,9 +413,7 @@ def _ensure_no_scalar_conflicts(target: Account, source: Account) -> None:
         if source_value is None or target_value is None:
             continue
         if target_value != source_value:
-            raise AccountMergeConflictError(
-                f"Cannot merge accounts with different {field_name}"
-            )
+            raise AccountMergeConflictError(_linking_error("merge_conflict"))
 
 
 async def _move_auth_accounts(
@@ -738,7 +739,7 @@ async def _collect_remnawave_users_for_merge(
     try:
         gateway = get_remnawave_gateway()
     except RemnawaveConfigurationError as exc:
-        raise AccountMergeConflictError(str(exc)) from exc
+        raise AccountMergeConflictError(_linking_error("remnawave_merge_failed")) from exc
 
     candidates: dict[uuid.UUID, RemnawaveUser] = {}
     uuids_to_probe: set[uuid.UUID] = set()
@@ -772,7 +773,7 @@ async def _collect_remnawave_users_for_merge(
             for remote_user in await gateway.get_users_by_telegram_id(telegram_id):
                 candidates[remote_user.uuid] = remote_user
     except RemnawaveRequestError as exc:
-        raise AccountMergeConflictError(f"Remnawave merge sync failed: {exc}") from exc
+        raise AccountMergeConflictError(_linking_error("remnawave_merge_failed")) from exc
 
     return gateway, list(candidates.values())
 
@@ -861,7 +862,7 @@ async def _reconcile_remnawave_users(
                 continue
             await gateway.delete_user(remote_user.uuid)
     except RemnawaveRequestError as exc:
-        raise AccountMergeConflictError(f"Remnawave merge sync failed: {exc}") from exc
+        raise AccountMergeConflictError(_linking_error("remnawave_merge_failed")) from exc
 
     return merged_user
 

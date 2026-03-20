@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -19,6 +18,7 @@ from app.integrations.remnawave import (
 from app.schemas.subscription import SubscriptionStateResponse, TrialEligibilityResponse
 from app.services.account_events import append_account_event
 from app.services.cache import get_cache
+from app.services.i18n import translate
 from app.services.purchases import (
     PurchaseConflictError,
     RemnawaveSyncError,
@@ -27,12 +27,10 @@ from app.services.purchases import (
     clear_remote_subscription_snapshot,
     finalize_wallet_plan_purchase,
     get_subscription_grant_by_reference,
-    normalize_datetime,
     purchase_plan_with_wallet,
     PurchaseSource,
     stage_wallet_plan_purchase,
     target_remnawave_user_uuid,
-    utcnow,
 )
 from app.services.promos import (
     WALLET_PURCHASE_REFERENCE_TYPE,
@@ -66,6 +64,10 @@ class TrialEligibility:
     reason: Optional[str] = None
 
 
+def _subscription_error(key: str) -> str:
+    return translate(f"api.subscriptions.errors.{key}")
+
+
 async def _clear_account_cache(account_id: UUID) -> None:
     cache = get_cache()
     await cache.delete(cache.account_response_key(str(account_id)))
@@ -77,7 +79,7 @@ async def _load_managed_account(session: AsyncSession, account_id: UUID) -> Acco
     )
     account = result.scalar_one_or_none()
     if account is None:
-        raise SubscriptionServiceError(f"Account not found: {account_id}")
+        raise SubscriptionServiceError(_subscription_error("account_not_found"))
     return account
 
 
@@ -133,12 +135,12 @@ async def sync_current_subscription(
     try:
         gateway = get_remnawave_gateway()
     except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
+        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_not_configured")) from exc
 
     try:
         remote_user = await gateway.get_user_by_uuid(target_remnawave_user_uuid(account))
     except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
+        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_unavailable")) from exc
 
     if remote_user is None:
         clear_remote_subscription_snapshot(account)
@@ -270,12 +272,12 @@ async def sync_subscription_by_remnawave_user_uuid(
     try:
         gateway = get_remnawave_gateway()
     except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
+        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_not_configured")) from exc
 
     try:
         remote_user = await gateway.get_user_by_uuid(remnawave_user_uuid)
     except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(str(exc)) from exc
+        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_unavailable")) from exc
 
     if remote_user is None:
         clear_remote_subscription_snapshot(account)
@@ -297,7 +299,7 @@ async def purchase_subscription_with_wallet(
     promo_code: str | None = None,
 ) -> SubscriptionStateResponse:
     if account.status == AccountStatus.BLOCKED:
-        raise SubscriptionPurchaseBlockedError("blocked accounts cannot purchase subscriptions")
+        raise SubscriptionPurchaseBlockedError(_subscription_error("account_blocked_purchase"))
 
     if promo_code is None:
         account = await purchase_plan_with_wallet(
@@ -324,7 +326,7 @@ async def purchase_subscription_with_wallet(
         if existing_redemption is not None:
             existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
             if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
-                raise PurchaseConflictError("idempotency key already used for another promo code")
+                raise PurchaseConflictError(_subscription_error("idempotency_promo_conflict"))
             account = await finalize_wallet_plan_purchase(
                 session,
                 account_id=account.id,

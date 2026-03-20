@@ -28,6 +28,7 @@ from app.services.payments import (
     PaymentGatewayConfigurationError,
     PaymentGatewayError,
 )
+from app.services.i18n import translate
 from app.services.plans import SubscriptionPlanError
 from app.services.subscriptions import RemnawaveSyncError, TrialEligibilityError
 
@@ -261,7 +262,10 @@ async def create_bot_telegram_stars_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=translate("api.payments.errors.gateway_failed"),
+        ) from exc
     log_audit_event(
         "internal.bot.payment_intent.telegram_stars",
         outcome="success",
@@ -358,7 +362,10 @@ async def create_bot_yookassa_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=translate("api.payments.errors.gateway_failed"),
+        ) from exc
     log_audit_event(
         "internal.bot.payment_intent.yookassa",
         outcome="success",

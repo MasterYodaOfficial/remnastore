@@ -5,6 +5,7 @@ import {
   getTelegramWebApp,
   openTelegramInvoice,
   openTelegramLink,
+  type TelegramWebAppLike,
 } from '../../utils/telegram';
 import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
@@ -28,6 +29,7 @@ import { LegalDocumentPage } from './components/LegalDocumentPage';
 import { BalanceHistoryPage, type BalanceHistoryItemView } from './components/BalanceHistoryPage';
 import { WithdrawalRequestsCard, type WithdrawalRequestItemView } from './components/WithdrawalRequestsCard';
 import { formatRubles } from '../lib/currency';
+import { getTranslationValue, t } from '../lib/i18n';
 import { toast, Toaster } from 'sonner';
 import {
   buildBrowserReferralLink,
@@ -497,7 +499,7 @@ function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User
     account.first_name ||
     account.username ||
     account.email ||
-    'Пользователь';
+    t('web.app.fallbackUserName');
 
   return {
     id: account.id,
@@ -590,20 +592,59 @@ function mapSubscriptionToView(
   };
 }
 
+function formatDayCount(count: number): string {
+  const absoluteCount = Math.abs(count);
+  const remainder10 = absoluteCount % 10;
+  const remainder100 = absoluteCount % 100;
+  let unitKey = 'many';
+
+  if (remainder10 === 1 && remainder100 !== 11) {
+    unitKey = 'one';
+  } else if (remainder10 >= 2 && remainder10 <= 4 && (remainder100 < 12 || remainder100 > 14)) {
+    unitKey = 'few';
+  }
+
+  return t(`web.app.units.day.${unitKey}`, { count });
+}
+
+function getFallbackErrorMessage(error: unknown, fallbackKey: string): string {
+  return error instanceof Error ? error.message : t(fallbackKey);
+}
+
+function getPaymentSheetTitle(selection: PaymentSelectionState | null): string {
+  return selection?.kind === 'topup'
+    ? t('web.app.paymentSheet.topupTitle')
+    : t('web.app.paymentSheet.planTitle');
+}
+
+function getPaymentSheetSubtitle(selection: PaymentSelectionState | null): string | undefined {
+  if (selection?.kind === 'plan') {
+    return t('web.app.paymentSheet.planSubtitle', { planName: selection.planName });
+  }
+
+  if (selection?.kind === 'topup') {
+    return t('web.app.paymentSheet.topupSubtitle', {
+      amount: formatRubles(selection.amount),
+    });
+  }
+
+  return undefined;
+}
+
 function getTrialErrorMessage(detail: string): string {
   switch (detail) {
     case 'account_blocked':
-      return 'Аккаунт заблокирован. Пробный период недоступен.';
+      return t('web.app.errors.trial.accountBlocked');
     case 'trial_already_used':
-      return 'Пробный период уже был использован.';
+      return t('web.app.errors.trial.alreadyUsed');
     case 'subscription_exists':
-      return 'У аккаунта уже есть подписка в системе.';
+      return t('web.app.errors.trial.subscriptionExists');
     case 'remnawave_identity_conflict':
-      return 'Для этого email или Telegram уже существует подписка в панели.';
+      return t('web.app.errors.trial.identityConflict');
     case 'remnawave_not_configured':
-      return 'Интеграция с панелью подписок пока не настроена.';
+      return t('web.app.errors.trial.notConfigured');
     case 'remnawave_unavailable':
-      return 'Панель подписок временно недоступна. Повтори позже.';
+      return t('web.app.errors.trial.unavailable');
     default:
       return detail;
   }
@@ -612,13 +653,13 @@ function getTrialErrorMessage(detail: string): string {
 function getPaymentErrorMessage(detail: string): string {
   switch (detail) {
     case 'YooKassa credentials are not configured':
-      return 'Платежный шлюз пока не настроен.';
+      return t('web.app.errors.payment.yookassaNotConfigured');
     case 'BOT_TOKEN is required for Telegram Stars':
-      return 'Telegram Stars пока не настроены.';
+      return t('web.app.errors.payment.starsBotTokenRequired');
     case 'API_TOKEN is required for Telegram Stars callbacks':
-      return 'Внутренний callback для Telegram Stars пока не настроен.';
+      return t('web.app.errors.payment.starsCallbackNotConfigured');
     case 'insufficient funds':
-      return 'На балансе недостаточно средств для покупки тарифа.';
+      return t('web.app.errors.payment.insufficientFunds');
     default:
       {
         const promoMessage = getPromoErrorMessage(detail);
@@ -627,7 +668,7 @@ function getPaymentErrorMessage(detail: string): string {
         }
       }
       if (detail.startsWith('Telegram Stars price is not configured for plan ')) {
-        return 'Для этого тарифа пока не настроена цена в Telegram Stars.';
+        return t('web.app.errors.payment.starsPriceNotConfigured');
       }
       return detail;
   }
@@ -636,43 +677,43 @@ function getPaymentErrorMessage(detail: string): string {
 function getPromoErrorMessage(detail: string): string {
   switch (detail) {
     case 'promo code not found':
-      return 'Промокод не найден.';
+      return t('web.app.errors.promo.notFound');
     case 'promo code is disabled':
-      return 'Этот промокод отключен.';
+      return t('web.app.errors.promo.disabled');
     case 'promo campaign is not active':
-      return 'Промокод сейчас недоступен.';
+      return t('web.app.errors.promo.campaignInactive');
     case 'promo campaign has not started yet':
-      return 'Промокод еще не начал действовать.';
+      return t('web.app.errors.promo.notStarted');
     case 'promo campaign has already ended':
-      return 'Срок действия промокода уже закончился.';
+      return t('web.app.errors.promo.alreadyEnded');
     case 'blocked accounts cannot redeem promo codes':
-      return 'Для заблокированного аккаунта промокоды недоступны.';
+      return t('web.app.errors.promo.blocked');
     case 'promo code can be used only for selected plans':
-      return 'Этот промокод работает только для отдельных тарифов.';
+      return t('web.app.errors.promo.selectedPlansOnly');
     case 'promo code is not available for this plan':
-      return 'Этот промокод не подходит для выбранного тарифа.';
+      return t('web.app.errors.promo.notForPlan');
     case 'promo code is available only for the first paid purchase':
-      return 'Этот промокод доступен только на первую покупку.';
+      return t('web.app.errors.promo.firstPurchaseOnly');
     case 'promo code requires an active subscription':
-      return 'Этот промокод доступен только при активной подписке.';
+      return t('web.app.errors.promo.requiresActiveSubscription');
     case 'promo code requires no active subscription':
-      return 'Этот промокод доступен только без активной подписки.';
+      return t('web.app.errors.promo.requiresNoSubscription');
     case 'promo campaign redemption limit reached':
-      return 'Лимит активаций по этой акции уже исчерпан.';
+      return t('web.app.errors.promo.campaignLimitReached');
     case 'promo code redemption limit reached for this account':
-      return 'Для этого аккаунта лимит активаций уже исчерпан.';
+      return t('web.app.errors.promo.accountLimitReached');
     case 'promo code redemption limit reached':
-      return 'Лимит активаций этого промокода уже исчерпан.';
+      return t('web.app.errors.promo.codeLimitReached');
     case 'promo code currency does not match selected payment method':
-      return 'Этот промокод не работает с выбранным способом оплаты.';
+      return t('web.app.errors.promo.currencyMismatch');
     case 'promo code does not improve the selected plan price':
-      return 'Этот промокод не меняет цену выбранного тарифа.';
+      return t('web.app.errors.promo.noPriceImprovement');
     case 'promo code reduces payment amount to zero; use direct redemption instead':
-      return 'Этот код дает бесплатный доступ. Активируйте его в настройках.';
+      return t('web.app.errors.promo.directRedeem');
     case 'promo code cannot be used for plan purchase':
-      return 'Этот промокод нужно применять в другом сценарии.';
+      return t('web.app.errors.promo.otherScenario');
     case 'promo code cannot be redeemed directly':
-      return 'Этот промокод нужно использовать при покупке тарифа.';
+      return t('web.app.errors.promo.useOnPurchase');
     default:
       return detail;
   }
@@ -681,19 +722,38 @@ function getPromoErrorMessage(detail: string): string {
 function getWithdrawalErrorMessage(detail: string): string {
   switch (detail) {
     case 'destination value is required':
-      return 'Введите реквизиты для вывода.';
+      return t('web.app.errors.withdrawal.destinationRequired');
     case 'invalid bank card number':
-      return 'Проверьте номер карты. Он не прошел валидацию.';
+      return t('web.app.errors.withdrawal.invalidCard');
     case 'blocked accounts cannot create withdrawals':
-      return 'Для заблокированного аккаунта создание заявки недоступно.';
+      return t('web.app.errors.withdrawal.accountBlocked');
     case 'insufficient referral funds for withdrawal':
-      return 'Недостаточно доступных реферальных средств для вывода.';
+      return t('web.app.errors.withdrawal.insufficientFunds');
     default:
       if (detail.startsWith('minimum withdrawal amount is ')) {
-        return `Минимальная сумма вывода: ${detail.replace('minimum withdrawal amount is ', '')}.`;
+        return t('web.app.errors.withdrawal.minimumAmount', {
+          amount: detail.replace('minimum withdrawal amount is ', ''),
+        });
       }
       return detail;
   }
+}
+
+function isReferralAlreadyHandledDetail(detail: string): boolean {
+  return (
+    detail === 'referral already claimed' ||
+    detail === t('web.app.referralDetail.alreadyClaimed') ||
+    detail === 'referral attribution is closed after the first paid purchase' ||
+    detail === t('web.app.referralDetail.windowClosed')
+  );
+}
+
+function isReferralSelfDetail(detail: string): boolean {
+  return detail === 'self referral is not allowed' || detail === t('web.app.referralDetail.selfReferral');
+}
+
+function isReferralCodeNotFoundDetail(detail: string): boolean {
+  return detail === 'referral code not found' || detail === t('web.app.referralDetail.notFound');
 }
 
 function mapBackendPlanToView(plan: BackendPlan): Plan {
@@ -771,7 +831,9 @@ function mapStoredAttemptToPendingPaymentView(
     planName: attempt.planName ?? resolvePlanName(attempt.planId, plans),
     description:
       attempt.kind === 'topup'
-        ? `Пополнение на ${formatRubles(attempt.amount)} ₽`
+        ? t('web.app.pendingPayments.topupDescription', {
+            amount: formatRubles(attempt.amount),
+          })
         : resolvePlanName(attempt.planId, plans),
   };
 }
@@ -890,7 +952,7 @@ function formatAmountWithCurrency(amount: number, currency: string): string {
     return `${formatRubles(amount)} ₽`;
   }
   if (currency === 'XTR') {
-    return `${amount} Stars`;
+    return `${amount} ${t('web.app.paymentMethods.telegramStarsLabel')}`;
   }
   return `${amount} ${currency}`;
 }
@@ -900,18 +962,22 @@ function describePromoQuote(quote: BackendPromoPlanQuoteResponse): string {
 
   if (quote.final_amount < quote.original_amount) {
     parts.push(
-      `${formatAmountWithCurrency(quote.final_amount, quote.currency)} вместо ${formatAmountWithCurrency(
-        quote.original_amount,
-        quote.currency
-      )}`
+      t('web.app.promo.discountComparison', {
+        finalAmount: formatAmountWithCurrency(quote.final_amount, quote.currency),
+        originalAmount: formatAmountWithCurrency(quote.original_amount, quote.currency),
+      })
     );
   }
 
   if (quote.final_duration_days > quote.original_duration_days) {
-    parts.push(`доступ на ${quote.final_duration_days} дней`);
+    parts.push(
+      t('web.app.promo.duration', {
+        days: quote.final_duration_days,
+      })
+    );
   }
 
-  return parts.length > 0 ? `${parts.join(' • ')}.` : 'Промокод активен для этого тарифа.';
+  return parts.length > 0 ? `${parts.join(' • ')}.` : t('web.app.promo.activeForPlan');
 }
 
 function getPaymentReturnUrl(options: { preferTelegramBot?: boolean } = {}): string {
@@ -932,18 +998,18 @@ function buildYooKassaMethod(
   promoContext?: PlanPromoContext
 ): PaymentMethodOption {
   const promoNote = promoContext?.rubQuote
-    ? `Промокод: ${describePromoQuote(promoContext.rubQuote)}`
+    ? t('web.app.promo.prefix', { description: describePromoQuote(promoContext.rubQuote) })
     : promoContext?.code
-      ? 'Этот промокод не применяется к оплате картой.'
+      ? t('web.app.paymentMethods.cardPromoUnavailable')
       : undefined;
 
   return {
     provider: 'yookassa',
-    label: 'Банковская карта',
+    label: t('web.app.paymentMethods.yookassaLabel'),
     description: isTelegramWebApp
-      ? 'Переход на YooKassa во внешнем браузере.'
-      : 'Оплата картой через YooKassa.',
-    note: [isTelegramWebApp ? 'Мини-приложение откроет внешнюю ссылку на оплату.' : undefined, promoNote]
+      ? t('web.app.paymentMethods.yookassaDescriptionMiniApp')
+      : t('web.app.paymentMethods.yookassaDescriptionBrowser'),
+    note: [isTelegramWebApp ? t('web.app.paymentMethods.yookassaMiniAppNote') : undefined, promoNote]
       .filter(Boolean)
       .join(' '),
   };
@@ -952,16 +1018,21 @@ function buildYooKassaMethod(
 function buildWalletMethod(plan: Plan, promoContext?: PlanPromoContext): PaymentMethodOption {
   const walletAmount = promoContext?.rubQuote?.final_amount ?? plan.price;
   const promoNote = promoContext?.rubQuote
-    ? `Промокод: ${describePromoQuote(promoContext.rubQuote)}`
+    ? t('web.app.promo.prefix', { description: describePromoQuote(promoContext.rubQuote) })
     : promoContext?.code
-      ? 'Этот промокод не применяется к оплате с баланса.'
+      ? t('web.app.paymentMethods.walletPromoUnavailable')
       : undefined;
 
   return {
     provider: 'wallet',
-    label: 'С баланса',
-    description: 'Мгновенная активация без внешнего перехода.',
-    note: [`Списание ${formatRubles(walletAmount)} ₽ с внутреннего баланса.`, promoNote]
+    label: t('web.app.paymentMethods.walletLabel'),
+    description: t('web.app.paymentMethods.walletDescription'),
+    note: [
+      t('web.app.paymentMethods.walletDebitNote', {
+        amount: formatRubles(walletAmount),
+      }),
+      promoNote,
+    ]
       .filter(Boolean)
       .join(' '),
   };
@@ -987,15 +1058,20 @@ function getAvailablePlanPaymentMethods(
   if (isTelegramWebApp && plan.priceStars) {
     methods.push({
       provider: 'telegram_stars',
-      label: 'Telegram Stars',
-      description: 'Оплата внутри Telegram без перехода в браузер.',
+      label: t('web.app.paymentMethods.telegramStarsLabel'),
+      description: t('web.app.paymentMethods.telegramStarsDescription'),
       note: promoContext?.starsQuote
-        ? `Списание ${promoContext.starsQuote.final_amount} Stars. Промокод: ${describePromoQuote(
-            promoContext.starsQuote
-          )}`
+        ? t('web.app.paymentMethods.telegramStarsNoteWithPromo', {
+            amount: promoContext.starsQuote.final_amount,
+            description: describePromoQuote(promoContext.starsQuote),
+          })
         : promoContext?.code
-          ? `Списание ${plan.priceStars} Stars. Этот промокод не применяется к Telegram Stars.`
-          : `Списание ${plan.priceStars} Stars.`,
+          ? t('web.app.paymentMethods.telegramStarsPromoUnavailable', {
+              amount: plan.priceStars,
+            })
+          : t('web.app.paymentMethods.telegramStarsNote', {
+              amount: plan.priceStars,
+            }),
     });
   }
 
@@ -1204,7 +1280,7 @@ export default function App() {
       const detail =
         errorData && typeof errorData.detail === 'string'
           ? getPromoErrorMessage(errorData.detail)
-          : 'Не удалось проверить промокод';
+          : t('web.app.toasts.planPromoApplyFailed');
       throw new Error(detail);
     }
 
@@ -1233,7 +1309,7 @@ export default function App() {
       const detail =
         errorData && typeof errorData.detail === 'string'
           ? getPromoErrorMessage(errorData.detail)
-          : 'Не удалось активировать промокод';
+          : t('web.app.toasts.settingsPromoActivateFailed');
       throw new Error(detail);
     }
 
@@ -1584,13 +1660,13 @@ export default function App() {
       return options.successMessage;
     }
     if (status === 'cancelled') {
-      return 'Предыдущая попытка оплаты была отменена. Создаем новую.';
+      return t('web.app.toasts.paymentAttemptCancelled');
     }
     if (status === 'expired') {
-      return 'Предыдущая ссылка на оплату уже истекла. Создаем новую.';
+      return t('web.app.toasts.paymentAttemptExpired');
     }
     if (status === 'failed') {
-      return 'Предыдущая попытка оплаты завершилась ошибкой. Создаем новую.';
+      return t('web.app.toasts.paymentAttemptFailed');
     }
     return options.retryMessage;
   };
@@ -1612,11 +1688,6 @@ export default function App() {
     if (accessToken) {
       void loadActivePayments(accessToken, { silent: true });
     }
-  };
-
-  const isPasswordRecoveryRequested = () => {
-    const url = new URL(window.location.href);
-    return url.searchParams.get('auth_action') === 'reset-password';
   };
 
   const clearAuthActionParam = () => {
@@ -1644,35 +1715,6 @@ export default function App() {
     }
   };
 
-  const getRecoveryCallbackState = () => {
-    const url = new URL(window.location.href);
-    const hashValue = window.location.hash.startsWith('#')
-      ? window.location.hash.slice(1)
-      : window.location.hash;
-    const hashParams = new URLSearchParams(hashValue);
-
-    return {
-      code: url.searchParams.get('code'),
-      tokenHash: url.searchParams.get('token_hash') || hashParams.get('token_hash'),
-      type: url.searchParams.get('type') || hashParams.get('type'),
-      accessToken: hashParams.get('access_token'),
-      refreshToken: hashParams.get('refresh_token'),
-    };
-  };
-
-  const clearRecoveryCallbackState = (options: { clearHash?: boolean } = {}) => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('code');
-    url.searchParams.delete('token_hash');
-    url.searchParams.delete('type');
-
-    if (options.clearHash) {
-      url.hash = '';
-    }
-
-    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-  };
-
   const getBrowserLinkCallbackState = () => {
     const url = new URL(window.location.href);
     return {
@@ -1695,9 +1737,6 @@ export default function App() {
   const clearPasswordRecoveryActive = () => {
     window.sessionStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY);
   };
-
-  const hasPasswordRecoveryActive = () =>
-    window.sessionStorage.getItem(PASSWORD_RECOVERY_STORAGE_KEY) === '1';
 
   // Check if running in Telegram WebApp
   useEffect(() => {
@@ -1728,7 +1767,7 @@ export default function App() {
             setTheme('light');
           }
           // Expand the WebApp to full height
-          tg.expand();
+          tg.expand?.();
           // Auto-authenticate Telegram users
           handleTelegramAuth(tg);
         } else {
@@ -1758,7 +1797,7 @@ export default function App() {
       const selectedPlan = plans.find((plan) => plan.id === promoLaunchState.planId);
       if (!selectedPlan) {
         promoLaunchAppliedRef.current = true;
-        toast.error('Тариф из ссылки с промокодом больше недоступен.');
+        toast.error(t('web.app.toasts.promoLaunchPlanUnavailable'));
         return;
       }
 
@@ -1773,7 +1812,7 @@ export default function App() {
         setPlanPromoStarsQuote(null);
         setPlanPromoMessage({
           tone: 'neutral',
-          text: 'Промокод перенесен из Telegram. Проверяем его для выбранного тарифа.',
+          text: t('web.app.toasts.promoLaunchPlanChecking'),
         });
       }
 
@@ -1788,7 +1827,7 @@ export default function App() {
         setSettingsPromoCode(promoLaunchState.promoCode);
         setSettingsPromoMessage({
           tone: 'neutral',
-          text: 'Промокод перенесен из Telegram. Нажмите «Активировать», чтобы применить его.',
+          text: t('web.app.toasts.promoLaunchRedeemReady'),
         });
       }
     } else if (promoLaunchState.tab) {
@@ -1946,7 +1985,7 @@ export default function App() {
     }
   }, [user?.id, accessToken]);
 
-  const handleTelegramAuth = async (tg: any) => {
+  const handleTelegramAuth = async (tg: TelegramWebAppLike) => {
     try {
       const telegramUser = tg.initDataUnsafe?.user;
       if (!telegramUser) {
@@ -1955,7 +1994,7 @@ export default function App() {
       }
 
       const storedTelegramAuth = readStoredTelegramAuth();
-      if (storedTelegramAuth?.telegramUserId === telegramUser.id) {
+      if (storedTelegramAuth && storedTelegramAuth.telegramUserId === telegramUser.id) {
         setAccessToken(storedTelegramAuth.accessToken);
         const restored = await loadUserData(storedTelegramAuth.accessToken, telegramUser.photo_url);
         if (restored) {
@@ -1980,7 +2019,7 @@ export default function App() {
           const detail =
             errorData && typeof errorData.detail === 'string'
               ? errorData.detail
-              : 'Не удалось подтвердить Telegram-сессию';
+              : t('web.app.toasts.telegramSessionConfirmFailed');
           throw new Error(detail);
         }
 
@@ -1994,11 +2033,11 @@ export default function App() {
         });
 
         if (referralResult?.created) {
-          toast.success('Реферальная ссылка успешно привязана');
+          toast.success(t('web.app.toasts.referralClaimed'));
         } else if (referralResult?.reason === 'self_referral') {
-          toast.error('Нельзя использовать собственную реферальную ссылку');
+          toast.error(t('web.app.toasts.referralSelfNotAllowed'));
         } else if (referralResult?.reason === 'referral_code_not_found') {
-          toast.error('Реферальная ссылка недействительна');
+          toast.error(t('web.app.toasts.referralInvalid'));
         }
 
         const loaded = await loadUserData(authData.access_token, telegramUser.photo_url);
@@ -2034,7 +2073,7 @@ export default function App() {
         setAccessToken(null);
         console.error('Telegram auth error:', err);
         toast.error(
-          err instanceof Error ? err.message : 'Не удалось подтвердить Telegram-сессию'
+          getFallbackErrorMessage(err, 'web.app.toasts.telegramSessionConfirmFailed')
         );
       }
     } catch (err) {
@@ -2088,94 +2127,6 @@ export default function App() {
     }
 
     return restored;
-  };
-
-  const preparePasswordRecovery = async () => {
-    clearBrowserAuthState();
-    const recoveryCallbackState = getRecoveryCallbackState();
-    const hasRecoveryCallback =
-      Boolean(recoveryCallbackState.code) ||
-      Boolean(recoveryCallbackState.tokenHash) ||
-      Boolean(recoveryCallbackState.accessToken && recoveryCallbackState.refreshToken);
-    let lastError: unknown = null;
-
-    try {
-      const initializeResult = await supabase.auth.initialize();
-      if (initializeResult.error) {
-        lastError = initializeResult.error;
-      }
-
-      let {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session?.access_token && recoveryCallbackState.code) {
-        const { data, error } = await supabase.auth.exchangeCodeForSession(recoveryCallbackState.code);
-        if (error) {
-          lastError = error;
-        } else {
-          session = data.session;
-          clearRecoveryCallbackState();
-        }
-      }
-
-      if (
-        !session?.access_token &&
-        recoveryCallbackState.accessToken &&
-        recoveryCallbackState.refreshToken
-      ) {
-        const { data, error } = await supabase.auth.setSession({
-          access_token: recoveryCallbackState.accessToken,
-          refresh_token: recoveryCallbackState.refreshToken,
-        });
-        if (error) {
-          lastError = error;
-        } else {
-          session = data.session;
-          clearRecoveryCallbackState({ clearHash: true });
-        }
-      }
-
-      if (
-        !session?.access_token &&
-        recoveryCallbackState.tokenHash &&
-        recoveryCallbackState.type === 'recovery'
-      ) {
-        const { data, error } = await supabase.auth.verifyOtp({
-          token_hash: recoveryCallbackState.tokenHash,
-          type: 'recovery',
-        });
-        if (error) {
-          lastError = error;
-        } else {
-          session = data.session;
-          clearRecoveryCallbackState();
-        }
-      }
-
-      if (session?.access_token && (hasRecoveryCallback || hasPasswordRecoveryActive())) {
-        markPasswordRecoveryActive();
-        setAuthViewMode('recovery');
-        return;
-      }
-
-      if (lastError) {
-        console.error('Password recovery preparation error:', lastError);
-      }
-
-      clearPasswordRecoveryActive();
-      clearAuthActionParam();
-      const restored = await checkSupabaseAuth();
-      setAuthViewMode(restored ? 'default' : 'recovery-expired');
-    } catch (err) {
-      console.error('Password recovery preparation error:', err);
-      clearPasswordRecoveryActive();
-      clearAuthActionParam();
-      const restored = await checkSupabaseAuth();
-      setAuthViewMode(restored ? 'default' : 'recovery-expired');
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   // Listen for auth changes
@@ -2561,7 +2512,7 @@ export default function App() {
   const handleOpenSubscriptionAccess = () => {
     const subscriptionUrl = subscription?.subscriptionUrl?.trim();
     if (!subscriptionUrl) {
-      toast.error('Ссылка подписки пока недоступна');
+      toast.error(t('web.app.toasts.subscriptionLinkUnavailable'));
       return;
     }
 
@@ -2606,7 +2557,7 @@ export default function App() {
 
   const handleOpenSupport = () => {
     if (!SUPPORT_TELEGRAM_URL) {
-      toast.error('Не настроена ссылка на Telegram-поддержку');
+      toast.error(t('web.app.toasts.supportLinkUnavailable'));
       return;
     }
 
@@ -2650,11 +2601,11 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Не удалось отметить уведомление как прочитанное');
+        throw new Error(t('web.app.toasts.notificationReadFailed'));
       }
     } catch (err) {
       console.error('Mark notification read error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось обновить уведомление');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.notificationReadFailed'));
       await loadNotifications(accessToken, { silent: true });
     } finally {
       setIsUpdatingNotificationReadState(false);
@@ -2679,11 +2630,11 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error('Не удалось отметить все уведомления как прочитанные');
+        throw new Error(t('web.app.toasts.notificationsReadFailed'));
       }
     } catch (err) {
       console.error('Mark all notifications read error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось обновить уведомления');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.notificationsReadFailed'));
       await loadNotifications(accessToken, { silent: true });
     } finally {
       setIsUpdatingNotificationReadState(false);
@@ -2749,7 +2700,7 @@ export default function App() {
 
   const handleResumePendingPayment = (payment: PendingPaymentView) => {
     if (!payment.confirmationUrl) {
-      toast.error('Ссылка оплаты уже недоступна');
+      toast.error(t('web.app.toasts.paymentLinkUnavailable'));
       return;
     }
 
@@ -2801,25 +2752,22 @@ export default function App() {
         const detail =
           errorData && typeof errorData.detail === 'string'
             ? errorData.detail
-            : 'Не удалось привязать реферальную ссылку';
+            : t('web.app.toasts.referralPrepareFailed');
 
-        if (
-          detail === 'referral already claimed' ||
-          detail === 'referral attribution is closed after the first paid purchase'
-        ) {
+        if (isReferralAlreadyHandledDetail(detail)) {
           clearPendingReferralCode();
           return false;
         }
 
-        if (detail === 'self referral is not allowed') {
+        if (isReferralSelfDetail(detail)) {
           clearPendingReferralCode();
-          toast.error('Нельзя использовать собственную реферальную ссылку');
+          toast.error(t('web.app.toasts.referralSelfNotAllowed'));
           return false;
         }
 
-        if (detail === 'referral code not found') {
+        if (isReferralCodeNotFoundDetail(detail)) {
           clearPendingReferralCode();
-          toast.error('Реферальная ссылка недействительна');
+          toast.error(t('web.app.toasts.referralInvalid'));
           return false;
         }
 
@@ -2829,7 +2777,7 @@ export default function App() {
       const payload = (await response.json()) as { created: boolean };
       clearPendingReferralCode();
       if (payload.created) {
-        toast.success('Реферальная ссылка успешно привязана');
+        toast.success(t('web.app.toasts.referralClaimed'));
       }
       return payload.created;
     } catch (err) {
@@ -3078,8 +3026,10 @@ export default function App() {
 
       const continuationNote =
         selection.kind === 'plan'
-          ? 'Есть незавершенная оплата. Откроем текущую попытку, пока срок не истек.'
-          : `Есть незавершенное пополнение на ${formatRubles(matchingAttempt.amount)} ₽. Откроем его повторно, пока срок не истек.`;
+          ? t('web.app.paymentMethods.resumePlanNote')
+          : t('web.app.paymentMethods.resumeTopupNote', {
+              amount: formatRubles(matchingAttempt.amount),
+            });
 
       return {
         ...method,
@@ -3090,7 +3040,7 @@ export default function App() {
   const createTopUpPayment = async (amount: number, provider: PaymentMethodProvider) => {
     if (!accessToken || !user) return;
     if (provider !== 'yookassa') {
-      throw new Error('Этот способ пополнения пока не поддерживается.');
+      throw new Error(t('web.app.toasts.topupUnsupportedMethod'));
     }
 
     const resumableAttempt = await resolveStoredCheckoutAttempt(accessToken, {
@@ -3100,22 +3050,24 @@ export default function App() {
       amount,
     });
 
-    if (resumableAttempt.activeAttempt) {
+    const activeAttempt = resumableAttempt.activeAttempt;
+    if (activeAttempt) {
       setIsTopUpModalOpen(false);
-      toast.success('Открываем незавершенное пополнение');
-      openCheckoutConfirmation(resumableAttempt.activeAttempt.confirmationUrl, {
-        provider: resumableAttempt.activeAttempt.provider,
+      toast.success(t('web.app.toasts.topupResume'));
+      openCheckoutConfirmation(activeAttempt.confirmationUrl, {
+        provider: activeAttempt.provider,
         onStatusChange: (status) => {
           if (status === 'paid') {
-            markCheckoutAttemptStatus(resumableAttempt.activeAttempt, 'succeeded');
+            markCheckoutAttemptStatus(activeAttempt, 'succeeded');
             return;
           }
           if (status === 'cancelled' || status === 'failed') {
-            markCheckoutAttemptStatus(
-              resumableAttempt.activeAttempt,
-              status as StoredPaymentAttemptStatus
+            markCheckoutAttemptStatus(activeAttempt, status as StoredPaymentAttemptStatus);
+            toast.error(
+              status === 'cancelled'
+                ? t('web.app.toasts.topupCancelled')
+                : t('web.app.toasts.topupFailed')
             );
-            toast.error(status === 'cancelled' ? 'Оплата была отменена.' : 'Оплата завершилась ошибкой.');
           }
         },
       });
@@ -3124,8 +3076,8 @@ export default function App() {
 
     if (resumableAttempt.finalStatus) {
       const message = describeClosedPaymentAttempt(resumableAttempt.finalStatus, {
-        successMessage: 'Предыдущее пополнение уже завершено. Обновляем баланс.',
-        retryMessage: 'Создаем новую попытку оплаты.',
+        successMessage: t('web.app.toasts.topupPreviousSucceeded'),
+        retryMessage: t('web.app.toasts.topupRetry'),
       });
       if (resumableAttempt.finalStatus === 'succeeded') {
         toast.success(message);
@@ -3147,7 +3099,9 @@ export default function App() {
         body: JSON.stringify({
           amount_rub: amount,
           success_url: getPaymentReturnUrl({ preferTelegramBot: isTelegramWebApp }),
-          description: `Пополнение баланса на ${formatRubles(amount)} ₽`,
+          description: t('web.app.paymentDescription.topup', {
+            amount: formatRubles(amount),
+          }),
           idempotency_key: createClientIdempotencyKey('topup'),
         }),
       });
@@ -3157,24 +3111,24 @@ export default function App() {
         const detail =
           errorData && typeof errorData.detail === 'string'
             ? getPaymentErrorMessage(errorData.detail)
-            : 'Не удалось создать платёж на пополнение';
+            : t('web.app.toasts.topupCreateRequestFailed');
         throw new Error(detail);
       }
 
       const paymentIntent = (await response.json()) as BackendPaymentIntent;
       if (!paymentIntent.confirmation_url) {
-        throw new Error('Платёж создан без ссылки на подтверждение');
+        throw new Error(t('web.app.toasts.paymentMissingConfirmation'));
       }
 
       persistCheckoutAttempt(paymentIntent, { kind: 'topup' });
       setIsTopUpModalOpen(false);
-      toast.success('Открываем YooKassa для пополнения');
+      toast.success(t('web.app.toasts.topupOpenYookassa'));
       openCheckoutConfirmation(paymentIntent.confirmation_url, {
         provider: paymentIntent.provider,
       });
     } catch (err) {
       console.error('Top-up payment error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось создать платёж');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.topupCreateFailed'));
     } finally {
       setIsTopUpSubmitting(false);
     }
@@ -3215,19 +3169,19 @@ export default function App() {
         const detail =
           errorData && typeof errorData.detail === 'string'
             ? getTrialErrorMessage(errorData.detail)
-            : 'Не удалось активировать пробный период';
+            : t('web.app.toasts.trialActivateFailed');
         throw new Error(detail);
       }
 
       const reloaded = await loadUserData(accessToken, user?.avatar);
       if (!reloaded) {
-        throw new Error('Пробный период активирован, но не удалось обновить профиль');
+        throw new Error(t('web.app.toasts.trialProfileRefreshFailed'));
       }
 
-      toast.success('Пробный период активирован');
+      toast.success(t('web.app.toasts.trialActivated'));
     } catch (err) {
       console.error('Trial activation error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось активировать пробный период');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.trialActivateFailed'));
     }
   };
 
@@ -3247,7 +3201,7 @@ export default function App() {
     if (!selectedPlan) {
       setPlanPromoMessage({
         tone: 'error',
-        text: 'Выбранный тариф не найден.',
+        text: t('web.app.toasts.planNotFound'),
       });
       return;
     }
@@ -3256,7 +3210,7 @@ export default function App() {
     if (!normalizedPromoCode) {
       setPlanPromoMessage({
         tone: 'error',
-        text: 'Введите промокод, чтобы проверить его для этого тарифа.',
+        text: t('web.app.toasts.planPromoEnterCode'),
       });
       return;
     }
@@ -3272,19 +3226,19 @@ export default function App() {
       try {
         rubQuote = await loadPlanPromoQuoteSnapshot(accessToken, selectedPlan.id, normalizedPromoCode, 'RUB');
       } catch (err) {
-        rubError = err instanceof Error ? err.message : 'Не удалось проверить промокод для оплаты в рублях.';
+        rubError = getFallbackErrorMessage(err, 'web.app.toasts.planPromoRubCheckFailed');
       }
 
       if (selectedPlan.priceStars) {
         try {
           starsQuote = await loadPlanPromoQuoteSnapshot(accessToken, selectedPlan.id, normalizedPromoCode, 'XTR');
         } catch (err) {
-          starsError = err instanceof Error ? err.message : 'Не удалось проверить промокод для Telegram Stars.';
+          starsError = getFallbackErrorMessage(err, 'web.app.toasts.planPromoStarsCheckFailed');
         }
       }
 
       if (!rubQuote && !starsQuote) {
-        const message = rubError ?? starsError ?? 'Не удалось применить промокод.';
+        const message = rubError ?? starsError ?? t('web.app.toasts.planPromoApplyFailed');
         setPlanPromoPlanId(selectedPlan.id);
         setPlanPromoRubQuote(null);
         setPlanPromoStarsQuote(null);
@@ -3298,10 +3252,18 @@ export default function App() {
 
       const appliedCode = rubQuote?.promo_code ?? starsQuote?.promo_code ?? normalizedPromoCode;
       const summary = rubQuote
-        ? `Промокод ${appliedCode} применен: ${describePromoQuote(rubQuote)}${
-            selectedPlan.priceStars && !starsQuote ? ' Для оплаты через Telegram Stars он не действует.' : ''
-          }`
-        : `Промокод ${appliedCode} работает для Telegram Stars: ${describePromoQuote(starsQuote as BackendPromoPlanQuoteResponse)}`;
+        ? t('web.app.promoMessages.summaryApplied', {
+            code: appliedCode,
+            description: describePromoQuote(rubQuote),
+            extra:
+              selectedPlan.priceStars && !starsQuote
+                ? t('web.app.promoMessages.starsUnavailableSuffix')
+                : '',
+          })
+        : t('web.app.promoMessages.summaryStarsOnly', {
+            code: appliedCode,
+            description: describePromoQuote(starsQuote as BackendPromoPlanQuoteResponse),
+          });
 
       setPlanPromoPlanId(selectedPlan.id);
       setPlanPromoCode(appliedCode);
@@ -3311,7 +3273,7 @@ export default function App() {
         tone: 'success',
         text: summary,
       });
-      toast.success('Промокод применен к выбранному тарифу');
+      toast.success(t('web.app.toasts.planPromoApplied'));
     } finally {
       setIsApplyingPlanPromo(false);
     }
@@ -3325,7 +3287,7 @@ export default function App() {
 
   const handleRedeemSettingsPromo = async () => {
     if (!accessToken) {
-      toast.error('Необходимо войти в аккаунт');
+      toast.error(t('web.app.toasts.settingsAuthRequired'));
       return;
     }
 
@@ -3333,7 +3295,7 @@ export default function App() {
     if (!normalizedPromoCode) {
       setSettingsPromoMessage({
         tone: 'error',
-        text: 'Введите промокод для активации.',
+        text: t('web.app.toasts.settingsPromoEnterCode'),
       });
       return;
     }
@@ -3349,12 +3311,18 @@ export default function App() {
       const result = await redeemPromoCodeSnapshot(accessToken, normalizedPromoCode, idempotencyKey);
       const message =
         typeof result.balance_credit_amount === 'number' && result.balance_credit_amount > 0
-          ? `Промокод ${result.promo_code} активирован: на баланс начислено ${formatRubles(
-              result.balance_credit_amount
-            )} ₽.`
+          ? t('web.app.promoMessages.activateBalance', {
+              code: result.promo_code,
+              amount: formatRubles(result.balance_credit_amount),
+            })
           : typeof result.granted_duration_days === 'number' && result.granted_duration_days > 0
-            ? `Промокод ${result.promo_code} активирован: доступ продлен на ${result.granted_duration_days} дней.`
-            : `Промокод ${result.promo_code} активирован.`;
+            ? t('web.app.promoMessages.activateDuration', {
+                code: result.promo_code,
+                days: result.granted_duration_days,
+              })
+            : t('web.app.promoMessages.activateGeneric', {
+                code: result.promo_code,
+              });
 
       setSettingsPromoCode(result.promo_code);
       setSettingsPromoMessage({
@@ -3371,7 +3339,7 @@ export default function App() {
 
       toast.success(message);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Не удалось активировать промокод.';
+      const message = getFallbackErrorMessage(err, 'web.app.toasts.settingsPromoActivateFailed');
       setSettingsPromoMessage({
         tone: 'error',
         text: message,
@@ -3387,7 +3355,7 @@ export default function App() {
 
     const selectedPlan = plans.find((plan) => plan.id === planId);
     if (!selectedPlan) {
-      throw new Error('Выбранный тариф не найден.');
+      throw new Error(t('web.app.toasts.planNotFound'));
     }
 
     const promoCodeForProvider =
@@ -3409,8 +3377,8 @@ export default function App() {
       if (hasTypedPromoCode && !promoCodeForProvider) {
         toast.error(
           provider === 'telegram_stars'
-            ? 'Этот промокод не действует для Telegram Stars. Продолжаем без него.'
-            : 'Этот промокод не действует для выбранного способа оплаты. Продолжаем без него.'
+            ? t('web.app.promoMessages.typedPromoIgnoredStars')
+            : t('web.app.promoMessages.typedPromoIgnoredProvider')
         );
       }
 
@@ -3435,21 +3403,21 @@ export default function App() {
           const detail =
             errorData && typeof errorData.detail === 'string'
               ? getPaymentErrorMessage(errorData.detail)
-              : 'Не удалось купить тариф с баланса';
+              : t('web.app.toasts.walletPurchaseFailed');
           throw new Error(detail);
         }
 
         const reloaded = await loadUserData(accessToken, user?.avatar);
         if (!reloaded) {
-          throw new Error('Тариф активирован, но не удалось обновить профиль');
+          throw new Error(t('web.app.toasts.walletProfileRefreshFailed'));
         }
 
-        toast.success('Тариф активирован с баланса');
+        toast.success(t('web.app.toasts.walletActivated'));
         return;
       }
 
       if (provider === 'telegram_stars' && !selectedPlan.priceStars) {
-        throw new Error('Для этого тарифа пока не настроена цена в Telegram Stars.');
+        throw new Error(t('web.app.toasts.starsPriceMissing'));
       }
 
       if (provider === 'yookassa' || provider === 'telegram_stars') {
@@ -3461,23 +3429,23 @@ export default function App() {
           promoCode: promoCodeForProvider ?? undefined,
         });
 
-        if (resumableAttempt.activeAttempt) {
-          toast.success('Открываем незавершенную оплату тарифа');
-          openCheckoutConfirmation(resumableAttempt.activeAttempt.confirmationUrl, {
-            provider: resumableAttempt.activeAttempt.provider,
-            onPaid: () => toast.success('Платёж подтверждён. Обновляем подписку.'),
+        const activeAttempt = resumableAttempt.activeAttempt;
+        if (activeAttempt) {
+          toast.success(t('web.app.toasts.planResume'));
+          openCheckoutConfirmation(activeAttempt.confirmationUrl, {
+            provider: activeAttempt.provider,
+            onPaid: () => toast.success(t('web.app.toasts.planPaymentConfirmed')),
             onStatusChange: (status) => {
               if (status === 'paid') {
-                markCheckoutAttemptStatus(resumableAttempt.activeAttempt, 'succeeded');
+                markCheckoutAttemptStatus(activeAttempt, 'succeeded');
                 return;
               }
               if (status === 'cancelled' || status === 'failed') {
-                markCheckoutAttemptStatus(
-                  resumableAttempt.activeAttempt,
-                  status as StoredPaymentAttemptStatus
-                );
+                markCheckoutAttemptStatus(activeAttempt, status as StoredPaymentAttemptStatus);
                 toast.error(
-                  status === 'cancelled' ? 'Оплата тарифа была отменена.' : 'Оплата тарифа завершилась ошибкой.'
+                  status === 'cancelled'
+                    ? t('web.app.toasts.planCancelled')
+                    : t('web.app.toasts.planFailed')
                 );
               }
             },
@@ -3487,8 +3455,8 @@ export default function App() {
 
         if (resumableAttempt.finalStatus) {
           const message = describeClosedPaymentAttempt(resumableAttempt.finalStatus, {
-            successMessage: 'Предыдущая оплата тарифа уже завершена. Обновляем подписку.',
-            retryMessage: 'Создаем новую попытку оплаты тарифа.',
+            successMessage: t('web.app.toasts.planPreviousSucceeded'),
+            retryMessage: t('web.app.toasts.planRetry'),
           });
           if (resumableAttempt.finalStatus === 'succeeded') {
             toast.success(message);
@@ -3510,7 +3478,9 @@ export default function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          description: selectedPlan ? `Оплата тарифа ${selectedPlan.name}` : `Оплата тарифа ${planId}`,
+          description: t('web.app.paymentDescription.plan', {
+            planName: selectedPlan ? selectedPlan.name : planId,
+          }),
           idempotency_key: createClientIdempotencyKey(`plan-${planId}`),
           promo_code: promoCodeForProvider,
           ...(useTelegramStars
@@ -3524,13 +3494,13 @@ export default function App() {
         const detail =
           errorData && typeof errorData.detail === 'string'
             ? getPaymentErrorMessage(errorData.detail)
-            : 'Не удалось создать платёж на покупку тарифа';
+            : t('web.app.toasts.planCreateRequestFailed');
         throw new Error(detail);
       }
 
       const paymentIntent = (await response.json()) as BackendPaymentIntent;
       if (!paymentIntent.confirmation_url) {
-        throw new Error('Платёж создан без ссылки на подтверждение');
+        throw new Error(t('web.app.toasts.paymentMissingConfirmation'));
       }
 
       persistCheckoutAttempt(paymentIntent, {
@@ -3540,11 +3510,11 @@ export default function App() {
         promoCode: promoCodeForProvider ?? undefined,
       });
       toast.success(
-        useTelegramStars ? 'Открываем оплату в Telegram Stars' : 'Открываем YooKassa для оплаты тарифа'
+        useTelegramStars ? t('web.app.toasts.openStars') : t('web.app.toasts.openPlanYookassa')
       );
       openCheckoutConfirmation(paymentIntent.confirmation_url, {
         provider: paymentIntent.provider,
-        onPaid: () => toast.success('Платёж подтверждён. Обновляем подписку.'),
+        onPaid: () => toast.success(t('web.app.toasts.planPaymentConfirmed')),
         onStatusChange: (status) => {
           if (status !== 'paid' && status !== 'cancelled' && status !== 'failed') {
             return;
@@ -3568,13 +3538,15 @@ export default function App() {
 
           markCheckoutAttemptStatus(activeAttempt, status as StoredPaymentAttemptStatus);
           toast.error(
-            status === 'cancelled' ? 'Оплата тарифа была отменена.' : 'Оплата тарифа завершилась ошибкой.'
+            status === 'cancelled'
+              ? t('web.app.toasts.planCancelled')
+              : t('web.app.toasts.planFailed')
           );
         },
       });
     } catch (err) {
       console.error('Plan payment error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось создать платёж');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.topupCreateFailed'));
     } finally {
       setCheckoutPlanId(null);
     }
@@ -3583,7 +3555,7 @@ export default function App() {
   const handleBuyPlan = async (planId: string) => {
     const selectedPlan = plans.find((plan) => plan.id === planId);
     if (!selectedPlan) {
-      toast.error('Выбранный тариф не найден.');
+      toast.error(t('web.app.toasts.planNotFound'));
       return;
     }
 
@@ -3593,7 +3565,7 @@ export default function App() {
     );
 
     if (!methods.length) {
-      toast.error('Для этого тарифа пока не настроен ни один способ оплаты.');
+      toast.error(t('web.app.toasts.planNoMethods'));
       return;
     }
 
@@ -3605,7 +3577,7 @@ export default function App() {
         planPromoCode.trim()
           ? {
               tone: 'neutral',
-              text: 'Нажмите «Применить», чтобы проверить текущий промокод для этого тарифа.',
+              text: t('web.app.promoMessages.applyHint'),
             }
           : null
       );
@@ -3644,7 +3616,7 @@ export default function App() {
     if (user?.referralCode) {
       const referralLink = buildBrowserReferralLink(user.referralCode);
       if (!referralLink) {
-        toast.error('Не удалось подготовить реферальную ссылку');
+        toast.error(t('web.app.toasts.referralPrepareFailed'));
         return;
       }
 
@@ -3652,12 +3624,12 @@ export default function App() {
         .writeText(referralLink)
         .then(() => {
           setReferralCopied(true);
-          toast.success('Реферальная ссылка скопирована');
+          toast.success(t('web.app.toasts.referralCopied'));
           window.setTimeout(() => setReferralCopied(false), 2000);
         })
         .catch((err) => {
           console.error('Referral copy error:', err);
-          toast.error('Не удалось скопировать ссылку');
+          toast.error(t('web.app.toasts.referralCopyFailed'));
         });
     }
   };
@@ -3669,7 +3641,7 @@ export default function App() {
 
     const shareUrl = buildTelegramShareReferralUrl(user.referralCode);
     if (!shareUrl) {
-      toast.error('Не настроена ссылка на Telegram-бота');
+      toast.error(t('web.app.toasts.botLinkUnavailable'));
       return;
     }
 
@@ -3685,20 +3657,20 @@ export default function App() {
 
   const handleWithdraw = async () => {
     if (!accessToken) {
-      toast.error('Необходимо войти в аккаунт');
+      toast.error(t('web.app.toasts.settingsAuthRequired'));
       return;
     }
 
     const availableForWithdraw =
       referralSummary?.available_for_withdraw ?? user?.referralEarnings ?? 0;
     if (availableForWithdraw <= 0) {
-      toast.error('Сейчас нет доступной суммы для вывода.');
+      toast.error(t('web.app.toasts.withdrawNoFunds'));
       return;
     }
 
     const snapshot = await loadWithdrawals(accessToken, { silent: true });
     if (!snapshot) {
-      toast.error('Не удалось загрузить форму вывода.');
+      toast.error(t('web.app.toasts.withdrawFormLoadFailed'));
       return;
     }
     setIsWithdrawalModalOpen(true);
@@ -3710,7 +3682,7 @@ export default function App() {
     comment: string;
   }) => {
     if (!accessToken) {
-      toast.error('Необходимо войти в аккаунт');
+      toast.error(t('web.app.toasts.settingsAuthRequired'));
       return;
     }
 
@@ -3735,12 +3707,12 @@ export default function App() {
         const detail =
           errorData && typeof errorData.detail === 'string'
             ? errorData.detail
-            : 'Не удалось создать заявку на вывод';
+            : t('web.app.toasts.withdrawCreateFailed');
         throw new Error(getWithdrawalErrorMessage(detail));
       }
 
       setIsWithdrawalModalOpen(false);
-      toast.success('Заявка на вывод создана и отправлена на рассмотрение администратора.');
+      toast.success(t('web.app.toasts.withdrawCreated'));
 
       await Promise.all([
         refreshUserData(),
@@ -3752,7 +3724,7 @@ export default function App() {
       ]);
     } catch (err) {
       console.error('Withdrawal create error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось создать заявку на вывод');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.withdrawCreateFailed'));
     } finally {
       setIsWithdrawalSubmitting(false);
     }
@@ -3768,7 +3740,7 @@ export default function App() {
 
   const handleLinkTelegram = async () => {
     if (!accessToken) {
-      toast.error('Необходимо войти в аккаунт');
+      toast.error(t('web.app.toasts.settingsAuthRequired'));
       return;
     }
 
@@ -3782,22 +3754,22 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Не удалось создать ссылку');
+        throw new Error(errorData.detail || t('web.app.toasts.linkCreateFailed'));
       }
 
       const data = await response.json();
       pendingTelegramLinkRefreshRef.current = true;
       window.open(data.link_url, '_blank');
-      toast.success('Ссылка для привязки Telegram открыта в новом окне');
+      toast.success(t('web.app.toasts.linkTelegramOpened'));
     } catch (err) {
       console.error('Link Telegram error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось привязать Telegram');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.linkTelegramFailed'));
     }
   };
 
   const handleLinkBrowser = async () => {
     if (!accessToken) {
-      toast.error('Необходимо войти в аккаунт');
+      toast.error(t('web.app.toasts.settingsAuthRequired'));
       return;
     }
 
@@ -3811,7 +3783,7 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Не удалось создать ссылку');
+        throw new Error(errorData.detail || t('web.app.toasts.linkCreateFailed'));
       }
 
       const data = await response.json();
@@ -3823,7 +3795,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Link Browser error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось привязать браузерный аккаунт');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.linkBrowserFailed'));
     }
   };
 
@@ -3846,15 +3818,15 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Не удалось завершить привязку');
+        throw new Error(errorData.detail || t('web.app.toasts.linkBrowserCompleteFailed'));
       }
 
       clearBrowserLinkCallbackState();
       await loadUserData(token);
-      toast.success('Браузерный аккаунт успешно привязан');
+      toast.success(t('web.app.toasts.linkBrowserCompleted'));
     } catch (err) {
       console.error('Complete browser link error:', err);
-      toast.error(err instanceof Error ? err.message : 'Не удалось завершить привязку аккаунта');
+      toast.error(getFallbackErrorMessage(err, 'web.app.toasts.linkBrowserCompleteFailed'));
     } finally {
       if (inFlightLinkTokenRef.current === linkToken) {
         inFlightLinkTokenRef.current = null;
@@ -3915,14 +3887,14 @@ export default function App() {
       if (session?.access_token) {
         const loaded = await syncBrowserAuth(session.access_token);
         if (!loaded) {
-          toast.success('Пароль обновлен. Войдите с новым паролем.');
+          toast.success(t('web.app.toasts.passwordUpdated'));
         }
       } else {
-        toast.success('Пароль обновлен. Войдите с новым паролем.');
+        toast.success(t('web.app.toasts.passwordUpdated'));
       }
     } catch (err) {
       console.error('Password recovery completion error:', err);
-      toast.success('Пароль обновлен. Войдите с новым паролем.');
+      toast.success(t('web.app.toasts.passwordUpdated'));
     } finally {
       setIsLoading(false);
     }
@@ -3990,7 +3962,7 @@ export default function App() {
       <>
         <Toaster position="top-center" />
         <div className="min-h-screen flex items-center justify-center bg-[var(--tg-theme-bg-color,#ffffff)]">
-          <div className="text-[var(--tg-theme-text-color,#000000)]">Загрузка профиля...</div>
+          <div className="text-[var(--tg-theme-text-color,#000000)]">{t('web.app.loadingProfile')}</div>
         </div>
       </>
     );
@@ -4040,7 +4012,7 @@ export default function App() {
             selectedPlanForPaymentSheet,
             isTelegramWebApp,
             user.balance,
-            currentPlanPromoContext
+            currentPlanPromoContext ?? undefined
           )
         )
       : (paymentMethodSelection?.methods ?? []);
@@ -4200,12 +4172,13 @@ export default function App() {
     activeTab === 'privacy' ||
     activeTab === 'terms';
 
+  const desktopChanges = getTranslationValue<string[]>('web.app.desktop.changes') ?? [];
   const desktopSections = [
-    { id: 'overview', label: 'Обзор', icon: LayoutDashboard },
-    { id: 'plans', label: 'Тарифы', icon: CreditCard },
-    { id: 'notifications', label: 'Уведомления', icon: Bell },
-    { id: 'referrals', label: 'Рефералы', icon: Gift },
-    { id: 'settings', label: 'Настройки', icon: SettingsIcon },
+    { id: 'overview', label: t('web.app.desktop.sections.overview'), icon: LayoutDashboard },
+    { id: 'plans', label: t('web.app.desktop.sections.plans'), icon: CreditCard },
+    { id: 'notifications', label: t('web.app.desktop.sections.notifications'), icon: Bell },
+    { id: 'referrals', label: t('web.app.desktop.sections.referrals'), icon: Gift },
+    { id: 'settings', label: t('web.app.desktop.sections.settings'), icon: SettingsIcon },
   ];
 
   const renderDesktopPlans = () => {
@@ -4218,10 +4191,10 @@ export default function App() {
             </div>
             <div>
               <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-50">
-                Загружаем тарифы
+                {t('web.app.desktop.plansLoadingTitle')}
               </h3>
               <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-300">
-                Получаем актуальный каталог тарифов с backend.
+                {t('web.app.desktop.plansLoadingBody')}
               </p>
             </div>
           </div>
@@ -4239,11 +4212,10 @@ export default function App() {
             <div className="space-y-3">
               <div>
                 <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-50">
-                  Каталог тарифов переносится
+                  {t('web.app.desktop.plansEmptyTitle')}
                 </h3>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-300">
-                  В browser dashboard уже работает новая авторизация, а тарифы и подписки
-                  догружаем следующим этапом с вашего `FastAPI`.
+                  {t('web.app.desktop.plansEmptyBody')}
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -4251,13 +4223,13 @@ export default function App() {
                   onClick={handleTopUp}
                   className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
                 >
-                  Пополнить баланс
+                  {t('web.app.desktop.overviewTopUp')}
                 </button>
                 <button
                   onClick={() => scrollToSection('overview')}
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
                 >
-                  Вернуться к обзору
+                  {t('web.app.desktop.plansBackToOverview')}
                 </button>
               </div>
             </div>
@@ -4277,13 +4249,13 @@ export default function App() {
           >
             {plan.popular && (
               <div className="absolute -top-3 left-6 rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white dark:bg-sky-500 dark:text-slate-950">
-                Лучший выбор
+                {t('web.app.desktop.planPopularBadge')}
               </div>
             )}
             <div className="space-y-4">
               <div>
                 <div className="text-sm font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                  {plan.duration} дней доступа
+                  {t('web.app.desktop.planDuration', { days: plan.duration })}
                 </div>
                 <h3 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-50">
                   {plan.name}
@@ -4311,10 +4283,10 @@ export default function App() {
                 className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
               >
                 {checkoutPlanId === plan.id
-                  ? 'Открываем оплату...'
+                  ? t('web.plans.buttonOpening')
                   : resumablePlanIds.includes(plan.id)
-                    ? 'Продолжить оплату'
-                    : 'Оплатить тариф'}
+                    ? t('web.plans.buttonResume')
+                    : t('web.plans.buttonBuy')}
               </button>
             </div>
           </div>
@@ -4343,18 +4315,8 @@ export default function App() {
       />
       <PaymentMethodSheet
         isOpen={Boolean(paymentMethodSelection)}
-        title={
-          paymentMethodSelection?.kind === 'topup'
-            ? 'Выберите способ пополнения'
-            : 'Выберите способ оплаты'
-        }
-        subtitle={
-          paymentMethodSelection?.kind === 'plan'
-            ? `Тариф: ${paymentMethodSelection.planName}`
-            : paymentMethodSelection?.kind === 'topup'
-              ? `Сумма пополнения: ${formatRubles(paymentMethodSelection.amount)} ₽`
-              : undefined
-        }
+        title={getPaymentSheetTitle(paymentMethodSelection)}
+        subtitle={getPaymentSheetSubtitle(paymentMethodSelection)}
         methods={paymentMethodSheetMethods}
         isSubmitting={Boolean(paymentMethodSubmitting)}
         selectedProvider={paymentMethodSubmitting}
@@ -4379,12 +4341,14 @@ export default function App() {
             <div className="space-y-6">
               <div className="space-y-3">
                 <span className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 dark:bg-sky-500/15 dark:text-sky-200">
-                  Browser Workspace
+                  {t('web.app.desktop.workspaceBadge')}
                 </span>
                 <div>
-                  <h1 className="text-2xl font-semibold text-slate-950 dark:text-slate-50">RemnaStore</h1>
+                  <h1 className="text-2xl font-semibold text-slate-950 dark:text-slate-50">
+                    {t('web.app.desktop.workspaceTitle')}
+                  </h1>
                   <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                    Широкий desktop dashboard вместо мобильного контейнера по центру экрана.
+                    {t('web.app.desktop.workspaceSubtitle')}
                   </p>
                 </div>
               </div>
@@ -4405,12 +4369,14 @@ export default function App() {
                   <div className="min-w-0">
                     <div className="truncate text-lg font-semibold">{user.name}</div>
                     <div className="truncate text-sm text-slate-300">
-                      {user.email || 'Browser account'}
+                      {user.email || t('web.app.desktop.browserAccount')}
                     </div>
                   </div>
                 </div>
                 <div className="mt-5 rounded-2xl bg-white/8 p-4 dark:bg-white/5">
-                  <div className="text-xs uppercase tracking-[0.16em] text-slate-300">Баланс</div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
+                    {t('web.app.desktop.balanceLabel')}
+                  </div>
                   <div className="mt-2 text-3xl font-semibold">{formatRubles(user.balance)} ₽</div>
                 </div>
               </div>
@@ -4434,10 +4400,11 @@ export default function App() {
               </nav>
 
               <div className="rounded-[24px] border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
-                <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Desktop quick note</div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                  {t('web.app.desktop.quickNoteTitle')}
+                </div>
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                  Основные разделы собраны на одной странице. Скролл нужен только если контента
-                  станет больше.
+                  {t('web.app.desktop.quickNoteBody')}
                 </p>
               </div>
             </div>
@@ -4447,7 +4414,7 @@ export default function App() {
               className="mt-auto flex items-center justify-center gap-2 rounded-2xl bg-[var(--app-danger-bg,#ef4444)] px-4 py-3 text-sm font-semibold text-[var(--app-danger-text,#ffffff)] transition hover:bg-[var(--app-danger-bg-hover,#dc2626)]"
             >
               <LogOut className="h-4 w-4" />
-              Выйти из аккаунта
+              {t('web.settings.actions.logout')}
             </button>
           </div>
         </aside>
@@ -4460,14 +4427,13 @@ export default function App() {
             <div className="flex flex-wrap items-start justify-between gap-6">
               <div className="max-w-3xl space-y-3">
                 <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 dark:bg-slate-900 dark:text-slate-300">
-                  Управление доступом
+                  {t('web.app.desktop.overviewBadge')}
                 </span>
                 <h2 className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-slate-50">
-                  Вся работа с аккаунтом собрана в одном desktop dashboard
+                  {t('web.app.desktop.overviewTitle')}
                 </h2>
                 <p className="text-base leading-7 text-slate-500 dark:text-slate-300">
-                  Без имитации экрана телефона: обзор аккаунта, тарифы, реферальные метрики и
-                  быстрые настройки теперь живут в одном широком рабочем пространстве.
+                  {t('web.app.desktop.overviewBody')}
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -4475,13 +4441,13 @@ export default function App() {
                   onClick={() => scrollToSection('plans')}
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
                 >
-                  Открыть тарифы
+                  {t('web.app.desktop.overviewOpenPlans')}
                 </button>
                 <button
                   onClick={handleTopUp}
                   className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
                 >
-                  Пополнить баланс
+                  {t('web.app.desktop.overviewTopUp')}
                 </button>
               </div>
             </div>
@@ -4490,59 +4456,66 @@ export default function App() {
               <div className="rounded-[26px] bg-slate-950 p-5 text-white dark:border dark:border-slate-800 dark:bg-slate-900/90">
                 <div className="flex items-center justify-between">
                   <span className="text-xs uppercase tracking-[0.16em] text-slate-300">
-                    Баланс
+                    {t('web.app.desktop.metrics.balanceTitle')}
                   </span>
                   <Wallet className="h-5 w-5 text-slate-300" />
                 </div>
                 <div className="mt-4 text-3xl font-semibold">{formatRubles(user.balance)} ₽</div>
-                <div className="mt-2 text-sm text-slate-300">Доступно для покупок и продления</div>
+                <div className="mt-2 text-sm text-slate-300">{t('web.app.desktop.metrics.balanceBody')}</div>
               </div>
 
               <div className="rounded-[26px] bg-white p-5 shadow-[0_20px_40px_rgba(15,23,42,0.06)] dark:bg-slate-900 dark:shadow-[0_20px_40px_rgba(2,6,23,0.35)]">
                 <div className="flex items-center justify-between">
                   <span className="text-xs uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                    Статус
+                    {t('web.app.desktop.metrics.statusTitle')}
                   </span>
                   <LayoutDashboard className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
                   {subscriptionData.isActive
-                    ? `${subscriptionData.daysLeft ?? 0} дней`
+                    ? t('web.app.desktop.metrics.statusActive', {
+                        count: subscriptionData.daysLeft ?? 0,
+                        unit: formatDayCount(subscriptionData.daysLeft ?? 0),
+                      })
                     : subscriptionData.hasTrial && !subscriptionData.hasUsedTrial
-                      ? 'Trial доступен'
-                      : 'Без подписки'}
+                      ? t('web.app.desktop.metrics.statusTrialAvailable')
+                      : t('web.app.desktop.metrics.statusInactive')}
                 </div>
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">
                   {subscriptionData.isActive
-                    ? 'Подписка активна'
-                    : 'Можно активировать пробный доступ или выбрать тариф'}
+                    ? t('web.app.desktop.metrics.statusBodyActive')
+                    : t('web.app.desktop.metrics.statusBodyInactive')}
                 </div>
               </div>
 
               <div className="rounded-[26px] bg-white p-5 shadow-[0_20px_40px_rgba(15,23,42,0.06)] dark:bg-slate-900 dark:shadow-[0_20px_40px_rgba(2,6,23,0.35)]">
                 <div className="flex items-center justify-between">
                   <span className="text-xs uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                    Рефералы
+                    {t('web.app.desktop.metrics.referralsTitle')}
                   </span>
                   <Gift className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
                   {user.referralsCount || 0}
                 </div>
-                <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">Активных приглашений в системе</div>
+                <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">
+                  {t('web.app.desktop.metrics.referralsBody')}
+                </div>
               </div>
 
               <div className="rounded-[26px] bg-white p-5 shadow-[0_20px_40px_rgba(15,23,42,0.06)] dark:bg-slate-900 dark:shadow-[0_20px_40px_rgba(2,6,23,0.35)]">
                 <div className="flex items-center justify-between">
                   <span className="text-xs uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                    Доход
+                    {t('web.app.desktop.metrics.revenueTitle')}
                   </span>
                   <Sparkles className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
                   {formatRubles(user.referralEarnings)} ₽
                 </div>
-                <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">Начислено по реферальной программе</div>
+                <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">
+                  {t('web.app.desktop.metrics.revenueBody')}
+                </div>
               </div>
             </div>
           </section>
@@ -4552,9 +4525,11 @@ export default function App() {
               className="rounded-[32px] border border-white/70 bg-white/82 shadow-[0_28px_72px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_28px_72px_rgba(2,6,23,0.55)]"
             >
               <div className="border-b border-slate-200/80 px-6 py-5 dark:border-slate-800/80">
-                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">Подписка и доступ</h3>
+                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">
+                  {t('web.app.desktop.subscriptionPanelTitle')}
+                </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                  Ключевой статус аккаунта и действия по доступу находятся здесь.
+                  {t('web.app.desktop.subscriptionPanelBody')}
                 </p>
               </div>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -4569,11 +4544,13 @@ export default function App() {
                 </div>
                 <div className="p-6">
                   <div className="rounded-[28px] bg-slate-50 p-5 dark:bg-slate-900">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Что изменилось</div>
+                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                      {t('web.app.desktop.changesTitle')}
+                    </div>
                     <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                      <li>Google и email живут в одном browser auth flow.</li>
-                      <li>Telegram Mini App остается отдельным полноэкранным сценарием.</li>
-                      <li>Desktop теперь использует нормальную панель, а не мобильный shell.</li>
+                      {desktopChanges.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
                     </ul>
                   </div>
                 </div>
@@ -4586,16 +4563,18 @@ export default function App() {
             >
               <div className="mb-6 flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">Тарифы</h3>
+                  <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">
+                    {t('web.app.desktop.plansPanelTitle')}
+                  </h3>
                   <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                    Здесь будет коммерческий каталог после переноса subscription API.
+                    {t('web.app.desktop.plansPanelBody')}
                   </p>
                 </div>
                 <button
                   onClick={handleTopUp}
                   className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-900"
                 >
-                  Пополнить
+                  {t('web.header.topUpAction')}
                 </button>
               </div>
               {renderDesktopPlans()}
@@ -4608,9 +4587,11 @@ export default function App() {
               className="rounded-[32px] border border-white/70 bg-white/82 shadow-[0_28px_72px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_28px_72px_rgba(2,6,23,0.55)]"
             >
               <div className="border-b border-slate-200/80 px-6 py-5 dark:border-slate-800/80">
-                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">Реферальная программа</h3>
+                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">
+                  {t('web.app.desktop.referralsPanelTitle')}
+                </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                  Код, начисления и быстрые действия собраны в одном блоке.
+                  {t('web.app.desktop.referralsPanelBody')}
                 </p>
               </div>
               <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
@@ -4632,7 +4613,7 @@ export default function App() {
                   <div className="grid gap-4">
                     <div className="rounded-[24px] bg-slate-50 p-4 dark:bg-slate-900">
                       <div className="text-xs uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                        Приглашено
+                        {t('web.app.desktop.invitedTitle')}
                       </div>
                       <div className="mt-3 text-3xl font-semibold text-slate-950 dark:text-slate-50">
                         {user.referralsCount || 0}
@@ -4640,7 +4621,7 @@ export default function App() {
                     </div>
                     <div className="rounded-[24px] bg-slate-950 p-4 text-white dark:border dark:border-slate-800 dark:bg-slate-900">
                       <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
-                        Доступно к выводу
+                        {t('web.app.desktop.availableToWithdrawTitle')}
                       </div>
                       <div className="mt-3 text-3xl font-semibold">
                         {formatRubles(referralSummary?.available_for_withdraw ?? user.referralEarnings)} ₽
@@ -4666,9 +4647,11 @@ export default function App() {
               className="rounded-[32px] border border-white/70 bg-white/82 p-6 shadow-[0_28px_72px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_28px_72px_rgba(2,6,23,0.55)]"
             >
               <div className="mb-6">
-                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">Быстрые настройки</h3>
+                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">
+                  {t('web.app.desktop.settingsPanelTitle')}
+                </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                  Главное вынесено в отдельный блок, без ухода на отдельный экран.
+                  {t('web.app.desktop.settingsPanelBody')}
                 </p>
               </div>
 
@@ -4679,8 +4662,12 @@ export default function App() {
                       {theme === 'dark' ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
                     </div>
                     <div>
-                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Тема интерфейса</div>
-                      <div className="text-sm text-slate-500 dark:text-slate-300">Переключение локального режима</div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                        {t('web.settings.themeTitle')}
+                      </div>
+                      <div className="text-sm text-slate-500 dark:text-slate-300">
+                        {t('web.app.desktop.themeHint')}
+                      </div>
                     </div>
                   </div>
                   <ThemeToggle
@@ -4695,11 +4682,17 @@ export default function App() {
                       <SettingsIcon className="h-5 w-5" />
                     </div>
                     <div>
-                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Язык интерфейса</div>
-                      <div className="text-sm text-slate-500 dark:text-slate-300">Текущая локаль браузера</div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                        {t('web.settings.labels.language')}
+                      </div>
+                      <div className="text-sm text-slate-500 dark:text-slate-300">
+                        {t('web.app.desktop.languageHint')}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Русский</div>
+                  <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                    {t('web.settings.labels.russian')}
+                  </div>
                 </div>
 
                 <PromoRedeemCard
@@ -4721,12 +4714,16 @@ export default function App() {
                         <CreditCard className="h-5 w-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Незавершенные оплаты</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-300">Живые ссылки оплаты, которые еще можно продолжить</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {t('web.app.desktop.pendingPaymentsTitle')}
+                        </div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">
+                          {t('web.app.desktop.pendingPaymentsBody')}
+                        </div>
                       </div>
                     </div>
                     <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-                      {pendingPayments.length > 0 ? pendingPayments.length : 'Открыть'}
+                      {pendingPayments.length > 0 ? pendingPayments.length : t('web.settings.actions.open')}
                     </div>
                   </button>
 
@@ -4739,11 +4736,17 @@ export default function App() {
                         <Wallet className="h-5 w-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">История баланса</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-300">Все начисления и списания по внутреннему счету</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {t('web.app.desktop.balanceHistoryTitle')}
+                        </div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">
+                          {t('web.app.desktop.balanceHistoryBody')}
+                        </div>
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      {t('web.settings.actions.open')}
+                    </div>
                   </button>
 
                   <button
@@ -4755,11 +4758,17 @@ export default function App() {
                         <MessageCircle className="h-5 w-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Поддержка в Telegram</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-300">Переход в support-группу</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {t('web.app.desktop.supportTitle')}
+                        </div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">
+                          {t('web.app.desktop.supportBody')}
+                        </div>
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Перейти</div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      {t('web.settings.actions.go')}
+                    </div>
                   </button>
 
                   <button
@@ -4771,11 +4780,17 @@ export default function App() {
                         <HelpCircle className="h-5 w-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">FAQ</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-300">Базовые ответы по доступу и оплате</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {t('web.app.desktop.faqTitle')}
+                        </div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">
+                          {t('web.app.desktop.faqBody')}
+                        </div>
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      {t('web.settings.actions.open')}
+                    </div>
                   </button>
 
                   <button
@@ -4787,11 +4802,17 @@ export default function App() {
                         <Shield className="h-5 w-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Политика конфиденциальности</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-300">Правила обработки данных и интеграций</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {t('web.app.desktop.privacyTitle')}
+                        </div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">
+                          {t('web.app.desktop.privacyBody')}
+                        </div>
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      {t('web.settings.actions.open')}
+                    </div>
                   </button>
 
                   <button
@@ -4803,11 +4824,17 @@ export default function App() {
                         <FileText className="h-5 w-5" />
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">Пользовательское соглашение</div>
-                        <div className="text-sm text-slate-500 dark:text-slate-300">Условия использования продукта</div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {t('web.app.desktop.termsTitle')}
+                        </div>
+                        <div className="text-sm text-slate-500 dark:text-slate-300">
+                          {t('web.app.desktop.termsBody')}
+                        </div>
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Открыть</div>
+                    <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                      {t('web.settings.actions.open')}
+                    </div>
                   </button>
                 </div>
 
@@ -4816,7 +4843,7 @@ export default function App() {
                   className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--app-danger-bg,#ef4444)] px-4 py-3 text-sm font-semibold text-[var(--app-danger-text,#ffffff)] transition hover:bg-[var(--app-danger-bg-hover,#dc2626)]"
                 >
                   <LogOut className="h-4 w-4" />
-                  Выйти из аккаунта
+                  {t('web.settings.actions.logout')}
                 </button>
               </div>
             </section>
@@ -4828,15 +4855,17 @@ export default function App() {
           >
             <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">Центр уведомлений</h3>
+                <h3 className="text-xl font-semibold text-slate-950 dark:text-slate-50">
+                  {t('web.app.desktop.notificationsPanelTitle')}
+                </h3>
                 <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                  События по подписке, оплатам, реферальным начислениям и заявкам на вывод.
+                  {t('web.app.desktop.notificationsPanelBody')}
                 </p>
               </div>
               <div className="rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white dark:border dark:border-slate-800 dark:bg-slate-900">
                 {notificationsUnreadCount > 0
-                  ? `${notificationsUnreadCount} непрочитанных`
-                  : 'Все уведомления прочитаны'}
+                  ? t('web.app.statusSummary.unread', { count: notificationsUnreadCount })
+                  : t('web.app.statusSummary.allRead')}
               </div>
             </div>
 
@@ -4906,18 +4935,8 @@ export default function App() {
       />
       <PaymentMethodSheet
         isOpen={Boolean(paymentMethodSelection)}
-        title={
-          paymentMethodSelection?.kind === 'topup'
-            ? 'Выберите способ пополнения'
-            : 'Выберите способ оплаты'
-        }
-        subtitle={
-          paymentMethodSelection?.kind === 'plan'
-            ? `Тариф: ${paymentMethodSelection.planName}`
-            : paymentMethodSelection?.kind === 'topup'
-              ? `Сумма пополнения: ${formatRubles(paymentMethodSelection.amount)} ₽`
-              : undefined
-        }
+        title={getPaymentSheetTitle(paymentMethodSelection)}
+        subtitle={getPaymentSheetSubtitle(paymentMethodSelection)}
         methods={paymentMethodSheetMethods}
         isSubmitting={Boolean(paymentMethodSubmitting)}
         selectedProvider={paymentMethodSubmitting}

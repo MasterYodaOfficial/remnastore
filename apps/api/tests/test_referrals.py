@@ -21,13 +21,13 @@ from app.db.models import (
     LedgerEntry,
     Notification,
     NotificationType,
-    ReferralAttribution,
     ReferralReward,
     SubscriptionGrant,
     TelegramReferralIntent,
 )
 from app.db.session import get_session
 from app.main import create_app
+from app.services.i18n import translate
 from app.services import referrals as referrals_service
 
 
@@ -235,7 +235,10 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             json={"referral_code": "ref-self"},
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "self referral is not allowed")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.referrals.errors.self_referral"),
+        )
 
     async def test_claim_referral_code_rejects_after_first_paid_purchase(self) -> None:
         referrer = await self._create_account(referral_code="ref-late")
@@ -250,7 +253,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(
             response.json()["detail"],
-            "referral attribution is closed after the first paid purchase",
+            translate("api.referrals.errors.window_closed"),
         )
 
         stored_referrer = await self._get_account(referrer.id)
@@ -430,7 +433,10 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "account blocked")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.accounts.errors.account_blocked"),
+        )
 
     async def test_internal_telegram_access_reports_full_block(self) -> None:
         await self._create_account(

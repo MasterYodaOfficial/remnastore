@@ -15,6 +15,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { t } from '../../lib/i18n';
 
 type NotificationPriority = 'info' | 'success' | 'warning' | 'error';
 type NotificationType =
@@ -156,15 +157,15 @@ function formatNotificationCreatedAt(value: string): string {
   const diffMs = Date.now() - date.getTime();
   const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
   if (diffMinutes < 1) {
-    return 'только что';
+    return t('web.notificationsPage.timeNow');
   }
   if (diffMinutes < 60) {
-    return `${diffMinutes} мин назад`;
+    return t('web.notificationsPage.timeMinutes', { count: diffMinutes });
   }
 
   const diffHours = Math.round(diffMinutes / 60);
   if (diffHours < 24) {
-    return `${diffHours} ч назад`;
+    return t('web.notificationsPage.timeHours', { count: diffHours });
   }
 
   return new Intl.DateTimeFormat('ru-RU', {
@@ -251,21 +252,21 @@ export function NotificationsPage({
               <button
                 onClick={onBack}
                 className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
-                aria-label="Назад"
+                aria-label={t('web.notificationsPage.backAriaLabel')}
               >
                 <ArrowLeft className="h-5 w-5" />
               </button>
             ) : null}
             <div>
               <h1 className={`${embedded ? 'text-xl' : 'text-2xl'} font-bold text-[var(--tg-theme-text-color,#000000)]`}>
-                Уведомления
+                {t('web.notificationsPage.title')}
               </h1>
               <p className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
                 {unreadCount > 0
-                  ? `${unreadCount} непрочитанных из ${total}`
+                  ? t('web.notificationsPage.unreadSummary', { unreadCount, total })
                   : total > 0
-                    ? `Все уведомления прочитаны (${total})`
-                    : 'Здесь будут события по подписке, оплатам и начислениям'}
+                    ? t('web.notificationsPage.allReadSummary', { total })
+                    : t('web.notificationsPage.emptySummary')}
               </p>
             </div>
           </div>
@@ -275,13 +276,13 @@ export function NotificationsPage({
             className="inline-flex items-center gap-2 rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-2 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isUpdatingReadState ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
-            Прочитать все
+            {t('web.notificationsPage.markAllRead')}
           </button>
         </div>
 
         {isLoading ? (
           <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-5 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-            Загружаем уведомления...
+            {t('web.notificationsPage.loading')}
           </div>
         ) : items.length > 0 ? (
           <div className="space-y-3">
@@ -310,7 +311,7 @@ export function NotificationsPage({
                         <div className="flex items-start justify-between gap-3">
                           <div className="inline-flex items-center gap-2 rounded-full bg-[var(--tg-theme-button-color,#3390ec)]/12 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--tg-theme-button-color,#3390ec)]">
                             <MessageCircle className="h-3.5 w-3.5" />
-                            Рассылка
+                            {t('web.notificationsPage.broadcastBadge')}
                           </div>
                           <div className="pt-1 text-xs font-medium uppercase tracking-[0.12em] text-[var(--tg-theme-hint-color,#999999)]">
                             {formatNotificationCreatedAt(item.createdAt)}
@@ -329,7 +330,7 @@ export function NotificationsPage({
                         ) : (
                           <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-3 py-2 text-xs font-medium text-[var(--tg-theme-hint-color,#999999)]">
                             <ImageIcon className="h-4 w-4" />
-                            Без фото
+                            {t('web.notificationsPage.noPhoto')}
                           </div>
                         )}
 
@@ -361,9 +362,18 @@ export function NotificationsPage({
                               {truncateText(item.body, 220)}
                             </p>
                             <div className="mt-3 flex items-center gap-2 text-xs font-medium text-[var(--tg-theme-hint-color,#999999)]">
-                              <span>{broadcastPayload.contentType === 'photo' ? 'Фото-рассылка' : 'Текстовая рассылка'}</span>
+                              <span>
+                                {broadcastPayload.contentType === 'photo'
+                                  ? t('web.notificationsPage.photoBroadcast')
+                                  : t('web.notificationsPage.textBroadcast')}
+                              </span>
                               {broadcastActions.length > 1 ? (
-                                <span>· +{broadcastActions.length - 1} кнопки в деталях</span>
+                                <span>
+                                  ·{' '}
+                                  {t('web.notificationsPage.detailsButtons', {
+                                    count: broadcastActions.length - 1,
+                                  })}
+                                </span>
                               ) : null}
                               {broadcastPayload.broadcastId !== null ? (
                                 <span>· #{broadcastPayload.broadcastId}</span>
@@ -380,7 +390,7 @@ export function NotificationsPage({
                           onClick={() => onMarkRead(item.id)}
                           className="rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-2 text-xs font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
                         >
-                          Отметить прочитанным
+                          {t('web.notificationsPage.markRead')}
                         </button>
                       )}
                       {primaryBroadcastAction && onOpenAction ? (
@@ -443,7 +453,7 @@ export function NotificationsPage({
                             onClick={() => onMarkRead(item.id)}
                             className="rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-2 text-xs font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
                           >
-                            Отметить прочитанным
+                            {t('web.notificationsPage.markRead')}
                           </button>
                         )}
                         {canOpenAction && (
@@ -469,7 +479,7 @@ export function NotificationsPage({
                 className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isLoadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                {isLoadingMore ? 'Загружаем...' : 'Показать еще'}
+                {isLoadingMore ? t('web.notificationsPage.loadingMore') : t('web.notificationsPage.showMore')}
               </button>
             )}
           </div>
@@ -477,10 +487,10 @@ export function NotificationsPage({
           <div className="rounded-2xl border border-dashed border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-5 py-10 text-center">
             <Bell className="mx-auto mb-4 h-14 w-14 text-[var(--tg-theme-hint-color,#999999)] opacity-60" />
             <div className="text-base font-semibold text-[var(--tg-theme-text-color,#000000)]">
-              Уведомлений пока нет
+              {t('web.notificationsPage.emptyTitle')}
             </div>
             <p className="mt-2 text-sm leading-6 text-[var(--tg-theme-hint-color,#999999)]">
-              Когда появятся события по оплатам, подписке или рефералам, они будут собираться здесь.
+              {t('web.notificationsPage.emptyDescription')}
             </p>
           </div>
         )}
@@ -512,7 +522,7 @@ export function NotificationsPage({
                   <div className="flex flex-wrap items-center justify-between gap-3 pr-10">
                     <div className="inline-flex items-center gap-2 rounded-full bg-[var(--tg-theme-button-color,#3390ec)]/12 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--tg-theme-button-color,#3390ec)]">
                       <MessageCircle className="h-3.5 w-3.5" />
-                      Рассылка
+                      {t('web.notificationsPage.broadcastBadge')}
                     </div>
                     <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--tg-theme-hint-color,#999999)]">
                       {formatNotificationCreatedAt(selectedBroadcastNotification.createdAt)}
@@ -523,10 +533,12 @@ export function NotificationsPage({
                   </DialogTitle>
                   <DialogDescription className="text-sm leading-6 text-[var(--tg-theme-hint-color,#999999)]">
                     {selectedBroadcastPayload.contentType === 'photo'
-                      ? 'Фото-рассылка'
-                      : 'Текстовая рассылка'}
+                      ? t('web.notificationsPage.photoBroadcast')
+                      : t('web.notificationsPage.textBroadcast')}
                     {selectedBroadcastPayload.broadcastId !== null
-                      ? ` · кампания #${selectedBroadcastPayload.broadcastId}`
+                      ? ` · ${t('web.notificationsPage.campaignLabel', {
+                          id: selectedBroadcastPayload.broadcastId,
+                        })}`
                       : ''}
                   </DialogDescription>
                 </DialogHeader>

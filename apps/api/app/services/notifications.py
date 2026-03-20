@@ -23,6 +23,7 @@ from app.db.models import (
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.core.config import settings
 from app.services.accounts import mark_telegram_bot_blocked
+from app.services.i18n import translate
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
 
 logger = logging.getLogger(__name__)
@@ -97,11 +98,11 @@ def _format_subscription_days_left(days_left: int) -> str:
     remainder_10 = days_left % 10
     remainder_100 = days_left % 100
     if remainder_10 == 1 and remainder_100 != 11:
-        suffix = "день"
+        suffix = translate("api.notifications.units.day.one")
     elif remainder_10 in {2, 3, 4} and remainder_100 not in {12, 13, 14}:
-        suffix = "дня"
+        suffix = translate("api.notifications.units.day.few")
     else:
-        suffix = "дней"
+        suffix = translate("api.notifications.units.day.many")
     return f"{days_left} {suffix}"
 
 
@@ -120,9 +121,9 @@ def _build_subscription_expiry_token(expires_at: datetime | None) -> str:
 
 def _get_payment_provider_label(provider: PaymentProvider) -> str:
     if provider == PaymentProvider.YOOKASSA:
-        return "YooKassa"
+        return translate("api.payments.providers.yookassa")
     if provider == PaymentProvider.TELEGRAM_STARS:
-        return "Telegram Stars"
+        return translate("api.payments.providers.telegram_stars")
     return provider.value
 
 
@@ -437,15 +438,19 @@ async def notify_payment_succeeded(
     payment: Payment,
 ) -> Notification:
     if payment.flow_type == PaymentFlowType.WALLET_TOPUP:
-        title = "Баланс пополнен"
-        body = (
-            f"Баланс пополнен на {_format_amount(payment.amount, payment.currency)} "
-            f"через {_get_payment_provider_label(payment.provider)}."
+        title = translate("api.notifications.payment_succeeded.topup.title")
+        body = translate(
+            "api.notifications.payment_succeeded.topup.body",
+            amount=_format_amount(payment.amount, payment.currency),
+            provider=_get_payment_provider_label(payment.provider),
         )
     else:
-        plan_name = _get_payment_plan_name(payment) or "тариф"
-        title = "Оплата прошла"
-        body = f"Оплата тарифа «{plan_name}» подтверждена. Подписка обновлена."
+        plan_name = _get_payment_plan_name(payment) or translate("api.notifications.plan_fallback")
+        title = translate("api.notifications.payment_succeeded.plan.title")
+        body = translate(
+            "api.notifications.payment_succeeded.plan.body",
+            plan_name=plan_name,
+        )
 
     return await create_notification(
         session,
@@ -478,15 +483,20 @@ async def notify_payment_failed(
 
     provider_label = _get_payment_provider_label(payment.provider)
     if payment.flow_type == PaymentFlowType.WALLET_TOPUP:
-        title = "Пополнение не завершено"
-        body = (
-            f"Платеж на {_format_amount(payment.amount, payment.currency)} через "
-            f"{provider_label} не завершен."
+        title = translate("api.notifications.payment_failed.topup.title")
+        body = translate(
+            "api.notifications.payment_failed.topup.body",
+            amount=_format_amount(payment.amount, payment.currency),
+            provider=provider_label,
         )
     else:
-        plan_name = _get_payment_plan_name(payment) or "тариф"
-        title = "Оплата не завершена"
-        body = f"Оплата тарифа «{plan_name}» через {provider_label} не завершена."
+        plan_name = _get_payment_plan_name(payment) or translate("api.notifications.plan_fallback")
+        title = translate("api.notifications.payment_failed.plan.title")
+        body = translate(
+            "api.notifications.payment_failed.plan.body",
+            plan_name=plan_name,
+            provider=provider_label,
+        )
 
     return await create_notification(
         session,
@@ -517,11 +527,10 @@ async def notify_referral_reward_received(
         session,
         account_id=reward.referrer_account_id,
         type=NotificationType.REFERRAL_REWARD_RECEIVED,
-        title="Реферальное начисление",
-        body=(
-            "Начислено "
-            f"{_format_amount(int(reward.reward_amount), reward.currency)} "
-            "за первую оплату приглашенного пользователя."
+        title=translate("api.notifications.referral_reward_received.title"),
+        body=translate(
+            "api.notifications.referral_reward_received.body",
+            amount=_format_amount(int(reward.reward_amount), reward.currency),
         ),
         priority=NotificationPriority.SUCCESS,
         payload={
@@ -547,16 +556,22 @@ async def notify_subscription_expiring(
         raise ValueError("days_left must be positive")
 
     deadline_text = _format_subscription_expiry_moment(expires_at)
-    body = f"Подписка закончится через {_format_subscription_days_left(days_left)}."
+    body = translate(
+        "api.notifications.subscription_expiring.body",
+        days_left=_format_subscription_days_left(days_left),
+    )
     if deadline_text:
-        body += f" Доступ действует до {deadline_text}."
+        body += translate(
+            "api.notifications.subscription_expiring.deadline_suffix",
+            expires_at=deadline_text,
+        )
 
     expires_token = _build_subscription_expiry_token(expires_at)
     return await create_notification(
         session,
         account_id=account.id,
         type=NotificationType.SUBSCRIPTION_EXPIRING,
-        title="Подписка скоро закончится",
+        title=translate("api.notifications.subscription_expiring.title"),
         body=body,
         priority=NotificationPriority.WARNING,
         payload={
@@ -577,17 +592,20 @@ async def notify_subscription_expired(
     remnawave_event: str,
 ) -> Notification:
     deadline_text = _format_subscription_expiry_moment(expires_at)
-    body = "Срок действия подписки истек."
+    body = translate("api.notifications.subscription_expired.body")
     if deadline_text:
-        body += f" Подписка завершилась {deadline_text}."
-    body += " Чтобы продолжить пользоваться сервисом, продлите тариф."
+        body += translate(
+            "api.notifications.subscription_expired.deadline_suffix",
+            expires_at=deadline_text,
+        )
+    body += translate("api.notifications.subscription_expired.action_hint")
 
     expires_token = _build_subscription_expiry_token(expires_at)
     return await create_notification(
         session,
         account_id=account.id,
         type=NotificationType.SUBSCRIPTION_EXPIRED,
-        title="Подписка закончилась",
+        title=translate("api.notifications.subscription_expired.title"),
         body=body,
         priority=NotificationPriority.ERROR,
         payload={
@@ -608,11 +626,10 @@ async def notify_withdrawal_created(
         session,
         account_id=withdrawal.account_id,
         type=NotificationType.WITHDRAWAL_CREATED,
-        title="Заявка на вывод создана",
-        body=(
-            "Мы получили заявку на вывод "
-            f"{_format_amount(int(withdrawal.amount), 'RUB')} "
-            "и передали ее администратору на рассмотрение."
+        title=translate("api.notifications.withdrawal_created.title"),
+        body=translate(
+            "api.notifications.withdrawal_created.body",
+            amount=_format_amount(int(withdrawal.amount), "RUB"),
         ),
         priority=NotificationPriority.INFO,
         payload={
@@ -634,10 +651,10 @@ async def notify_withdrawal_paid(
         session,
         account_id=withdrawal.account_id,
         type=NotificationType.WITHDRAWAL_PAID,
-        title="Заявка на вывод выплачена",
-        body=(
-            "Мы отметили заявку на вывод "
-            f"{_format_amount(int(withdrawal.amount), 'RUB')} как выплаченную."
+        title=translate("api.notifications.withdrawal_paid.title"),
+        body=translate(
+            "api.notifications.withdrawal_paid.body",
+            amount=_format_amount(int(withdrawal.amount), "RUB"),
         ),
         priority=NotificationPriority.INFO,
         payload={
@@ -659,11 +676,10 @@ async def notify_withdrawal_rejected(
         session,
         account_id=withdrawal.account_id,
         type=NotificationType.WITHDRAWAL_REJECTED,
-        title="Заявка на вывод отклонена",
-        body=(
-            "Заявка на вывод "
-            f"{_format_amount(int(withdrawal.amount), 'RUB')} отклонена. "
-            "Резерв возвращен на баланс."
+        title=translate("api.notifications.withdrawal_rejected.title"),
+        body=translate(
+            "api.notifications.withdrawal_rejected.body",
+            amount=_format_amount(int(withdrawal.amount), "RUB"),
         ),
         priority=NotificationPriority.WARNING,
         payload={

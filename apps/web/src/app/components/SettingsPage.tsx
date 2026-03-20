@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { PromoRedeemCard, type PromoRedeemMessage } from './PromoRedeemCard';
 import { ThemeToggle } from './ThemeToggle';
+import { t } from '../../lib/i18n';
 
 interface SettingsPageProps {
   theme: 'light' | 'dark';
@@ -44,6 +45,17 @@ interface SettingsPageProps {
   promoMessage?: PromoRedeemMessage | null;
 }
 
+type SettingsItem = {
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  label: string;
+  action: React.ReactNode;
+};
+
+type SettingsSection = {
+  title: string;
+  items: SettingsItem[];
+};
+
 export function SettingsPage({
   theme,
   onThemeChange,
@@ -72,99 +84,100 @@ export function SettingsPage({
 
   const hasEmail = Boolean(user?.email);
   const hasTelegram = Boolean(user?.telegram_id);
+  const unavailableLabel = (
+    <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+      {t('web.settings.unavailable')}
+    </span>
+  );
 
-  const accountItems = [];
+  const accountItems: SettingsItem[] = [];
 
-  // Email account status
   if (hasEmail) {
     accountItems.push({
       icon: Mail,
-      label: 'Email аккаунт',
-      status: 'linked' as const,
+      label: t('web.settings.labels.emailAccount'),
       action: <CheckCircle className="h-5 w-5 text-[var(--app-success-color,#16a34a)]" />,
     });
   }
 
-  // Telegram account status
   if (hasTelegram) {
     accountItems.push({
       icon: () => (
-        <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
           <path
             fill="#229ED9"
             d="M21.9 4.6c.3-.9-.6-1.7-1.5-1.4L3.5 9.3c-1 .3-1 1.7 0 2l4 1.2 1.5 4.8c.3 1 .1 1.1.5 1.1.4 0 .6-.2.9-.5l2.3-2.2 4.4 3.2c.8.6 1.9.2 2.1-.8L21.9 4.6zm-3 1.8-7.7 6.9a.9.9 0 0 0-.3.5l-.6 2.8-1-3.1a.9.9 0 0 0-.6-.6l-3.1-.9 13.3-5.6z"
           />
         </svg>
       ),
-      label: 'Telegram аккаунт',
-      status: 'linked' as const,
+      label: t('web.settings.labels.telegramAccount'),
       action: <CheckCircle className="h-5 w-5 text-[var(--app-success-color,#16a34a)]" />,
     });
   }
 
-  // Link Telegram button (for browser users)
   if (!isTelegramWebApp && !hasTelegram && onLinkTelegram) {
     accountItems.push({
       icon: () => (
-        <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
           <path
             fill="#229ED9"
             d="M21.9 4.6c.3-.9-.6-1.7-1.5-1.4L3.5 9.3c-1 .3-1 1.7 0 2l4 1.2 1.5 4.8c.3 1 .1 1.1.5 1.1.4 0 .6-.2.9-.5l2.3-2.2 4.4 3.2c.8.6 1.9.2 2.1-.8L21.9 4.6zm-3 1.8-7.7 6.9a.9.9 0 0 0-.3.5l-.6 2.8-1-3.1a.9.9 0 0 0-.6-.6l-3.1-.9 13.3-5.6z"
           />
         </svg>
       ),
-      label: 'Привязать Telegram',
-      status: 'action' as const,
+      label: t('web.settings.labels.linkTelegram'),
       action: (
         <button
           onClick={onLinkTelegram}
           className="px-3 py-1 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
         >
-          Привязать
+          {t('web.settings.actions.link')}
         </button>
       ),
     });
   }
 
-  // Link Browser button (for Telegram users)
   if (isTelegramWebApp && !hasEmail && onLinkBrowser) {
     accountItems.push({
       icon: LinkIcon,
-      label: 'Привязать браузерный аккаунт',
-      status: 'action' as const,
+      label: t('web.settings.labels.linkBrowser'),
       action: (
         <button
           onClick={onLinkBrowser}
           className="px-3 py-1 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
         >
-          Привязать
+          {t('web.settings.actions.link')}
         </button>
       ),
     });
   }
 
-  const settingsSections = [
+  const settingsSections: SettingsSection[] = [
     {
-      title: 'Аккаунты',
+      title: t('web.settings.sections.accounts'),
       items: accountItems,
     },
     {
-      title: 'Основное',
+      title: t('web.settings.sections.main'),
       items: [
         {
           icon: Globe,
-          label: 'Язык',
-          action: <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">Русский</span>,
+          label: t('web.settings.labels.language'),
+          action: (
+            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+              {t('web.settings.labels.russian')}
+            </span>
+          ),
         },
         {
           icon: Bell,
-          label: 'Уведомления',
+          label: t('web.settings.labels.notifications'),
           action: onOpenNotificationsCenter ? (
             <button
               onClick={onOpenNotificationsCenter}
               className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
             >
-              Открыть
+              {t('web.settings.actions.open')}
               {notificationUnreadCount > 0 && (
                 <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[11px] font-semibold">
                   {notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}
@@ -172,23 +185,23 @@ export function SettingsPage({
               )}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
       ],
     },
     {
-      title: 'Финансы',
+      title: t('web.settings.sections.finance'),
       items: [
         {
           icon: RefreshCw,
-          label: 'Незавершенные оплаты',
+          label: t('web.settings.labels.pendingPayments'),
           action: onOpenPendingPayments ? (
             <button
               onClick={onOpenPendingPayments}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
             >
-              Открыть
+              {t('web.settings.actions.open')}
               {activePaymentsCount > 0 ? (
                 <span className="rounded-full bg-[var(--tg-theme-button-color,#3390ec)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
                   {activePaymentsCount}
@@ -196,82 +209,82 @@ export function SettingsPage({
               ) : null}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
         {
           icon: History,
-          label: 'История баланса',
+          label: t('web.settings.labels.balanceHistory'),
           action: onOpenBalanceHistory ? (
             <button
               onClick={onOpenBalanceHistory}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
             >
-              Открыть
+              {t('web.settings.actions.open')}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
       ],
     },
     {
-      title: 'Поддержка',
+      title: t('web.settings.sections.support'),
       items: [
         {
           icon: MessageCircle,
-          label: 'Поддержка в Telegram',
+          label: t('web.settings.labels.support'),
           action: onOpenSupport ? (
             <button
               onClick={onOpenSupport}
               className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
             >
-              Перейти
+              {t('web.settings.actions.go')}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
         {
           icon: HelpCircle,
-          label: 'FAQ',
+          label: t('web.settings.labels.faq'),
           action: onOpenFaq ? (
             <button
               onClick={onOpenFaq}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
             >
-              Открыть
+              {t('web.settings.actions.open')}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
         {
           icon: Shield,
-          label: 'Политика конфиденциальности',
+          label: t('web.settings.labels.privacy'),
           action: onOpenPrivacy ? (
             <button
               onClick={onOpenPrivacy}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
             >
-              Открыть
+              {t('web.settings.actions.open')}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
         {
           icon: FileText,
-          label: 'Пользовательское соглашение',
+          label: t('web.settings.labels.terms'),
           action: onOpenTerms ? (
             <button
               onClick={onOpenTerms}
               className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
             >
-              Открыть
+              {t('web.settings.actions.open')}
             </button>
           ) : (
-            <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">—</span>
+            unavailableLabel
           ),
         },
       ],
@@ -282,19 +295,35 @@ export function SettingsPage({
     <div className="pb-20 px-4 pt-4 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
-          Настройки
+          {t('web.settings.title')}
         </h1>
       </div>
       <div className="flex items-center justify-between gap-4 rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-4">
         <div>
           <div className="text-sm font-semibold text-[var(--tg-theme-text-color,#000000)]">
-            Тема интерфейса
+            {t('web.settings.themeTitle')}
           </div>
           <div className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-            Переключение между светлой и темной схемой
+            {t('web.settings.themeSubtitle')}
           </div>
         </div>
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
+      </div>
+
+      <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(135deg,var(--tg-theme-secondary-bg-color,#f4f4f5)_0%,var(--app-surface-color,#dbe4f2)_100%)] px-4 py-4">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]">
+            <LinkIcon className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-[var(--tg-theme-text-color,#000000)]">
+              {t('web.settings.accountLinkingTitle')}
+            </div>
+            <p className="mt-1 text-sm leading-6 text-[var(--app-muted-contrast,#475569)]">
+              {t('web.settings.accountLinkingBody')}
+            </p>
+          </div>
+        </div>
       </div>
 
       {onPromoCodeChange && onRedeemPromo ? (
@@ -326,7 +355,7 @@ export function SettingsPage({
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    {typeof Icon === 'function' ? <Icon /> : <Icon className="w-5 h-5 text-[var(--tg-theme-button-color,#3390ec)]" />}
+                    <Icon className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />
                     <span className="text-[var(--tg-theme-text-color,#000000)] font-medium">
                       {item.label}
                     </span>
@@ -345,7 +374,7 @@ export function SettingsPage({
           className="w-full flex items-center justify-center gap-2 rounded-xl bg-[var(--app-danger-bg,#ef4444)] py-3 font-medium text-[var(--app-danger-text,#ffffff)] transition-colors hover:bg-[var(--app-danger-bg-hover,#dc2626)]"
         >
           <LogOut className="w-5 h-5" />
-          Выйти из аккаунта
+          {t('web.settings.actions.logout')}
         </button>
       )}
     </div>

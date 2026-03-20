@@ -28,6 +28,7 @@ from app.services.account_linking import (
 )
 from app.db.models import Account, LinkType
 from app.services.cache import get_cache
+from app.services.i18n import translate
 
 router = APIRouter()
 
@@ -40,22 +41,22 @@ def _link_token_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, LinkTokenNotFoundError):
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Link token not found",
+            detail=translate("api.linking.errors.token_not_found"),
         )
     if isinstance(exc, LinkTokenExpiredError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Link token expired",
+            detail=translate("api.linking.errors.token_expired"),
         )
     if isinstance(exc, LinkTokenAlreadyConsumedError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Link token already used",
+            detail=translate("api.linking.errors.token_already_used"),
         )
     if isinstance(exc, LinkTokenTypeMismatchError):
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid link token type",
+            detail=translate("api.linking.errors.token_type_invalid"),
         )
     return HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -71,7 +72,10 @@ async def upsert_account_from_telegram(
 ) -> AccountResponse:
     # Ensure the caller updates only their own account
     if current_account.telegram_id != payload.telegram_id:
-        raise HTTPException(status_code=403, detail="cannot modify another account")
+        raise HTTPException(
+            status_code=403,
+            detail=translate("api.linking.errors.cannot_modify_another_account"),
+        )
 
     account = await upsert_telegram_account(
         session,
@@ -131,7 +135,7 @@ async def generate_telegram_link(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Account already linked to Telegram"
+            detail=translate("api.linking.errors.telegram_already_linked"),
         )
     
     link_token, link_url_template = await create_telegram_link_token(
@@ -178,7 +182,7 @@ async def generate_browser_link(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram account required"
+            detail=translate("api.linking.errors.telegram_required"),
         )
 
     if not settings.webapp_url:
@@ -193,7 +197,7 @@ async def generate_browser_link(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="WEBAPP_URL is not configured",
+            detail=translate("api.linking.errors.webapp_url_missing"),
         )
 
     link_token, link_url_template = await create_browser_link_token(

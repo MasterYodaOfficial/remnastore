@@ -595,11 +595,6 @@ def build_migration_plan(
             for subscription in all_subscriptions
             if subscription.status == ACTIVE_SUBSCRIPTION_STATUS
         ]
-        inactive_subscriptions = [
-            subscription
-            for subscription in all_subscriptions
-            if subscription.status in INACTIVE_SUBSCRIPTION_STATUSES
-        ]
         canonical_subscription = (
             max(active_subscriptions, key=_subscription_sort_key) if active_subscriptions else None
         )
@@ -937,7 +932,6 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
             imported_plans = [plan for plan in migration_plan.account_plans if plan.import_user]
             for plan in imported_plans:
                 account = existing_accounts.get(plan.telegram_id)
-                created = account is None
                 if account is None:
                     account = Account(id=plan.account_uuid, telegram_id=plan.telegram_id)
                     session.add(account)

@@ -27,6 +27,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.main import create_app
+from app.services.i18n import translate
 from app.services.payments import (
     CreatePaymentIntentCommand,
     PaymentIntentSnapshot,
@@ -39,8 +40,6 @@ from app.services.payments import (
     YooKassaGateway,
     _build_telegram_stars_invoice_payload,
     expire_stale_payments,
-    get_telegram_stars_gateway,
-    get_yookassa_gateway,
     reconcile_pending_yookassa_payments,
 )
 
@@ -561,7 +560,10 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json()["detail"], "blocked accounts cannot create payments")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.payments.errors.account_blocked"),
+        )
         self.assertIsNone(await self._get_payment("yoopay-blocked-topup-500"))
 
     async def test_create_bot_yookassa_plan_payment_uses_telegram_return_url(self) -> None:

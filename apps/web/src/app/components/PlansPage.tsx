@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, Zap } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 
 interface Plan {
   id: string;
@@ -35,24 +36,24 @@ export function PlansPage({
 }: PlansPageProps) {
   const getPlanButtonLabel = (plan: Plan): string => {
     if (resumablePlanIds.includes(plan.id)) {
-      return 'Продолжить оплату';
+      return t('web.plans.buttonResume');
     }
 
     const canPayFromBalance = balance >= plan.price;
 
     if (!isTelegramWebApp) {
-      return canPayFromBalance ? 'Выбрать способ оплаты' : 'Оплатить тариф';
+      return canPayFromBalance ? t('web.plans.buttonChooseMethod') : t('web.plans.buttonBuy');
     }
     if (canPayFromBalance && plan.priceStars) {
-      return 'Выбрать способ оплаты';
+      return t('web.plans.buttonChooseMethod');
     }
     if (canPayFromBalance) {
-      return 'Выбрать способ оплаты';
+      return t('web.plans.buttonChooseMethod');
     }
     if (plan.priceStars) {
-      return 'Выбрать способ оплаты';
+      return t('web.plans.buttonChooseMethod');
     }
-    return 'Оплатить картой';
+    return t('web.plans.buttonCard');
   };
 
   if (isLoading && !plans.length) {
@@ -60,10 +61,10 @@ export function PlansPage({
       <div className="pb-20 px-4 pt-4 space-y-4">
         <div>
           <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
-            Выберите тариф
+            {t('web.plans.title')}
           </h1>
           <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-            Загружаем актуальные тарифы с backend...
+            {t('web.plans.loadingSubtitle')}
           </p>
         </div>
       </div>
@@ -75,10 +76,10 @@ export function PlansPage({
       <div className="pb-20 px-4 pt-4 space-y-4">
         <div>
           <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
-            Выберите тариф
+            {t('web.plans.title')}
           </h1>
           <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-            Каталог тарифов пока недоступен. Попробуйте открыть экран позже.
+            {t('web.plans.emptySubtitle')}
           </p>
         </div>
 
@@ -86,7 +87,7 @@ export function PlansPage({
           onClick={onTopUp}
           className="w-full rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] py-3 font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
         >
-          Пополнить баланс
+          {t('web.header.topUpAction')}
         </button>
       </div>
     );
@@ -96,11 +97,30 @@ export function PlansPage({
     <div className="pb-20 px-4 pt-4 space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
-          Выберите тариф
+          {t('web.plans.title')}
         </h1>
         <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-          Ваш баланс: <span className="font-semibold">{formatRubles(balance)} ₽</span>
+          {t('web.plans.subtitle', { amount: formatRubles(balance) })}
         </p>
+      </div>
+
+      <div className="rounded-[24px] border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(135deg,var(--tg-theme-secondary-bg-color,#f4f4f5)_0%,var(--app-surface-color,#dbe4f2)_100%)] p-4">
+        <div className="text-sm font-semibold text-[var(--tg-theme-text-color,#000000)]">
+          {t('web.plans.introTitle')}
+        </div>
+        <p className="mt-1 text-sm leading-6 text-[var(--app-muted-contrast,#475569)]">
+          {t('web.plans.introBody')}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {[t('web.plans.introChipBalance'), t('web.plans.introChipCard'), t('web.plans.introChipTelegram')].map((item) => (
+            <span
+              key={item}
+              className="rounded-full border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-xs font-medium text-[var(--tg-theme-text-color,#000000)]"
+            >
+              {item}
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-4">
@@ -114,7 +134,7 @@ export function PlansPage({
             {plan.popular && (
               <div className="absolute -top-2 left-4 flex items-center gap-1 rounded-full bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-xs font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
                 <Zap className="w-3 h-3" />
-                Популярный
+                {t('web.plans.popularBadge')}
               </div>
             )}
             
@@ -129,12 +149,12 @@ export function PlansPage({
                   </span>
                   <span className="text-lg text-[var(--tg-theme-hint-color,#999999)]">₽</span>
                   <span className="ml-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-                    / {plan.duration} дней
+                    {t('web.plans.duration', { days: plan.duration })}
                   </span>
                 </div>
                 {isTelegramWebApp && plan.priceStars ? (
                   <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-                    Или {plan.priceStars} Stars внутри Telegram.
+                    {t('web.plans.starsNote', { stars: plan.priceStars })}
                   </p>
                 ) : null}
               </div>
@@ -157,7 +177,7 @@ export function PlansPage({
               className="w-full py-3 rounded-xl font-medium bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {checkoutPlanId === plan.id
-                ? 'Открываем оплату...'
+                ? t('web.plans.buttonOpening')
                 : getPlanButtonLabel(plan)}
             </button>
           </div>

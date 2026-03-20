@@ -9,7 +9,7 @@ import uuid
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, and_, exists, func, or_, select, update
+from sqlalchemy import Select, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 

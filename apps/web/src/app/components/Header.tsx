@@ -1,6 +1,7 @@
 import React from 'react';
 import { Bell, User, Wallet } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 
 interface HeaderProps {
   user: {
@@ -49,7 +50,7 @@ export function Header({
             <button
               onClick={onOpenNotifications}
               className="relative flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
-              aria-label="Открыть уведомления"
+              aria-label={t('web.header.notificationsAriaLabel')}
             >
               <Bell className="h-5 w-5" />
               {unreadNotificationsCount > 0 && (
@@ -64,7 +65,7 @@ export function Header({
             onClick={onTopUp}
             className="px-4 py-2 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-lg font-medium hover:opacity-90 transition-opacity"
           >
-            Пополнить
+            {t('web.header.topUpAction')}
           </button>
         </div>
       </div>

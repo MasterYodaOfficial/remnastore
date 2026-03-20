@@ -21,6 +21,7 @@ from app.db.models import (
 )
 from app.services.account_events import append_account_event
 from app.services.ledger import apply_credit_in_transaction
+from app.services.i18n import translate
 from app.services.notifications import notify_referral_reward_received
 from app.services.plans import get_subscription_plan
 from app.services.withdrawals import get_withdrawal_availability
@@ -80,10 +81,14 @@ class TelegramReferralIntentResult:
     reason: str | None = None
 
 
+def _referral_error(key: str) -> str:
+    return translate(f"api.referrals.errors.{key}")
+
+
 def _normalize_referral_code(referral_code: str) -> str:
     normalized = referral_code.strip()
     if not normalized:
-        raise ReferralCodeNotFoundError("referral code is required")
+        raise ReferralCodeNotFoundError(_referral_error("code_required"))
     return normalized
 
 
@@ -114,13 +119,13 @@ def calculate_referral_reward_amount(*, purchase_amount_rub: int, reward_rate: D
 
 def _display_name_for_referral(account: Account | None) -> str:
     if account is None:
-        return "Пользователь"
+        return translate("api.referrals.fallback_user_name")
     return (
         account.display_name
         or account.first_name
         or account.username
         or account.email
-        or "Пользователь"
+        or translate("api.referrals.fallback_user_name")
     )
 
 
@@ -130,7 +135,7 @@ async def _load_account_for_update(session: AsyncSession, account_id: uuid.UUID)
     )
     account = result.scalar_one_or_none()
     if account is None:
-        raise ReferralServiceError(f"account not found: {account_id}")
+        raise ReferralServiceError(_referral_error("account_not_found"))
     return account
 
 
@@ -263,11 +268,11 @@ async def claim_referral_code(
     normalized_referral_code = _normalize_referral_code(referral_code)
     referrer_account = await _get_account_by_referral_code(session, normalized_referral_code)
     if referrer_account is None:
-        raise ReferralCodeNotFoundError("referral code not found")
+        raise ReferralCodeNotFoundError(_referral_error("code_not_found"))
 
     referred_account = await _load_account_for_update(session, account_id)
     if referrer_account.id == referred_account.id:
-        raise ReferralSelfAttributionError("self referral is not allowed")
+        raise ReferralSelfAttributionError(_referral_error("self_referral"))
 
     existing_attribution = await _get_referral_attribution_by_referred_account_id(
         session,
@@ -286,7 +291,7 @@ async def claim_referral_code(
                 created=False,
             )
             return ReferralClaimResult(attribution=existing_attribution, created=False)
-        raise ReferralAlreadyAttributedError("referral already claimed")
+        raise ReferralAlreadyAttributedError(_referral_error("already_claimed"))
 
     if referred_account.referred_by_account_id is not None:
         if referred_account.referred_by_account_id == referrer_account.id:
@@ -305,12 +310,10 @@ async def claim_referral_code(
                 created=False,
             )
             return ReferralClaimResult(attribution=attribution, created=False)
-        raise ReferralAlreadyAttributedError("referral already claimed")
+        raise ReferralAlreadyAttributedError(_referral_error("already_claimed"))
 
     if await _has_completed_paid_purchase(session, referred_account.id):
-        raise ReferralAttributionWindowClosedError(
-            "referral attribution is closed after the first paid purchase"
-        )
+        raise ReferralAttributionWindowClosedError(_referral_error("window_closed"))
 
     locked_referrer_account = await _load_account_for_update(session, referrer_account.id)
     attribution = ReferralAttribution(
@@ -348,7 +351,7 @@ async def record_telegram_referral_intent(
             referral_code=normalized_referral_code,
             reason="referral_code_not_found",
         )
-        raise ReferralCodeNotFoundError("referral code not found")
+        raise ReferralCodeNotFoundError(_referral_error("code_not_found"))
 
     intent = await _get_telegram_referral_intent_by_telegram_id(
         session,
@@ -645,7 +648,7 @@ async def get_referral_summary(
 ) -> ReferralSummary:
     account = await session.get(Account, account_id)
     if account is None:
-        raise ReferralServiceError(f"account not found: {account_id}")
+        raise ReferralServiceError(_referral_error("account_not_found"))
 
     referred_account = aliased(Account)
     result = await session.execute(

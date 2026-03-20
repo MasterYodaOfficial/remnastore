@@ -1,6 +1,7 @@
 import React from 'react';
 import { Users, TrendingUp, DollarSign, Copy, Check, Send } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 import { WithdrawalRequestsCard, type WithdrawalRequestItemView } from './WithdrawalRequestsCard';
 
 interface Referral {
@@ -31,7 +32,7 @@ interface ReferralPageProps {
 function maskWord(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= 1) {
-    return 'Участник';
+    return '•';
   }
   if (trimmed.length <= 3) {
     return `${trimmed.charAt(0)}••`;
@@ -42,7 +43,7 @@ function maskWord(value: string): string {
 function maskReferralIdentity(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) {
-    return 'Анонимный участник';
+    return '•••';
   }
 
   if (trimmed.includes('@')) {
@@ -55,7 +56,7 @@ function maskReferralIdentity(name: string): string {
 
   const parts = trimmed.split(/\s+/).filter(Boolean);
   if (!parts.length) {
-    return 'Анонимный участник';
+    return '•••';
   }
 
   return parts.slice(0, 2).map(maskWord).join(' ');
@@ -93,17 +94,19 @@ export function ReferralPage({
     <div className="pb-20 px-4 pt-4 space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
-          Реферальная программа
+          {t('web.referralPage.title')}
         </h1>
         <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-          Зарабатывайте {rewardRate}% с первой успешной покупки ваших рефералов
+          {t('web.referralPage.subtitle', { rewardRate })}
         </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-4">
           <TrendingUp className="mb-2 h-6 w-6 text-[var(--tg-theme-button-color,#3390ec)]" />
-          <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">Всего заработано</div>
+          <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+            {t('web.referralPage.totalEarningsLabel')}
+          </div>
           <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
             {formatRubles(totalEarnings)} ₽
           </div>
@@ -111,7 +114,9 @@ export function ReferralPage({
 
         <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-4">
           <DollarSign className="mb-2 h-6 w-6 text-[var(--app-success-color,#16a34a)]" />
-          <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">Доступно</div>
+          <div className="mb-1 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+            {t('web.referralPage.availableLabel')}
+          </div>
           <div className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)]">
             {formatRubles(availableForWithdraw)} ₽
           </div>
@@ -119,7 +124,9 @@ export function ReferralPage({
       </div>
 
       <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--app-surface-color,#dbe4f2)] p-4">
-        <div className="mb-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">Ваш реферальный код</div>
+        <div className="mb-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+          {t('web.referralPage.codeLabel')}
+        </div>
         <div className="rounded-xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-3 py-2 font-mono text-sm text-[var(--tg-theme-text-color,#000000)]">
           {referralCode}
         </div>
@@ -129,14 +136,14 @@ export function ReferralPage({
             className="flex items-center justify-center gap-2 rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
           >
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? 'Скопировано' : 'Скопировать ссылку'}
+            {copied ? t('web.referralPage.copied') : t('web.referralPage.copy')}
           </button>
           <button
             onClick={onShareTelegram}
             className="flex items-center justify-center gap-2 rounded-xl border border-[var(--tg-theme-button-color,#3390ec)] bg-transparent px-4 py-3 text-sm font-medium text-[var(--tg-theme-button-color,#3390ec)] transition-opacity hover:opacity-90"
           >
             <Send className="h-4 w-4" />
-            Поделиться в Telegram
+            {t('web.referralPage.shareTelegram')}
           </button>
         </div>
       </div>
@@ -146,7 +153,9 @@ export function ReferralPage({
           onClick={onWithdraw}
           className="w-full py-3 bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] rounded-xl font-medium hover:opacity-90 transition-opacity"
         >
-          Вывести {formatRubles(availableForWithdraw)} ₽
+          {t('web.referralPage.withdrawAction', {
+            amount: formatRubles(availableForWithdraw),
+          })}
         </button>
       )}
 
@@ -161,12 +170,12 @@ export function ReferralPage({
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold text-[var(--tg-theme-text-color,#000000)]">
-          Ваши рефералы ({referrals.length})
+          {t('web.referralPage.referralsTitle', { count: referrals.length })}
         </h2>
 
         {isLoading ? (
           <div className="rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] p-4 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-            Загружаем реферальную статистику...
+            {t('web.referralPage.loading')}
           </div>
         ) : referrals.length > 0 ? (
           <div className="space-y-2">
@@ -185,7 +194,9 @@ export function ReferralPage({
                         {maskReferralIdentity(referral.name)}
                       </div>
                       <div className="text-xs text-[var(--tg-theme-hint-color,#999999)]">
-                        Подключился {formatReferralDate(referral.date)}
+                        {t('web.referralPage.connectedAt', {
+                          date: formatReferralDate(referral.date),
+                        })}
                       </div>
                     </div>
                   </div>
@@ -196,7 +207,7 @@ export function ReferralPage({
                       </div>
                     ) : (
                       <div className="font-semibold text-[var(--tg-theme-hint-color,#999999)]">
-                        Награда ожидается
+                        {t('web.referralPage.rewardPending')}
                       </div>
                     )}
                     <div
@@ -206,7 +217,9 @@ export function ReferralPage({
                           : 'text-[var(--app-warning-color,#ca8a04)]'
                       }`}
                     >
-                      {referral.status === 'active' ? 'Первая покупка подтверждена' : 'Ждет первую оплату'}
+                      {referral.status === 'active'
+                        ? t('web.referralPage.rewardConfirmed')
+                        : t('web.referralPage.rewardAwaiting')}
                     </div>
                   </div>
                 </div>
@@ -217,10 +230,10 @@ export function ReferralPage({
           <div className="text-center py-12">
             <Users className="w-16 h-16 mx-auto text-[var(--tg-theme-hint-color,#999999)] opacity-50 mb-4" />
             <p className="text-[var(--tg-theme-hint-color,#999999)]">
-              У вас пока нет рефералов
+              {t('web.referralPage.emptyTitle')}
             </p>
             <p className="text-sm text-[var(--tg-theme-hint-color,#999999)] mt-2">
-              Поделитесь своей ссылкой, чтобы начать зарабатывать
+              {t('web.referralPage.emptySubtitle')}
             </p>
           </div>
         )}

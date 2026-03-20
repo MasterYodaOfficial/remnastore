@@ -28,6 +28,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
 from app.main import create_app
+from app.services.i18n import translate
 from app.services import subscriptions as subscriptions_service
 
 
@@ -399,7 +400,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(
             response.json()["detail"],
-            "blocked accounts cannot purchase subscriptions",
+            translate("api.subscriptions.errors.account_blocked_purchase"),
         )
 
         stored_account = await self._get_account(account.id)
@@ -436,7 +437,10 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
 
         response = await self.client.post("/api/v1/subscriptions/trial")
         self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["detail"], "Remnawave did not return subscription_url")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.purchases.errors.remnawave_subscription_url_missing"),
+        )
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
@@ -547,7 +551,10 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             json={"idempotency_key": "wallet-low"},
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], "insufficient funds")
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.ledger.errors.insufficient_funds"),
+        )
 
         entries = await self._get_ledger_entries(account.id)
         self.assertEqual(entries, [])
@@ -606,7 +613,10 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             json={"idempotency_key": "wallet-empty-url"},
         )
         self.assertEqual(first_response.status_code, 502)
-        self.assertEqual(first_response.json()["detail"], "Remnawave did not return subscription_url")
+        self.assertEqual(
+            first_response.json()["detail"],
+            translate("api.purchases.errors.remnawave_subscription_url_missing"),
+        )
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)

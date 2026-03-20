@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.db.models import Account
 from app.integrations.remnawave.client import RemnawaveUser
+from app.services.i18n import translate
 from app.services.purchases import (
     PurchaseSource,
     RemnawaveSyncError,
@@ -124,7 +125,7 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             RemnawaveSyncError,
-            "Remnawave did not return subscription_url",
+            translate("api.purchases.errors.remnawave_subscription_url_missing"),
         ):
             await apply_trial_purchase(
                 account,
@@ -146,7 +147,7 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             RemnawaveSyncError,
-            "Remnawave did not return subscription_url",
+            translate("api.purchases.errors.remnawave_subscription_url_missing"),
         ):
             await apply_paid_purchase(
                 account,

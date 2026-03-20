@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowRightLeft, CreditCard, Wallet } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 
 export interface WithdrawalRequestItemView {
   id: number;
@@ -41,31 +42,31 @@ function getWithdrawalStatusMeta(status: WithdrawalRequestItemView['status']) {
   switch (status) {
     case 'new':
       return {
-        label: 'На рассмотрении',
+        label: t('web.withdrawals.statusNew'),
         className:
           'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200',
       };
     case 'in_progress':
       return {
-        label: 'В работе',
+        label: t('web.withdrawals.statusInProgress'),
         className:
           'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200',
       };
     case 'paid':
       return {
-        label: 'Выплачено',
+        label: t('web.withdrawals.statusPaid'),
         className:
           'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200',
       };
     case 'rejected':
       return {
-        label: 'Отклонено',
+        label: t('web.withdrawals.statusRejected'),
         className:
           'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200',
       };
     case 'cancelled':
       return {
-        label: 'Отменено',
+        label: t('web.withdrawals.statusCancelled'),
         className:
           'border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200',
       };
@@ -92,10 +93,10 @@ export function WithdrawalRequestsCard({
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-50">
             <ArrowRightLeft className="h-4 w-4 text-[var(--tg-theme-button-color,#3390ec)]" />
-            Заявки на вывод
+            {t('web.withdrawals.title')}
           </div>
           <p className="text-sm leading-6 text-slate-500 dark:text-slate-300">
-            Статусы заявок и реквизиты, которые сейчас находятся в работе.
+            {t('web.withdrawals.subtitle')}
           </p>
         </div>
         {availableForWithdraw > 0 ? (
@@ -104,25 +105,28 @@ export function WithdrawalRequestsCard({
             className="inline-flex items-center gap-2 rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-2 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
           >
             <Wallet className="h-4 w-4" />
-            Новая заявка
+            {t('web.withdrawals.newRequest')}
           </button>
         ) : null}
       </div>
 
       <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500 dark:bg-slate-900 dark:text-slate-300">
         {availableForWithdraw > 0
-          ? `Сейчас доступно ${formatRubles(availableForWithdraw)} ₽. Минимальная сумма вывода: ${formatRubles(minimumAmount)} ₽.`
-          : 'Новых доступных средств для вывода сейчас нет. Статусы уже отправленных заявок остаются ниже.'}
+          ? t('web.withdrawals.availableAndMinimum', {
+              available: formatRubles(availableForWithdraw),
+              minimum: formatRubles(minimumAmount),
+            })
+          : t('web.withdrawals.noAvailable')}
       </div>
 
       <div className="mt-4 space-y-3">
         {isLoading ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-            Загружаем заявки на вывод...
+            {t('web.withdrawals.loading')}
           </div>
         ) : items.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-            Заявок пока нет. После отправки здесь появится статус рассмотрения администратором.
+            {t('web.withdrawals.empty')}
           </div>
         ) : (
           items.map((item) => {
@@ -157,13 +161,13 @@ export function WithdrawalRequestsCard({
 
                 {item.userComment ? (
                   <div className="mt-3 rounded-xl bg-white px-3 py-2 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-300">
-                    Комментарий: {item.userComment}
+                    {t('web.withdrawals.userCommentPrefix')}: {item.userComment}
                   </div>
                 ) : null}
 
                 {item.adminComment ? (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
-                    Ответ администратора: {item.adminComment}
+                    {t('web.withdrawals.adminCommentPrefix')}: {item.adminComment}
                   </div>
                 ) : null}
               </div>
@@ -174,7 +178,7 @@ export function WithdrawalRequestsCard({
 
       {total > items.length ? (
         <div className="mt-4 text-xs text-slate-400 dark:text-slate-500">
-          Показаны последние {items.length} из {total} заявок.
+          {t('web.withdrawals.shownPartial', { shown: items.length, total })}
         </div>
       ) : null}
     </div>

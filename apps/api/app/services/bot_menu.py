@@ -15,6 +15,7 @@ from app.schemas.bot import (
 )
 from app.schemas.payment import SubscriptionPlanResponse
 from app.services.accounts import get_account_by_telegram_id
+from app.services.i18n import translate
 from app.services.payments import (
     create_telegram_stars_plan_purchase_payment,
     create_yookassa_plan_purchase_payment,
@@ -109,7 +110,7 @@ async def activate_trial_for_telegram_account(
 ):
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
-        raise BotMenuAccountNotFoundError(f"telegram account not found: {telegram_id}")
+        raise BotMenuAccountNotFoundError(translate("api.accounts.errors.account_not_found"))
     return await activate_trial(session, account=account, source="bot")
 
 
@@ -122,7 +123,7 @@ async def create_telegram_stars_plan_payment_for_telegram_account(
 ) -> BotPlanPaymentResponse:
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
-        raise BotMenuAccountNotFoundError(f"telegram account not found: {telegram_id}")
+        raise BotMenuAccountNotFoundError(translate("api.accounts.errors.account_not_found"))
 
     snapshot = await create_telegram_stars_plan_purchase_payment(
         session,
@@ -133,7 +134,7 @@ async def create_telegram_stars_plan_payment_for_telegram_account(
     )
 
     if not snapshot.confirmation_url:
-        raise BotMenuServiceError("payment intent does not contain confirmation_url")
+        raise BotMenuServiceError(translate("api.payments.errors.gateway_failed"))
 
     return BotPlanPaymentResponse(
         provider=snapshot.provider,
@@ -157,7 +158,7 @@ async def create_yookassa_plan_payment_for_telegram_account(
 ) -> BotPlanPaymentResponse:
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
-        raise BotMenuAccountNotFoundError(f"telegram account not found: {telegram_id}")
+        raise BotMenuAccountNotFoundError(translate("api.accounts.errors.account_not_found"))
 
     resolved_success_url = success_url or _build_telegram_bot_return_url()
     snapshot = await create_yookassa_plan_purchase_payment(
@@ -171,7 +172,7 @@ async def create_yookassa_plan_payment_for_telegram_account(
     )
 
     if not snapshot.confirmation_url:
-        raise BotMenuServiceError("payment intent does not contain confirmation_url")
+        raise BotMenuServiceError(translate("api.payments.errors.gateway_failed"))
 
     return BotPlanPaymentResponse(
         provider=snapshot.provider,

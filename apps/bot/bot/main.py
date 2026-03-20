@@ -13,6 +13,7 @@ from uvicorn import Config, Server
 from bot.core.config import settings
 from bot.core.logging import configure_logging
 from bot.handlers import menu, payments, start, webapp
+from bot.services.i18n import translate
 from bot.services.media_registry import get_media_registry
 from bot.services.session_store import close_menu_session_store
 
@@ -40,7 +41,14 @@ async def on_startup(bot: Bot) -> None:
         if not settings.bot_webhook_base_url:
             raise RuntimeError("BOT_WEBHOOK_BASE_URL is required when BOT_USE_WEBHOOK=true")
         await ensure_webhook(bot)
-    await bot.set_my_commands([BotCommand(command="start", description="Начать работу")])
+    await bot.set_my_commands(
+        [
+            BotCommand(
+                command="start",
+                description=translate("bot.commands.start_description"),
+            )
+        ]
+    )
 
 
 async def on_shutdown(bot: Bot) -> None:

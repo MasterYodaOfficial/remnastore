@@ -50,6 +50,7 @@ from app.integrations.remnawave.client import RemnawaveUser
 from app.main import create_app
 from app.services import account_linking
 from app.services.account_linking import create_telegram_link_token
+from app.services.i18n import translate
 
 
 class DummyCache:
@@ -340,7 +341,10 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(reused_response.status_code, 400)
-        self.assertEqual(reused_response.json()["detail"], "Link token already used")
+        self.assertEqual(
+            reused_response.json()["detail"],
+            translate("api.linking.errors.token_already_used"),
+        )
 
     async def test_browser_to_telegram_merges_existing_telegram_account(self) -> None:
         browser_account = await self._create_account(
@@ -812,7 +816,10 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             json={"link_token": token_body["link_token"]},
         )
         self.assertEqual(reused_response.status_code, 400)
-        self.assertEqual(reused_response.json()["detail"], "Link token already used")
+        self.assertEqual(
+            reused_response.json()["detail"],
+            translate("api.linking.errors.token_already_used"),
+        )
 
     async def test_expired_link_token_is_rejected(self) -> None:
         browser_account = await self._create_account(email="browser@example.com")
@@ -833,7 +840,10 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(expired_response.status_code, 400)
-        self.assertEqual(expired_response.json()["detail"], "Link token expired")
+        self.assertEqual(
+            expired_response.json()["detail"],
+            translate("api.linking.errors.token_expired"),
+        )
 
 
 if __name__ == "__main__":

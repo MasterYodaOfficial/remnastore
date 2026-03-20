@@ -1,5 +1,6 @@
 import React from 'react';
 import { CreditCard, Gift, Home, Settings } from 'lucide-react';
+import { t } from '../../lib/i18n';
 
 interface BottomNavProps {
   activeTab: string;
@@ -13,10 +14,10 @@ export function BottomNav({
   compact = false,
 }: BottomNavProps) {
   const tabs = [
-    { id: 'home', label: 'Главная', icon: Home },
-    { id: 'plans', label: 'Тарифы', icon: CreditCard },
-    { id: 'referral', label: 'Рефералы', icon: Gift },
-    { id: 'settings', label: 'Настройки', icon: Settings },
+    { id: 'home', label: t('web.bottomNav.home'), icon: Home },
+    { id: 'plans', label: t('web.bottomNav.plans'), icon: CreditCard },
+    { id: 'referral', label: t('web.bottomNav.referral'), icon: Gift },
+    { id: 'settings', label: t('web.bottomNav.settings'), icon: Settings },
   ];
 
   return (

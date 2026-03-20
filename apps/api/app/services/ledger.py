@@ -10,6 +10,7 @@ from app.core.audit import log_audit_event
 from app.db.models import Account, LedgerEntry, LedgerEntryType
 from app.services.account_events import append_account_event
 from app.services.cache import get_cache
+from app.services.i18n import translate
 
 
 class LedgerServiceError(Exception):
@@ -28,6 +29,10 @@ class InsufficientFundsError(LedgerServiceError):
     pass
 
 
+def _ledger_error(key: str) -> str:
+    return translate(f"api.ledger.errors.{key}")
+
+
 async def _clear_account_cache(account_id: uuid.UUID) -> None:
     cache = get_cache()
     await cache.delete(cache.account_response_key(str(account_id)))
@@ -39,7 +44,7 @@ async def _load_account_for_update(session: AsyncSession, account_id: uuid.UUID)
     )
     account = result.scalar_one_or_none()
     if account is None:
-        raise LedgerServiceError(f"account not found: {account_id}")
+        raise LedgerServiceError(_ledger_error("account_not_found"))
     return account
 
 
@@ -77,7 +82,7 @@ def _validate_idempotent_entry(
         or entry.entry_type != entry_type
         or entry.amount != amount
     ):
-        raise LedgerIdempotencyConflictError("idempotency key already used for another operation")
+        raise LedgerIdempotencyConflictError(_ledger_error("idempotency_conflict"))
 
 
 async def _append_entry_for_locked_account(
@@ -100,7 +105,7 @@ async def _append_entry_for_locked_account(
     balance_before = int(account.balance)
     balance_after = balance_before + amount
     if balance_after < 0 and not allow_negative:
-        raise InsufficientFundsError("insufficient funds")
+        raise InsufficientFundsError(_ledger_error("insufficient_funds"))
 
     entry = LedgerEntry(
         account_id=account.id,
@@ -287,7 +292,7 @@ async def clear_account_cache(account_id: uuid.UUID) -> None:
 async def _commit_entry(session: AsyncSession, *, entry: LedgerEntry, account_id: uuid.UUID) -> LedgerEntry:
     try:
         await session.commit()
-    except IntegrityError as exc:
+    except IntegrityError:
         await session.rollback()
         raise
 

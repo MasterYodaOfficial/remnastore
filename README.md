@@ -114,6 +114,13 @@ HTML-отчеты сохраняются в:
 ./scripts/dev.sh rebuild web admin
 ```
 
+### Frontend quality-команды
+
+```bash
+cd apps/web && npm run lint && npm run test && npm run typecheck && npm run build
+cd apps/admin && npm run lint && npm run test && npm run typecheck && npm run build
+```
+
 ### Полный сброс с чистой БД
 
 ```bash
@@ -131,8 +138,13 @@ docker builder prune -a -f
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
 - [`docs/product-readiness-plan.md`](docs/product-readiness-plan.md) - план hardening и подготовки `dev -> main`
 - [`docs/production-env.md`](docs/production-env.md) - production-контракт по env-переменным
+- [`docs/release-checklist.md`](docs/release-checklist.md) - checklist выпуска `dev -> main`
+- [`docs/smoke-checklist.md`](docs/smoke-checklist.md) - ручной smoke перед релизом
+- [`docs/rollback-checklist.md`](docs/rollback-checklist.md) - порядок rollback при неудачном релизе
+- [`docs/runbooks/README.md`](docs/runbooks/README.md) - incident runbooks по платежам, webhook, Mini App, bot и withdrawals
 - [`docs/logging-observability.md`](docs/logging-observability.md) - фазный план логирования и observability
 - [`docs/security-checklist.md`](docs/security-checklist.md) - базовый security checklist
+- [`docs/code-documentation.md`](docs/code-documentation.md) - правила docstring и комментариев в коде
 - [`apps/web/FRONTEND_CONTRACT.md`](apps/web/FRONTEND_CONTRACT.md) - единый контракт frontend на русском
 
 ## Ключевые замечания

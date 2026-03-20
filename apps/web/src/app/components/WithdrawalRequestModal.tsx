@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CreditCard, LoaderCircle, Wallet, X } from 'lucide-react';
 import { formatRubles } from '../../lib/currency';
+import { t } from '../../lib/i18n';
 
 interface WithdrawalRequestModalProps {
   isOpen: boolean;
@@ -85,16 +86,16 @@ export function WithdrawalRequestModal({
               <Wallet className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />
             </div>
             <h2 className="text-xl font-bold text-[var(--tg-theme-text-color,#000000)]">
-              Заявка на вывод
+              {t('web.withdrawals.modal.title')}
             </h2>
             <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-              Деньги будут зарезервированы, а заявка уйдет администратору на проверку.
+              {t('web.withdrawals.modal.subtitle')}
             </p>
           </div>
           <button
             onClick={onClose}
             disabled={isSubmitting}
-            aria-label="Закрыть окно вывода"
+            aria-label={t('web.withdrawals.modal.closeAriaLabel')}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] transition-colors hover:bg-[var(--tg-theme-hint-color,#e5e5e5)]/30"
           >
             <X className="h-5 w-5 text-[var(--tg-theme-text-color,#000000)]" />
@@ -106,7 +107,7 @@ export function WithdrawalRequestModal({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3">
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--tg-theme-hint-color,#999999)]">
-                  Доступно
+                  {t('web.withdrawals.modal.availableLabel')}
                 </div>
                 <div className="mt-2 text-2xl font-semibold text-[var(--tg-theme-text-color,#000000)]">
                   {formatRubles(availableForWithdraw)} ₽
@@ -114,7 +115,7 @@ export function WithdrawalRequestModal({
               </div>
               <div className="rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3">
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--tg-theme-hint-color,#999999)]">
-                  Минимум
+                  {t('web.withdrawals.modal.minimumLabel')}
                 </div>
                 <div className="mt-2 text-2xl font-semibold text-[var(--tg-theme-text-color,#000000)]">
                   {formatRubles(minimumAmount)} ₽
@@ -125,13 +126,15 @@ export function WithdrawalRequestModal({
             <div className="grid gap-4">
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-[var(--tg-theme-text-color,#000000)]">
-                  Сумма вывода
+                  {t('web.withdrawals.modal.amountLabel')}
                 </span>
                 <input
                   type="number"
                   value={amountInput}
                   onChange={(event) => setAmountInput(event.target.value)}
-                  placeholder={`От ${formatRubles(minimumAmount)} ₽`}
+                  placeholder={t('web.withdrawals.modal.amountPlaceholder', {
+                    minimum: formatRubles(minimumAmount),
+                  })}
                   min={minimumAmount}
                   max={availableForWithdraw}
                   step={1}
@@ -140,7 +143,10 @@ export function WithdrawalRequestModal({
                 />
                 {!isAmountValid && amountInput ? (
                   <span className="text-xs text-amber-600 dark:text-amber-300">
-                    Укажи сумму от {formatRubles(minimumAmount)} ₽ до {formatRubles(availableForWithdraw)} ₽.
+                    {t('web.withdrawals.modal.amountValidation', {
+                      minimum: formatRubles(minimumAmount),
+                      available: formatRubles(availableForWithdraw),
+                    })}
                   </span>
                 ) : null}
               </label>
@@ -148,7 +154,7 @@ export function WithdrawalRequestModal({
               <label className="grid gap-2">
                 <span className="flex items-center gap-2 text-sm font-medium text-[var(--tg-theme-text-color,#000000)]">
                   <CreditCard className="h-4 w-4 text-[var(--tg-theme-button-color,#3390ec)]" />
-                  Номер карты
+                  {t('web.withdrawals.modal.cardLabel')}
                 </span>
                 <input
                   type="text"
@@ -156,29 +162,29 @@ export function WithdrawalRequestModal({
                   autoComplete="cc-number"
                   value={cardInput}
                   onChange={(event) => setCardInput(formatCardNumber(event.target.value))}
-                  placeholder="0000 0000 0000 0000"
+                  placeholder={t('web.withdrawals.modal.cardPlaceholder')}
                   disabled={isSubmitting}
                   className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-[var(--tg-theme-text-color,#000000)] outline-none focus:border-[var(--tg-theme-button-color,#3390ec)]"
                 />
                 {normalizedCardDigits && !isCardValid ? (
                   <span className="text-xs text-amber-600 dark:text-amber-300">
-                    Проверь номер карты. Перед отправкой он проходит проверку контрольной суммы.
+                    {t('web.withdrawals.modal.cardInvalid')}
                   </span>
                 ) : (
                   <span className="text-xs text-[var(--tg-theme-hint-color,#999999)]">
-                    Поддерживаются только корректные номера карт. Сырые реквизиты не показываются обратно в приложении.
+                    {t('web.withdrawals.modal.cardHint')}
                   </span>
                 )}
               </label>
 
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-[var(--tg-theme-text-color,#000000)]">
-                  Комментарий для администратора
+                  {t('web.withdrawals.modal.commentLabel')}
                 </span>
                 <textarea
                   value={commentInput}
                   onChange={(event) => setCommentInput(event.target.value)}
-                  placeholder="Например: основная карта для выплат"
+                  placeholder={t('web.withdrawals.modal.commentPlaceholder')}
                   rows={3}
                   disabled={isSubmitting}
                   className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-[var(--tg-theme-text-color,#000000)] outline-none focus:border-[var(--tg-theme-button-color,#3390ec)]"
@@ -187,7 +193,7 @@ export function WithdrawalRequestModal({
             </div>
 
             <div className="rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 text-xs leading-5 text-[var(--tg-theme-hint-color,#999999)]">
-              После отправки заявка появится в статусе «На рассмотрении». Обновления по ней придут через центр уведомлений.
+              {t('web.withdrawals.modal.statusHint')}
             </div>
           </div>
         </div>
@@ -207,10 +213,10 @@ export function WithdrawalRequestModal({
             {isSubmitting ? (
               <>
                 <LoaderCircle className="h-4 w-4 animate-spin" />
-                Отправляем заявку...
+                {t('web.withdrawals.modal.submitting')}
               </>
             ) : (
-              'Отправить заявку'
+              t('web.withdrawals.modal.submit')
             )}
           </button>
         </div>
