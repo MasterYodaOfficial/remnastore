@@ -21,6 +21,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.main import create_app
+from app.services.i18n import translate
 from app.services.notifications import (
     TelegramNotificationDeliveryError,
     create_notification,
@@ -102,16 +103,22 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -121,13 +128,13 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._cache_module._cache = self._original_cache
-        self._notifications_service.settings.telegram_bot_token = self._original_bot_token
+        self._notifications_service.settings.telegram_bot_token = (
+            self._original_bot_token
+        )
         self._notifications_service.settings.notification_telegram_max_attempts = (
             self._original_notification_max_attempts
         )
-        self._notifications_service.settings.notification_telegram_retry_base_seconds = (
-            self._original_notification_retry_base_seconds
-        )
+        self._notifications_service.settings.notification_telegram_retry_base_seconds = self._original_notification_retry_base_seconds
         self._notifications_service.settings.notification_telegram_retry_max_seconds = (
             self._original_notification_retry_max_seconds
         )
@@ -183,7 +190,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             return await session.get(Account, account_id)
 
-    async def test_create_notification_creates_in_app_delivery_and_dedupes(self) -> None:
+    async def test_create_notification_creates_in_app_delivery_and_dedupes(
+        self,
+    ) -> None:
         account = await self._create_account(email="notify@example.com")
 
         first = await self._create_notification(
@@ -211,7 +220,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deliveries[0].attempts_count, 1)
         self.assertIsNotNone(deliveries[0].delivered_at)
 
-    async def test_create_notification_adds_pending_telegram_delivery_for_linked_account(self) -> None:
+    async def test_create_notification_adds_pending_telegram_delivery_for_linked_account(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="notify-telegram@example.com",
             telegram_id=758107031,
@@ -234,7 +245,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deliveries[1].attempts_count, 0)
         self.assertIsNone(deliveries[1].next_retry_at)
 
-    async def test_create_notification_skips_telegram_delivery_for_bot_blocked_account(self) -> None:
+    async def test_create_notification_skips_telegram_delivery_for_bot_blocked_account(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="notify-blocked@example.com",
             telegram_id=758107031,
@@ -254,7 +267,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deliveries[0].channel, NotificationChannel.IN_APP)
         self.assertEqual(deliveries[0].status, NotificationDeliveryStatus.DELIVERED)
 
-    async def test_process_pending_telegram_deliveries_marks_delivery_delivered(self) -> None:
+    async def test_process_pending_telegram_deliveries_marks_delivery_delivered(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="telegram-deliver@example.com",
             telegram_id=758107031,
@@ -280,11 +295,16 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.delivered, 1)
         self.assertEqual(result.scheduled_retry, 0)
         self.assertEqual(result.terminal_failed, 0)
-        self.assertEqual(client.sent_messages, [(758107031, "Оплата прошла\n\nПлатеж успешно завершен.")])
+        self.assertEqual(
+            client.sent_messages,
+            [(758107031, "Оплата прошла\n\nПлатеж успешно завершен.")],
+        )
 
         deliveries = await self._get_deliveries(notification.id)
         telegram_delivery = next(
-            delivery for delivery in deliveries if delivery.channel == NotificationChannel.TELEGRAM
+            delivery
+            for delivery in deliveries
+            if delivery.channel == NotificationChannel.TELEGRAM
         )
         self.assertEqual(telegram_delivery.status, NotificationDeliveryStatus.DELIVERED)
         self.assertEqual(telegram_delivery.attempts_count, 1)
@@ -292,7 +312,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(telegram_delivery.delivered_at)
         self.assertIsNone(telegram_delivery.next_retry_at)
 
-    async def test_process_pending_telegram_deliveries_schedules_retry_for_retryable_error(self) -> None:
+    async def test_process_pending_telegram_deliveries_schedules_retry_for_retryable_error(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="telegram-retry@example.com",
             telegram_id=758107031,
@@ -329,7 +351,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
 
         deliveries = await self._get_deliveries(notification.id)
         telegram_delivery = next(
-            delivery for delivery in deliveries if delivery.channel == NotificationChannel.TELEGRAM
+            delivery
+            for delivery in deliveries
+            if delivery.channel == NotificationChannel.TELEGRAM
         )
         self.assertEqual(telegram_delivery.status, NotificationDeliveryStatus.FAILED)
         self.assertEqual(telegram_delivery.attempts_count, 1)
@@ -337,7 +361,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(telegram_delivery.error_message, "temporary network issue")
         self.assertIsNotNone(telegram_delivery.next_retry_at)
 
-    async def test_process_pending_telegram_deliveries_marks_account_bot_blocked(self) -> None:
+    async def test_process_pending_telegram_deliveries_marks_account_bot_blocked(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="telegram-blocked@example.com",
             telegram_id=758107031,
@@ -375,7 +401,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
 
         deliveries = await self._get_deliveries(notification.id)
         telegram_delivery = next(
-            delivery for delivery in deliveries if delivery.channel == NotificationChannel.TELEGRAM
+            delivery
+            for delivery in deliveries
+            if delivery.channel == NotificationChannel.TELEGRAM
         )
         self.assertEqual(telegram_delivery.status, NotificationDeliveryStatus.FAILED)
         self.assertEqual(telegram_delivery.error_code, "telegram_bot_blocked")
@@ -429,7 +457,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["items"][1]["is_read"], True)
         self.assertEqual(body["items"][2]["id"], oldest.id)
 
-        unread_only_response = await self.client.get("/api/v1/notifications?unread_only=true")
+        unread_only_response = await self.client.get(
+            "/api/v1/notifications?unread_only=true"
+        )
         self.assertEqual(unread_only_response.status_code, 200)
         unread_body = unread_only_response.json()
         self.assertEqual(unread_body["total"], 2)
@@ -447,14 +477,18 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
             priority=NotificationPriority.ERROR,
         )
 
-        response = await self.client.post(f"/api/v1/notifications/{notification.id}/read")
+        response = await self.client.post(
+            f"/api/v1/notifications/{notification.id}/read"
+        )
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["id"], notification.id)
         self.assertEqual(body["is_read"], True)
         self.assertIsNotNone(body["read_at"])
 
-        unread_count_response = await self.client.get("/api/v1/notifications/unread-count")
+        unread_count_response = await self.client.get(
+            "/api/v1/notifications/unread-count"
+        )
         self.assertEqual(unread_count_response.status_code, 200)
         self.assertEqual(unread_count_response.json()["unread_count"], 0)
 
@@ -462,6 +496,21 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_notification)
         assert stored_notification is not None
         self.assertIsNotNone(stored_notification.read_at)
+
+    async def test_mark_notification_read_returns_error_code_when_item_missing(
+        self,
+    ) -> None:
+        account = await self._create_account(email="missing-read@example.com")
+        self._current_account_id = account.id
+
+        response = await self.client.post("/api/v1/notifications/999999/read")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json()["detail"],
+            translate("api.notifications.errors.not_found"),
+        )
+        self.assertEqual(response.json()["error_code"], "notification_not_found")
 
     async def test_mark_all_notifications_read_marks_only_unread(self) -> None:
         account = await self._create_account(email="all-read@example.com")
@@ -495,7 +544,9 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["updated_count"], 2)
 
-        unread_count_response = await self.client.get("/api/v1/notifications/unread-count")
+        unread_count_response = await self.client.get(
+            "/api/v1/notifications/unread-count"
+        )
         self.assertEqual(unread_count_response.status_code, 200)
         self.assertEqual(unread_count_response.json()["unread_count"], 0)
 
@@ -505,7 +556,11 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_first)
         self.assertIsNotNone(stored_second)
         self.assertIsNotNone(stored_third_after)
-        assert stored_first is not None and stored_second is not None and stored_third_after is not None
+        assert (
+            stored_first is not None
+            and stored_second is not None
+            and stored_third_after is not None
+        )
         self.assertIsNotNone(stored_first.read_at)
         self.assertIsNotNone(stored_second.read_at)
         self.assertIsNotNone(stored_third_after.read_at)

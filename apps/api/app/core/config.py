@@ -11,9 +11,15 @@ class Settings(BaseSettings):
     log_format: str = Field(default="text", validation_alias="LOG_FORMAT")
     log_to_file: bool = Field(default=False, validation_alias="LOG_TO_FILE")
     log_dir: str = Field(default="./.logs", validation_alias="LOG_DIR")
-    log_file_max_bytes: int = Field(default=10 * 1024 * 1024, validation_alias="LOG_FILE_MAX_BYTES")
-    log_file_backup_count: int = Field(default=5, validation_alias="LOG_FILE_BACKUP_COUNT")
-    access_log_enabled: bool = Field(default=True, validation_alias="ACCESS_LOG_ENABLED")
+    log_file_max_bytes: int = Field(
+        default=10 * 1024 * 1024, validation_alias="LOG_FILE_MAX_BYTES"
+    )
+    log_file_backup_count: int = Field(
+        default=5, validation_alias="LOG_FILE_BACKUP_COUNT"
+    )
+    access_log_enabled: bool = Field(
+        default=True, validation_alias="ACCESS_LOG_ENABLED"
+    )
 
     database_url: str = ""
     redis_url: str = ""
@@ -34,7 +40,9 @@ class Settings(BaseSettings):
         default="https://api.yookassa.ru/v3",
         validation_alias="YOOKASSA_API_URL",
     )
-    yookassa_verify_tls: bool = Field(default=True, validation_alias="YOOKASSA_VERIFY_TLS")
+    yookassa_verify_tls: bool = Field(
+        default=True, validation_alias="YOOKASSA_VERIFY_TLS"
+    )
     api_token: str = Field(default="", validation_alias="API_TOKEN")
     payment_pending_ttl_seconds_yookassa: int = Field(
         default=3600,
@@ -128,10 +136,18 @@ class Settings(BaseSettings):
         default=43200,
         validation_alias="ADMIN_JWT_ACCESS_TOKEN_EXPIRES_SECONDS",
     )
-    admin_bootstrap_username: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_USERNAME")
-    admin_bootstrap_password: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_PASSWORD")
-    admin_bootstrap_email: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_EMAIL")
-    admin_bootstrap_full_name: str = Field(default="", validation_alias="ADMIN_BOOTSTRAP_FULL_NAME")
+    admin_bootstrap_username: str = Field(
+        default="", validation_alias="ADMIN_BOOTSTRAP_USERNAME"
+    )
+    admin_bootstrap_password: str = Field(
+        default="", validation_alias="ADMIN_BOOTSTRAP_PASSWORD"
+    )
+    admin_bootstrap_email: str = Field(
+        default="", validation_alias="ADMIN_BOOTSTRAP_EMAIL"
+    )
+    admin_bootstrap_full_name: str = Field(
+        default="", validation_alias="ADMIN_BOOTSTRAP_FULL_NAME"
+    )
     supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
     supabase_anon_key: str = Field(default="", validation_alias="SUPABASE_ANON_KEY")
     supabase_user_cache_ttl_seconds: int = Field(

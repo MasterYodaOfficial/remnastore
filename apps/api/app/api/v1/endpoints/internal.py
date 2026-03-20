@@ -12,7 +12,10 @@ from app.schemas.bot import (
     BotPlanPaymentResponse,
 )
 from app.schemas.internal import TelegramAccountAccessResponse
-from app.services.accounts import get_account_by_telegram_id, mark_telegram_account_reachable
+from app.services.accounts import (
+    get_account_by_telegram_id,
+    mark_telegram_account_reachable,
+)
 from app.services.bot_menu import (
     BotMenuAccountNotFoundError,
     BotMenuServiceError,
@@ -35,7 +38,10 @@ from app.services.subscriptions import RemnawaveSyncError, TrialEligibilityError
 router = APIRouter()
 
 
-@router.get("/telegram-accounts/{telegram_id}/access", response_model=TelegramAccountAccessResponse)
+@router.get(
+    "/telegram-accounts/{telegram_id}/access",
+    response_model=TelegramAccountAccessResponse,
+)
 async def read_telegram_account_access(
     telegram_id: int,
     session: AsyncSession = Depends(get_session),
@@ -61,7 +67,10 @@ async def read_telegram_account_access(
     )
 
 
-@router.post("/telegram-accounts/{telegram_id}/reachable", response_model=TelegramAccountAccessResponse)
+@router.post(
+    "/telegram-accounts/{telegram_id}/reachable",
+    response_model=TelegramAccountAccessResponse,
+)
 async def mark_telegram_account_as_reachable(
     telegram_id: int,
     request: Request,
@@ -125,10 +134,14 @@ async def read_bot_plans(
     try:
         return get_bot_plans()
     except SubscriptionPlanError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
 
 
-@router.post("/bot/subscriptions/trial/{telegram_id}", response_model=BotDashboardResponse)
+@router.post(
+    "/bot/subscriptions/trial/{telegram_id}", response_model=BotDashboardResponse
+)
 async def create_bot_trial_subscription(
     telegram_id: int,
     request: Request,
@@ -148,7 +161,9 @@ async def create_bot_trial_subscription(
             reason="account_not_found",
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except TrialEligibilityError as exc:
         log_audit_event(
             "internal.bot.trial_activate",
@@ -168,7 +183,9 @@ async def create_bot_trial_subscription(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
 
     log_audit_event(
         "internal.bot.trial_activate",
@@ -180,7 +197,10 @@ async def create_bot_trial_subscription(
     return await get_bot_dashboard(session, telegram_id=telegram_id)
 
 
-@router.post("/bot/payments/telegram-stars/plans/{plan_code}", response_model=BotPlanPaymentResponse)
+@router.post(
+    "/bot/payments/telegram-stars/plans/{plan_code}",
+    response_model=BotPlanPaymentResponse,
+)
 async def create_bot_telegram_stars_plan_payment(
     plan_code: str,
     payload: BotPlanActionRequest,
@@ -207,7 +227,9 @@ async def create_bot_telegram_stars_plan_payment(
             reason="account_not_found",
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except SubscriptionPlanError as exc:
         log_audit_event(
             "internal.bot.payment_intent.telegram_stars",
@@ -218,7 +240,9 @@ async def create_bot_telegram_stars_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except PaymentGatewayConfigurationError as exc:
         log_audit_event(
             "internal.bot.payment_intent.telegram_stars",
@@ -229,7 +253,9 @@ async def create_bot_telegram_stars_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except PaymentConflictError as exc:
         log_audit_event(
             "internal.bot.payment_intent.telegram_stars",
@@ -240,7 +266,9 @@ async def create_bot_telegram_stars_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     except PaymentAccountBlockedError as exc:
         log_audit_event(
             "internal.bot.payment_intent.telegram_stars",
@@ -251,7 +279,9 @@ async def create_bot_telegram_stars_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
     except (PaymentGatewayError, BotMenuServiceError) as exc:
         log_audit_event(
             "internal.bot.payment_intent.telegram_stars",
@@ -278,7 +308,9 @@ async def create_bot_telegram_stars_plan_payment(
     return response
 
 
-@router.post("/bot/payments/yookassa/plans/{plan_code}", response_model=BotPlanPaymentResponse)
+@router.post(
+    "/bot/payments/yookassa/plans/{plan_code}", response_model=BotPlanPaymentResponse
+)
 async def create_bot_yookassa_plan_payment(
     plan_code: str,
     payload: BotPlanActionRequest,
@@ -307,7 +339,9 @@ async def create_bot_yookassa_plan_payment(
             reason="account_not_found",
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except SubscriptionPlanError as exc:
         log_audit_event(
             "internal.bot.payment_intent.yookassa",
@@ -318,7 +352,9 @@ async def create_bot_yookassa_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except PaymentGatewayConfigurationError as exc:
         log_audit_event(
             "internal.bot.payment_intent.yookassa",
@@ -329,7 +365,9 @@ async def create_bot_yookassa_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except PaymentConflictError as exc:
         log_audit_event(
             "internal.bot.payment_intent.yookassa",
@@ -340,7 +378,9 @@ async def create_bot_yookassa_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     except PaymentAccountBlockedError as exc:
         log_audit_event(
             "internal.bot.payment_intent.yookassa",
@@ -351,7 +391,9 @@ async def create_bot_yookassa_plan_payment(
             reason=str(exc),
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
     except (PaymentGatewayError, BotMenuServiceError) as exc:
         log_audit_event(
             "internal.bot.payment_intent.yookassa",

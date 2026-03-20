@@ -40,7 +40,9 @@ class SupabaseAuthClient:
         }
 
         try:
-            async with httpx.AsyncClient(base_url=self._base_url, timeout=10.0) as client:
+            async with httpx.AsyncClient(
+                base_url=self._base_url, timeout=10.0
+            ) as client:
                 response = await client.get("/auth/v1/user", headers=headers)
         except httpx.HTTPError as exc:
             raise SupabaseAuthError("failed to reach supabase auth") from exc

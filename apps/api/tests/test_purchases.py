@@ -91,7 +91,9 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.remnawave_user_uuid, account.id)
         self.assertEqual(gateway.calls[0]["is_trial"], True)
 
-    async def test_apply_paid_purchase_clears_active_trial_flag_but_keeps_history(self) -> None:
+    async def test_apply_paid_purchase_clears_active_trial_flag_but_keeps_history(
+        self,
+    ) -> None:
         gateway = FakeGateway()
         purchased_at = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
         target_expires_at = purchased_at + timedelta(days=30)
@@ -121,7 +123,9 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_apply_trial_purchase_requires_subscription_url(self) -> None:
         gateway = MissingSubscriptionUrlGateway()
         now = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
-        account = Account(id=uuid.uuid4(), email="trial-missing-url@example.com", telegram_id=1001)
+        account = Account(
+            id=uuid.uuid4(), email="trial-missing-url@example.com", telegram_id=1001
+        )
 
         with self.assertRaisesRegex(
             RemnawaveSyncError,

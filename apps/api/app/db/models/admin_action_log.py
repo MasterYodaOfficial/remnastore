@@ -4,7 +4,17 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Index, JSON, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    Index,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -43,7 +53,11 @@ class AdminActionLog(Base):
             name="uq_admin_action_logs_type_idempotency",
         ),
         Index("ix_admin_action_logs_admin_created", "admin_id", "created_at"),
-        Index("ix_admin_action_logs_target_account_created", "target_account_id", "created_at"),
+        Index(
+            "ix_admin_action_logs_target_account_created",
+            "target_account_id",
+            "created_at",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)

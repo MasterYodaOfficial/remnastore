@@ -187,16 +187,22 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -234,7 +240,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_subscription_grants(self, account_id: uuid.UUID) -> list[SubscriptionGrant]:
+    async def _get_subscription_grants(
+        self, account_id: uuid.UUID
+    ) -> list[SubscriptionGrant]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(SubscriptionGrant)
@@ -252,7 +260,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+    async def _get_account_event_logs(
+        self, account_id: uuid.UUID
+    ) -> list[AccountEventLog]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(AccountEventLog)
@@ -288,7 +298,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account.trial_ends_at)
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["subscription.trial.activated"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["subscription.trial.activated"]
+        )
         self.assertEqual(event_logs[0].source, "api")
 
     async def test_internal_bot_trial_activation_persists_bot_source(self) -> None:
@@ -310,13 +322,19 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["subscription"]["is_trial"])
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["subscription.trial.activated"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["subscription.trial.activated"]
+        )
         self.assertEqual(event_logs[0].source, "bot")
 
-    async def test_bootstrap_me_uses_local_snapshot_without_remnawave_call(self) -> None:
+    async def test_bootstrap_me_uses_local_snapshot_without_remnawave_call(
+        self,
+    ) -> None:
         account = await self._create_account(email="bootstrap@example.com")
         self._current_account_id = account.id
-        subscriptions_service.get_remnawave_gateway = lambda: UnavailableRemnawaveGateway()
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
 
         response = await self.client.get("/api/v1/bootstrap/me")
         self.assertEqual(response.status_code, 200)
@@ -339,6 +357,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         second_response = await self.client.post("/api/v1/subscriptions/trial")
         self.assertEqual(second_response.status_code, 400)
         self.assertEqual(second_response.json()["detail"], "trial_already_used")
+        self.assertEqual(second_response.json()["error_code"], "trial_already_used")
 
     async def test_trial_eligibility_rejects_remnawave_identity_conflict(self) -> None:
         account = await self._create_account(
@@ -359,7 +378,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             tag=None,
         )
 
-        eligibility_response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+        eligibility_response = await self.client.get(
+            "/api/v1/subscriptions/trial-eligibility"
+        )
         self.assertEqual(eligibility_response.status_code, 200)
         self.assertEqual(eligibility_response.json()["eligible"], False)
         self.assertEqual(
@@ -384,6 +405,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post("/api/v1/subscriptions/trial")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["detail"], "account_blocked")
+        self.assertEqual(response.json()["error_code"], "account_blocked")
 
     async def test_wallet_plan_purchase_rejects_blocked_account(self) -> None:
         account = await self._create_account(
@@ -402,6 +424,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.subscriptions.errors.account_blocked_purchase"),
         )
+        self.assertEqual(response.json()["error_code"], "account_blocked_purchase")
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
@@ -413,9 +436,13 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         account = await self._create_account(email="unavailable@example.com")
         self._current_account_id = account.id
 
-        subscriptions_service.get_remnawave_gateway = lambda: UnavailableRemnawaveGateway()
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
 
-        eligibility_response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+        eligibility_response = await self.client.get(
+            "/api/v1/subscriptions/trial-eligibility"
+        )
         self.assertEqual(eligibility_response.status_code, 200)
         self.assertEqual(eligibility_response.json()["eligible"], False)
         self.assertEqual(
@@ -430,10 +457,14 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             "remnawave_unavailable",
         )
 
-    async def test_activate_trial_fails_when_remnawave_returns_empty_subscription_url(self) -> None:
+    async def test_activate_trial_fails_when_remnawave_returns_empty_subscription_url(
+        self,
+    ) -> None:
         account = await self._create_account(email="trial-empty-url@example.com")
         self._current_account_id = account.id
-        subscriptions_service.get_remnawave_gateway = lambda: MissingSubscriptionUrlGateway(users={})
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            MissingSubscriptionUrlGateway(users={})
+        )
 
         response = await self.client.post("/api/v1/subscriptions/trial")
         self.assertEqual(response.status_code, 502)
@@ -449,7 +480,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(stored_account.subscription_status)
         self.assertFalse(stored_account.has_used_trial)
 
-    async def test_wallet_plan_purchase_debits_balance_and_applies_subscription(self) -> None:
+    async def test_wallet_plan_purchase_debits_balance_and_applies_subscription(
+        self,
+    ) -> None:
         account = await self._create_account(email="wallet@example.com", balance=1000)
         self._current_account_id = account.id
 
@@ -482,13 +515,19 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grants[0].reference_type, "wallet_purchase")
         self.assertEqual(grants[0].reference_id, "wallet-plan-1m")
 
-        event_types = [item.event_type for item in await self._get_account_event_logs(account.id)]
+        event_types = [
+            item.event_type for item in await self._get_account_event_logs(account.id)
+        ]
         self.assertIn("subscription.wallet_purchase.staged", event_types)
         self.assertIn("subscription.wallet_purchase.applied", event_types)
         self.assertIsNotNone(grants[0].applied_at)
 
-    async def test_wallet_plan_purchase_after_trial_clears_current_trial_flag(self) -> None:
-        account = await self._create_account(email="trial-to-paid@example.com", balance=1000)
+    async def test_wallet_plan_purchase_after_trial_clears_current_trial_flag(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="trial-to-paid@example.com", balance=1000
+        )
         self._current_account_id = account.id
 
         trial_response = await self.client.post("/api/v1/subscriptions/trial")
@@ -514,8 +553,12 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account.trial_used_at)
         self.assertIsNotNone(stored_account.trial_ends_at)
 
-    async def test_wallet_plan_purchase_same_idempotency_key_is_safe_to_repeat(self) -> None:
-        account = await self._create_account(email="wallet-repeat@example.com", balance=1000)
+    async def test_wallet_plan_purchase_same_idempotency_key_is_safe_to_repeat(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-repeat@example.com", balance=1000
+        )
         self._current_account_id = account.id
 
         first_response = await self.client.post(
@@ -543,7 +586,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(grants), 1)
 
     async def test_wallet_plan_purchase_rejects_insufficient_funds(self) -> None:
-        account = await self._create_account(email="wallet-low@example.com", balance=100)
+        account = await self._create_account(
+            email="wallet-low@example.com", balance=100
+        )
         self._current_account_id = account.id
 
         response = await self.client.post(
@@ -561,10 +606,16 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         grants = await self._get_subscription_grants(account.id)
         self.assertEqual(grants, [])
 
-    async def test_wallet_plan_purchase_can_resume_after_remnawave_failure(self) -> None:
-        account = await self._create_account(email="wallet-resume@example.com", balance=1000)
+    async def test_wallet_plan_purchase_can_resume_after_remnawave_failure(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-resume@example.com", balance=1000
+        )
         self._current_account_id = account.id
-        subscriptions_service.get_remnawave_gateway = lambda: UnavailableRemnawaveGateway()
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
 
         first_response = await self.client.post(
             "/api/v1/subscriptions/wallet/plans/plan_1m",
@@ -603,10 +654,16 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(grants), 1)
         self.assertIsNotNone(grants[0].applied_at)
 
-    async def test_wallet_plan_purchase_can_resume_after_empty_subscription_url(self) -> None:
-        account = await self._create_account(email="wallet-empty-url@example.com", balance=1000)
+    async def test_wallet_plan_purchase_can_resume_after_empty_subscription_url(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-empty-url@example.com", balance=1000
+        )
         self._current_account_id = account.id
-        subscriptions_service.get_remnawave_gateway = lambda: MissingSubscriptionUrlGateway(users={})
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            MissingSubscriptionUrlGateway(users={})
+        )
 
         first_response = await self.client.post(
             "/api/v1/subscriptions/wallet/plans/plan_1m",
@@ -679,11 +736,17 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
 
         referrer_entries = await self._get_ledger_entries(referrer.id)
         self.assertEqual(len(referrer_entries), 1)
-        self.assertEqual(referrer_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD)
+        self.assertEqual(
+            referrer_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD
+        )
         self.assertEqual(referrer_entries[0].amount, 59)
 
-    async def test_wallet_plan_repeat_purchase_extends_active_subscription(self) -> None:
-        account = await self._create_account(email="wallet-extend@example.com", balance=2000)
+    async def test_wallet_plan_repeat_purchase_extends_active_subscription(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-extend@example.com", balance=2000
+        )
         self._current_account_id = account.id
 
         first_response = await self.client.post(
@@ -794,7 +857,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stored_account.subscription_is_trial)
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["subscription.remnawave.webhook"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["subscription.remnawave.webhook"]
+        )
         self.assertEqual(event_logs[0].source, "webhook")
         self.assertEqual(event_logs[0].payload["remnawave_event"], "user.modified")
         self.assertEqual(event_logs[0].payload["remnawave_scope"], "user")
@@ -844,7 +909,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         assert stored_account is not None
         self.assertFalse(stored_account.subscription_is_trial)
 
-    async def test_remnawave_webhook_creates_subscription_expiring_notification(self) -> None:
+    async def test_remnawave_webhook_creates_subscription_expiring_notification(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="expires-soon@example.com",
             subscription_url="https://panel.test/sub/expires-soon",
@@ -877,15 +944,21 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["notification_types"], ["subscription_expiring"])
+        self.assertEqual(
+            response.json()["notification_types"], ["subscription_expiring"]
+        )
 
         notifications = await self._get_notifications(account.id)
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0].type, NotificationType.SUBSCRIPTION_EXPIRING)
         self.assertEqual(notifications[0].payload["days_left"], 1)
-        self.assertEqual(notifications[0].payload["remnawave_event"], "user.expires_in_24_hours")
+        self.assertEqual(
+            notifications[0].payload["remnawave_event"], "user.expires_in_24_hours"
+        )
 
-    async def test_remnawave_webhook_creates_subscription_expired_notification(self) -> None:
+    async def test_remnawave_webhook_creates_subscription_expired_notification(
+        self,
+    ) -> None:
         account = await self._create_account(
             email="expired@example.com",
             subscription_status="ACTIVE",
@@ -917,7 +990,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["notification_types"], ["subscription_expired"])
+        self.assertEqual(
+            response.json()["notification_types"], ["subscription_expired"]
+        )
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)

@@ -21,7 +21,9 @@ class RequestContextMiddlewareTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["X-Request-ID"])
-        self.assertEqual(response.json()["request_id"], response.headers["X-Request-ID"])
+        self.assertEqual(
+            response.json()["request_id"], response.headers["X-Request-ID"]
+        )
 
     def test_middleware_preserves_incoming_request_id(self) -> None:
         app = FastAPI()

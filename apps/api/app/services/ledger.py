@@ -14,7 +14,11 @@ from app.services.i18n import translate
 
 
 class LedgerServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class LedgerCommentRequiredError(LedgerServiceError):
@@ -22,11 +26,11 @@ class LedgerCommentRequiredError(LedgerServiceError):
 
 
 class LedgerIdempotencyConflictError(LedgerServiceError):
-    pass
+    default_code = "idempotency_conflict"
 
 
 class InsufficientFundsError(LedgerServiceError):
-    pass
+    default_code = "insufficient_funds"
 
 
 def _ledger_error(key: str) -> str:
@@ -38,7 +42,9 @@ async def _clear_account_cache(account_id: uuid.UUID) -> None:
     await cache.delete(cache.account_response_key(str(account_id)))
 
 
-async def _load_account_for_update(session: AsyncSession, account_id: uuid.UUID) -> Account:
+async def _load_account_for_update(
+    session: AsyncSession, account_id: uuid.UUID
+) -> Account:
     result = await session.execute(
         select(Account).where(Account.id == account_id).with_for_update()
     )
@@ -143,7 +149,9 @@ async def _apply_entry(
 ) -> LedgerEntry:
     normalized_idempotency_key = _normalize_optional_text(idempotency_key)
     if normalized_idempotency_key is not None:
-        existing_entry = await _get_entry_by_idempotency_key(session, normalized_idempotency_key)
+        existing_entry = await _get_entry_by_idempotency_key(
+            session, normalized_idempotency_key
+        )
         if existing_entry is not None:
             _validate_idempotent_entry(
                 existing_entry,
@@ -186,7 +194,9 @@ async def _apply_entry_for_loaded_account(
 ) -> LedgerEntry:
     normalized_idempotency_key = _normalize_optional_text(idempotency_key)
     if normalized_idempotency_key is not None:
-        existing_entry = await _get_entry_by_idempotency_key(session, normalized_idempotency_key)
+        existing_entry = await _get_entry_by_idempotency_key(
+            session, normalized_idempotency_key
+        )
         if existing_entry is not None:
             _validate_idempotent_entry(
                 existing_entry,
@@ -211,9 +221,13 @@ async def _apply_entry_for_loaded_account(
             allow_negative=allow_negative,
         )
     except IntegrityError as exc:
-        if normalized_idempotency_key and "uq_ledger_entries_idempotency_key" in str(exc):
+        if normalized_idempotency_key and "uq_ledger_entries_idempotency_key" in str(
+            exc
+        ):
             await session.rollback()
-            existing_entry = await _get_entry_by_idempotency_key(session, normalized_idempotency_key)
+            existing_entry = await _get_entry_by_idempotency_key(
+                session, normalized_idempotency_key
+            )
             if existing_entry is not None:
                 _validate_idempotent_entry(
                     existing_entry,
@@ -289,7 +303,9 @@ async def clear_account_cache(account_id: uuid.UUID) -> None:
     await _clear_account_cache(account_id)
 
 
-async def _commit_entry(session: AsyncSession, *, entry: LedgerEntry, account_id: uuid.UUID) -> LedgerEntry:
+async def _commit_entry(
+    session: AsyncSession, *, entry: LedgerEntry, account_id: uuid.UUID
+) -> LedgerEntry:
     try:
         await session.commit()
     except IntegrityError:
@@ -377,9 +393,13 @@ async def admin_adjust_balance(
     if amount == 0:
         raise ValueError("amount must be non-zero")
 
-    entry_type = LedgerEntryType.ADMIN_CREDIT if amount > 0 else LedgerEntryType.ADMIN_DEBIT
+    entry_type = (
+        LedgerEntryType.ADMIN_CREDIT if amount > 0 else LedgerEntryType.ADMIN_DEBIT
+    )
     if normalized_idempotency_key is not None:
-        existing_entry = await _get_entry_by_idempotency_key(session, normalized_idempotency_key)
+        existing_entry = await _get_entry_by_idempotency_key(
+            session, normalized_idempotency_key
+        )
         if existing_entry is not None:
             _validate_idempotent_entry(
                 existing_entry,
@@ -468,19 +488,22 @@ async def get_account_ledger_history(
     offset: int,
     entry_types: tuple[LedgerEntryType, ...] | None = None,
 ) -> tuple[list[LedgerEntry], int]:
-    count_statement = select(func.count()).select_from(LedgerEntry).where(
-        LedgerEntry.account_id == account_id
+    count_statement = (
+        select(func.count())
+        .select_from(LedgerEntry)
+        .where(LedgerEntry.account_id == account_id)
     )
     history_statement = select(LedgerEntry).where(LedgerEntry.account_id == account_id)
 
     if entry_types:
         count_statement = count_statement.where(LedgerEntry.entry_type.in_(entry_types))
-        history_statement = history_statement.where(LedgerEntry.entry_type.in_(entry_types))
+        history_statement = history_statement.where(
+            LedgerEntry.entry_type.in_(entry_types)
+        )
 
     total = await session.scalar(count_statement)
     result = await session.execute(
-        history_statement
-        .order_by(LedgerEntry.created_at.desc(), LedgerEntry.id.desc())
+        history_statement.order_by(LedgerEntry.created_at.desc(), LedgerEntry.id.desc())
         .limit(limit)
         .offset(offset)
     )

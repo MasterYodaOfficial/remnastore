@@ -80,7 +80,9 @@ class RedisCache:
 
         lock_token = uuid.uuid4().hex
         try:
-            acquired = await client.set(key, lock_token, ex=max(1, ttl_seconds), nx=True)
+            acquired = await client.set(
+                key, lock_token, ex=max(1, ttl_seconds), nx=True
+            )
         except RedisError:
             logger.exception("redis try_acquire_lock failed for key=%s", key)
             return None

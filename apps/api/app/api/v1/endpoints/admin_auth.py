@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error_from_exception
 from app.api.dependencies import get_current_admin
 from app.core.audit import build_request_audit_context, log_audit_event
 from app.core.config import settings
@@ -13,6 +14,7 @@ from app.db.models import Admin
 from app.db.session import get_session
 from app.schemas.admin import AdminAuthResponse, AdminLoginRequest, AdminResponse
 from app.services.admin_auth import AdminInvalidCredentialsError, authenticate_admin
+from app.services.i18n import translate
 
 
 router = APIRouter()
@@ -41,7 +43,8 @@ async def admin_login(
             login=normalized_login,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.invalid_credentials"),)
+        raise api_error_from_exception(status.HTTP_401_UNAUTHORIZED, exc) from exc
 
     admin.last_login_at = datetime.now(UTC)
     await session.commit()

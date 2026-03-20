@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error, api_error_from_exception
 from app.core.audit import build_request_audit_context, log_audit_event
 from app.core.config import settings
 from app.core.security import create_access_token, verify_telegram_init_data
 from app.db.models import LoginSource
 from app.db.session import get_session
 from app.schemas.account import AccountResponse
-from app.schemas.auth import AuthResponse, TelegramAuthRequest, TelegramReferralResultResponse
+from app.schemas.auth import (
+    AuthResponse,
+    TelegramAuthRequest,
+    TelegramReferralResultResponse,
+)
 from app.services.account_events import append_account_event
 from app.services.accounts import AccountBlockedError, upsert_telegram_account
 from app.services.i18n import translate
@@ -20,7 +25,9 @@ from app.services.referrals import (
 router = APIRouter()
 
 
-@router.post("/telegram/webapp", response_model=AuthResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/telegram/webapp", response_model=AuthResponse, status_code=status.HTTP_200_OK
+)
 async def auth_telegram_webapp(
     payload: TelegramAuthRequest,
     request: Request,
@@ -52,9 +59,10 @@ async def auth_telegram_webapp(
             reason="init_data_missing_user",
             **request_context,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.auth.errors.init_data_missing_user"),
+        raise api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.auth.errors.init_data_missing_user"),
+            error_code="init_data_missing_user",
         )
 
     telegram_id = int(user.get("id"))
@@ -80,7 +88,7 @@ async def auth_telegram_webapp(
             telegram_id=telegram_id,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
 
     start_param = data.get("start_param")
     referral_result = None
@@ -127,8 +135,12 @@ async def auth_telegram_webapp(
         source="api",
         payload={
             "telegram_id": telegram_id,
-            "referral_applied": None if referral_result is None else referral_result.applied,
-            "referral_reason": None if referral_result is None else referral_result.reason,
+            "referral_applied": None
+            if referral_result is None
+            else referral_result.applied,
+            "referral_reason": None
+            if referral_result is None
+            else referral_result.reason,
         },
     )
     await session.commit()

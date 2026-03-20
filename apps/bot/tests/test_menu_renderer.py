@@ -25,7 +25,9 @@ from bot.services.session_store import MenuSession
 
 
 class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
-    async def test_force_new_sends_new_message_and_deactivates_previous_keyboard(self) -> None:
+    async def test_force_new_sends_new_message_and_deactivates_previous_keyboard(
+        self,
+    ) -> None:
         existing_session = MenuSession(
             telegram_id=758107031,
             chat_id=42,
@@ -55,9 +57,16 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         bot.send_photo.return_value = sent_message
 
         with (
-            patch("bot.services.menu_renderer.get_menu_session_store", return_value=store),
-            patch("bot.services.menu_renderer.get_media_registry", return_value=registry),
-            patch("bot.services.menu_renderer.build_rendered_menu", new=AsyncMock(return_value=rendered)),
+            patch(
+                "bot.services.menu_renderer.get_menu_session_store", return_value=store
+            ),
+            patch(
+                "bot.services.menu_renderer.get_media_registry", return_value=registry
+            ),
+            patch(
+                "bot.services.menu_renderer.build_rendered_menu",
+                new=AsyncMock(return_value=rendered),
+            ),
         ):
             result = await present_menu(
                 bot,
@@ -79,7 +88,9 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
             message_id=100,
             reply_markup=None,
         )
-        registry.remember_message_media.assert_awaited_once_with(ASSET_WELCOME, sent_message)
+        registry.remember_message_media.assert_awaited_once_with(
+            ASSET_WELCOME, sent_message
+        )
 
         saved_session = store.save.await_args.args[0]
         self.assertEqual(saved_session.menu_message_id, 200)
@@ -96,7 +107,9 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         back_button = keyboard.inline_keyboard[-1][0]
 
         self.assertEqual(back_button.style, BUTTON_STYLE_DANGER)
-        self.assertEqual(back_button.text, translate("common.actions.back", locale="ru"))
+        self.assertEqual(
+            back_button.text, translate("common.actions.back", locale="ru")
+        )
 
     def test_stars_purchase_button_mentions_telegram_stars(self) -> None:
         keyboard = _build_plan_detail_keyboard(
@@ -109,7 +122,9 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(stars_button.text, "Оплатить в Telegram Stars")
 
-    async def test_build_rendered_menu_plan_includes_promo_code_and_actions(self) -> None:
+    async def test_build_rendered_menu_plan_includes_promo_code_and_actions(
+        self,
+    ) -> None:
         client = AsyncMock()
         client.get_bot_plans.return_value = {
             "items": [
@@ -126,14 +141,15 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         }
         client.get_bot_dashboard.return_value = {"exists": True}
 
-        rendered = await build_rendered_menu(
-            telegram_id=758107031,
-            locale="ru",
-            screen=SCREEN_PLAN,
-            screen_params={"plan_code": "plan_1m", "promo_code": " spring20 "},
-            referral_code=None,
-            api_client=client,
-        )
+        with patch("bot.keyboards.main.settings.webapp_url", "https://example.com/app"):
+            rendered = await build_rendered_menu(
+                telegram_id=758107031,
+                locale="ru",
+                screen=SCREEN_PLAN,
+                screen_params={"plan_code": "plan_1m", "promo_code": " spring20 "},
+                referral_code=None,
+                api_client=client,
+            )
 
         self.assertIn("Промокод: SPRING20", rendered.caption)
         self.assertEqual(
@@ -142,21 +158,24 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Код сохранен.", rendered.caption)
         buttons = [
-            button
-            for row in rendered.reply_markup.inline_keyboard
-            for button in row
+            button for row in rendered.reply_markup.inline_keyboard for button in row
         ]
         button_texts = [button.text for button in buttons]
         self.assertIn("Открыть тариф с кодом", button_texts)
         self.assertIn("Открыть в браузере", button_texts)
         self.assertIn("Ввести промокод", button_texts)
         self.assertIn("Убрать код", button_texts)
-        browser_button = next(button for button in buttons if button.text == "Открыть в браузере")
+        browser_button = next(
+            button for button in buttons if button.text == "Открыть в браузере"
+        )
         self.assertIn("promo=SPRING20", browser_button.url)
         self.assertIn("plan=plan_1m", browser_button.url)
 
     async def test_yookassa_gateway_failure_returns_short_payment_error(self) -> None:
-        request = httpx.Request("POST", "http://api:8000/api/v1/internal/bot/payments/yookassa/plans/plan_1m")
+        request = httpx.Request(
+            "POST",
+            "http://api:8000/api/v1/internal/bot/payments/yookassa/plans/plan_1m",
+        )
         response = httpx.Response(502, json={"detail": "Y" * 1000}, request=request)
         client = AsyncMock()
         client.create_bot_yookassa_payment.side_effect = httpx.HTTPStatusError(

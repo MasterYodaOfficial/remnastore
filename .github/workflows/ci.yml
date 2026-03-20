@@ -34,6 +34,9 @@ jobs:
       - name: Run ruff check
         run: uv run --group dev ruff check apps/api apps/bot common scripts
 
+      - name: Run ruff format check
+        run: uv run --group dev ruff format --check apps/api apps/bot common scripts
+
       - name: Run Python tests
         run: ./scripts/test.sh all
 
@@ -65,6 +68,22 @@ jobs:
       - name: Run web typecheck
         run: npm run typecheck
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run web browser smoke
+        run: npm run test:e2e
+
+      - name: Upload web Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-playwright-artifacts
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          if-no-files-found: ignore
+
       - name: Build web
         run: npm run build
 
@@ -95,6 +114,22 @@ jobs:
 
       - name: Run admin typecheck
         run: npm run typecheck
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run admin browser smoke
+        run: npm run test:e2e
+
+      - name: Upload admin Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-playwright-artifacts
+          path: |
+            apps/admin/test-results
+            apps/admin/playwright-report
+          if-no-files-found: ignore
 
       - name: Build admin
         run: npm run build

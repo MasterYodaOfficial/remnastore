@@ -19,7 +19,10 @@ from app.db.models import (
 )
 from app.services.account_events import append_account_event
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
-from app.services.notifications import notify_withdrawal_paid, notify_withdrawal_rejected
+from app.services.notifications import (
+    notify_withdrawal_paid,
+    notify_withdrawal_rejected,
+)
 
 
 class AdminWithdrawalServiceError(Exception):
@@ -27,15 +30,15 @@ class AdminWithdrawalServiceError(Exception):
 
 
 class AdminWithdrawalCommentRequiredError(AdminWithdrawalServiceError):
-    pass
+    code = "admin_withdrawal_comment_required"
 
 
 class AdminWithdrawalConflictError(AdminWithdrawalServiceError):
-    pass
+    code = "admin_withdrawal_conflict"
 
 
 class AdminWithdrawalInvalidStatusError(AdminWithdrawalServiceError):
-    pass
+    code = "admin_withdrawal_invalid_status"
 
 
 PENDING_WITHDRAWAL_STATUSES = (
@@ -154,7 +157,9 @@ async def list_admin_withdrawals(
     return items, total
 
 
-async def _load_withdrawal_for_update(session: AsyncSession, withdrawal_id: int) -> Withdrawal:
+async def _load_withdrawal_for_update(
+    session: AsyncSession, withdrawal_id: int
+) -> Withdrawal:
     result = await session.execute(
         select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update()
     )
@@ -212,21 +217,33 @@ def _validate_existing_audit_log(
     comment: str,
 ) -> WithdrawalStatus:
     if audit_log.admin_id != admin_id:
-        raise AdminWithdrawalConflictError("idempotency key already belongs to another admin")
+        raise AdminWithdrawalConflictError(
+            "idempotency key already belongs to another admin"
+        )
     if audit_log.target_account_id != withdrawal.account_id:
-        raise AdminWithdrawalConflictError("idempotency key already belongs to another account")
+        raise AdminWithdrawalConflictError(
+            "idempotency key already belongs to another account"
+        )
     if (audit_log.comment or "") != comment:
-        raise AdminWithdrawalConflictError("idempotency key already used with another comment")
+        raise AdminWithdrawalConflictError(
+            "idempotency key already used with another comment"
+        )
 
     payload = audit_log.payload or {}
     if payload.get("withdrawal_id") != withdrawal.id:
-        raise AdminWithdrawalConflictError("idempotency key already used for another withdrawal")
+        raise AdminWithdrawalConflictError(
+            "idempotency key already used for another withdrawal"
+        )
     if payload.get("next_status") != target_status.value:
-        raise AdminWithdrawalConflictError("idempotency key already used for another target status")
+        raise AdminWithdrawalConflictError(
+            "idempotency key already used for another target status"
+        )
 
     previous_status = payload.get("previous_status")
     if not isinstance(previous_status, str):
-        raise AdminWithdrawalConflictError("existing admin audit log is missing previous_status")
+        raise AdminWithdrawalConflictError(
+            "existing admin audit log is missing previous_status"
+        )
 
     try:
         return WithdrawalStatus(previous_status)
@@ -263,11 +280,15 @@ async def _load_existing_result(
         comment=comment,
     )
     if withdrawal.status != target_status:
-        raise AdminWithdrawalConflictError("withdrawal status changed after this idempotent request")
+        raise AdminWithdrawalConflictError(
+            "withdrawal status changed after this idempotent request"
+        )
 
     release_entry = None
     if withdrawal.released_ledger_entry_id is not None:
-        release_entry = await session.get(LedgerEntry, withdrawal.released_ledger_entry_id)
+        release_entry = await session.get(
+            LedgerEntry, withdrawal.released_ledger_entry_id
+        )
 
     return AdminWithdrawalStatusChangeResult(
         withdrawal=withdrawal,
@@ -284,11 +305,18 @@ def _validate_transition(
 ) -> None:
     if current_status == target_status:
         raise AdminWithdrawalConflictError(f"withdrawal already {target_status.value}")
-    if current_status in (WithdrawalStatus.PAID, WithdrawalStatus.REJECTED, WithdrawalStatus.CANCELLED):
+    if current_status in (
+        WithdrawalStatus.PAID,
+        WithdrawalStatus.REJECTED,
+        WithdrawalStatus.CANCELLED,
+    ):
         raise AdminWithdrawalConflictError(
             f"withdrawal in status {current_status.value} cannot be changed"
         )
-    if current_status == WithdrawalStatus.NEW and target_status in ADMIN_WITHDRAWAL_TARGET_STATUSES:
+    if (
+        current_status == WithdrawalStatus.NEW
+        and target_status in ADMIN_WITHDRAWAL_TARGET_STATUSES
+    ):
         return
     if current_status == WithdrawalStatus.IN_PROGRESS and target_status in (
         WithdrawalStatus.PAID,
@@ -361,7 +389,9 @@ async def change_admin_withdrawal_status(
             withdrawal_id=withdrawal.id,
             previous_status=previous_status,
             next_status=target_status,
-            released_ledger_entry_id=release_entry.id if release_entry is not None else None,
+            released_ledger_entry_id=release_entry.id
+            if release_entry is not None
+            else None,
         ),
     )
     session.add(audit_log)
@@ -380,7 +410,9 @@ async def change_admin_withdrawal_status(
                 "next_status": target_status.value,
                 "comment": normalized_comment,
                 "admin_action_log_id": audit_log.id,
-                "released_ledger_entry_id": None if release_entry is None else release_entry.id,
+                "released_ledger_entry_id": None
+                if release_entry is None
+                else release_entry.id,
                 "idempotency_key": normalized_idempotency_key,
             },
         )

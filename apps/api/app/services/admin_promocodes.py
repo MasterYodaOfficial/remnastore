@@ -25,23 +25,27 @@ GENERATED_PROMO_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
 class AdminPromoServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class AdminPromoValidationError(AdminPromoServiceError):
-    pass
+    default_code = "admin_promo_validation_failed"
 
 
 class AdminPromoCampaignNotFoundError(AdminPromoServiceError):
-    pass
+    default_code = "admin_promo_campaign_not_found"
 
 
 class AdminPromoCodeNotFoundError(AdminPromoServiceError):
-    pass
+    default_code = "admin_promo_code_not_found"
 
 
 class AdminPromoConflictError(AdminPromoServiceError):
-    pass
+    default_code = "admin_promo_conflict"
 
 
 def _normalize_required_text(value: str, *, field_name: str, max_length: int) -> str:
@@ -65,7 +69,9 @@ def _normalize_optional_text(value: str | None, *, max_length: int) -> str | Non
 
 
 def _normalize_currency(value: str) -> str:
-    normalized = _normalize_required_text(value, field_name="currency", max_length=8).upper()
+    normalized = _normalize_required_text(
+        value, field_name="currency", max_length=8
+    ).upper()
     return normalized
 
 
@@ -101,10 +107,14 @@ def _normalize_optional_positive_int(
 
 
 def _normalize_promo_code(code: str) -> str:
-    normalized = _normalize_required_text(code, field_name="code", max_length=64).upper()
+    normalized = _normalize_required_text(
+        code, field_name="code", max_length=64
+    ).upper()
     allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
     if any(char not in allowed_chars for char in normalized):
-        raise AdminPromoValidationError("code may contain only A-Z, 0-9, hyphen, and underscore")
+        raise AdminPromoValidationError(
+            "code may contain only A-Z, 0-9, hyphen, and underscore"
+        )
     return normalized
 
 
@@ -116,7 +126,9 @@ def _normalize_optional_code_prefix(prefix: str | None) -> str | None:
         return None
     allowed_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
     if any(char not in allowed_chars for char in normalized):
-        raise AdminPromoValidationError("prefix may contain only A-Z, 0-9, hyphen, and underscore")
+        raise AdminPromoValidationError(
+            "prefix may contain only A-Z, 0-9, hyphen, and underscore"
+        )
     normalized = normalized.rstrip("-_")
     return normalized or None
 
@@ -158,7 +170,10 @@ def _validate_campaign_constraints(
             "requires_active_subscription and requires_no_active_subscription are mutually exclusive"
         )
 
-    if total_redemptions_limit is not None and per_account_redemptions_limit is not None:
+    if (
+        total_redemptions_limit is not None
+        and per_account_redemptions_limit is not None
+    ):
         if per_account_redemptions_limit > total_redemptions_limit:
             raise AdminPromoValidationError(
                 "per_account_redemptions_limit must not exceed total_redemptions_limit"
@@ -166,12 +181,16 @@ def _validate_campaign_constraints(
 
     if effect_type == PromoEffectType.PERCENT_DISCOUNT:
         if effect_value <= 0 or effect_value > 100:
-            raise AdminPromoValidationError("percent_discount value must be between 1 and 100")
+            raise AdminPromoValidationError(
+                "percent_discount value must be between 1 and 100"
+            )
         return
 
     if effect_type == PromoEffectType.FIXED_PRICE:
         if effect_value < 0:
-            raise AdminPromoValidationError("fixed_price value must be zero or positive")
+            raise AdminPromoValidationError(
+                "fixed_price value must be zero or positive"
+            )
         return
 
     if effect_value <= 0:
@@ -279,7 +298,9 @@ async def list_promo_campaigns(
             func.coalesce(redemption_counts.c.redemptions_count, 0),
         )
         .outerjoin(code_counts, code_counts.c.campaign_id == PromoCampaign.id)
-        .outerjoin(redemption_counts, redemption_counts.c.campaign_id == PromoCampaign.id)
+        .outerjoin(
+            redemption_counts, redemption_counts.c.campaign_id == PromoCampaign.id
+        )
         .order_by(PromoCampaign.created_at.desc(), PromoCampaign.id.desc())
         .limit(limit)
         .offset(offset)
@@ -471,10 +492,17 @@ async def list_promo_codes(
         .limit(limit)
         .offset(offset)
     )
-    count_statement = select(func.count()).select_from(PromoCode).where(PromoCode.campaign_id == campaign.id)
+    count_statement = (
+        select(func.count())
+        .select_from(PromoCode)
+        .where(PromoCode.campaign_id == campaign.id)
+    )
 
     result = await session.execute(statement)
-    rows = [(promo_code, int(redemptions_count)) for promo_code, redemptions_count in result.all()]
+    rows = [
+        (promo_code, int(redemptions_count))
+        for promo_code, redemptions_count in result.all()
+    ]
     total = int(await session.scalar(count_statement) or 0)
     return rows, total
 
@@ -505,7 +533,10 @@ async def generate_promo_codes_batch(
         raise AdminPromoValidationError("quantity must be positive")
     if suffix_length <= 0:
         raise AdminPromoValidationError("suffix_length must be positive")
-    if normalized_prefix is not None and len(normalized_prefix) + 1 + suffix_length > 64:
+    if (
+        normalized_prefix is not None
+        and len(normalized_prefix) + 1 + suffix_length > 64
+    ):
         raise AdminPromoValidationError("generated promo code would exceed max length")
     if normalized_prefix is None and suffix_length > 64:
         raise AdminPromoValidationError("generated promo code would exceed max length")
@@ -521,8 +552,15 @@ async def generate_promo_codes_batch(
         batch_size = min(max(remaining * 3, 8), 512)
         candidate_pool: set[str] = set()
         while len(candidate_pool) < batch_size and attempts < max_attempts:
-            suffix = "".join(secrets.choice(GENERATED_PROMO_CODE_ALPHABET) for _ in range(suffix_length))
-            code = f"{normalized_prefix}{separator}{suffix}" if normalized_prefix else suffix
+            suffix = "".join(
+                secrets.choice(GENERATED_PROMO_CODE_ALPHABET)
+                for _ in range(suffix_length)
+            )
+            code = (
+                f"{normalized_prefix}{separator}{suffix}"
+                if normalized_prefix
+                else suffix
+            )
             attempts += 1
             if code in generated_set:
                 continue
@@ -534,7 +572,9 @@ async def generate_promo_codes_batch(
         existing_codes = set(
             (
                 await session.scalars(
-                    select(PromoCode.code).where(PromoCode.code.in_(list(candidate_pool)))
+                    select(PromoCode.code).where(
+                        PromoCode.code.in_(list(candidate_pool))
+                    )
                 )
             ).all()
         )
@@ -547,7 +587,9 @@ async def generate_promo_codes_batch(
                 break
 
     if len(generated_codes) < quantity:
-        raise AdminPromoConflictError("could not allocate requested number of unique promo codes")
+        raise AdminPromoConflictError(
+            "could not allocate requested number of unique promo codes"
+        )
 
     promo_codes = [
         PromoCode(
@@ -566,7 +608,9 @@ async def generate_promo_codes_batch(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise AdminPromoConflictError("promo code generation conflicted with an existing code") from exc
+        raise AdminPromoConflictError(
+            "promo code generation conflicted with an existing code"
+        ) from exc
 
     for promo_code in promo_codes:
         await session.refresh(promo_code)
@@ -629,7 +673,9 @@ async def import_promo_codes(
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise AdminPromoConflictError("promo code import conflicted with an existing code") from exc
+        raise AdminPromoConflictError(
+            "promo code import conflicted with an existing code"
+        ) from exc
 
     for promo_code in promo_codes:
         await session.refresh(promo_code)
@@ -665,7 +711,10 @@ async def export_promo_codes(
     )
 
     result = await session.execute(statement)
-    return [(promo_code, int(redemptions_count)) for promo_code, redemptions_count in result.all()]
+    return [
+        (promo_code, int(redemptions_count))
+        for promo_code, redemptions_count in result.all()
+    ]
 
 
 async def list_promo_redemptions(

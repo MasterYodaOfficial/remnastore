@@ -70,16 +70,22 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -132,7 +138,9 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+    async def _get_account_event_logs(
+        self, account_id: uuid.UUID
+    ) -> list[AccountEventLog]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(AccountEventLog)
@@ -142,7 +150,9 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             return list(result.scalars().all())
 
     async def test_create_withdrawal_reserves_balance_and_updates_summary(self) -> None:
-        account = await self._create_account(balance=90, referral_earnings=90, referral_code="withdraw-ref")
+        account = await self._create_account(
+            balance=90, referral_earnings=90, referral_code="withdraw-ref"
+        )
         self._current_account_id = account.id
 
         response = await self.client.post(
@@ -170,11 +180,15 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
 
         withdrawals = await self._get_withdrawals(account.id)
         self.assertEqual(len(withdrawals), 1)
-        self.assertEqual(withdrawals[0].reserved_ledger_entry_id, body["reserved_ledger_entry_id"])
+        self.assertEqual(
+            withdrawals[0].reserved_ledger_entry_id, body["reserved_ledger_entry_id"]
+        )
 
         ledger_entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(ledger_entries), 1)
-        self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.WITHDRAWAL_RESERVE)
+        self.assertEqual(
+            ledger_entries[0].entry_type, LedgerEntryType.WITHDRAWAL_RESERVE
+        )
         self.assertEqual(ledger_entries[0].amount, -40)
 
         notifications = await self._get_notifications(account.id)
@@ -183,7 +197,9 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notifications[0].payload["withdrawal_id"], body["id"])
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["withdrawal.created"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["withdrawal.created"]
+        )
         self.assertEqual(event_logs[0].payload["withdrawal_id"], body["id"])
         self.assertEqual(event_logs[0].payload["destination_value"], "+7••••00")
 
@@ -208,8 +224,12 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.withdrawals.errors.minimum_amount", amount=30),
         )
+        self.assertEqual(response.json()["error_code"], "minimum_amount")
+        self.assertEqual(response.json()["error_params"], {"amount": 30})
 
-    async def test_create_withdrawal_rejects_when_referral_availability_is_lower_than_balance(self) -> None:
+    async def test_create_withdrawal_rejects_when_referral_availability_is_lower_than_balance(
+        self,
+    ) -> None:
         account = await self._create_account(balance=200, referral_earnings=35)
         self._current_account_id = account.id
 
@@ -226,6 +246,7 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.withdrawals.errors.insufficient_available"),
         )
+        self.assertEqual(response.json()["error_code"], "insufficient_available")
 
     async def test_create_withdrawal_rejects_invalid_card_number(self) -> None:
         account = await self._create_account(balance=120, referral_earnings=120)
@@ -245,8 +266,11 @@ class WithdrawalFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.withdrawals.errors.invalid_card"),
         )
+        self.assertEqual(response.json()["error_code"], "invalid_card")
 
-    async def test_list_withdrawals_returns_newest_first_with_availability(self) -> None:
+    async def test_list_withdrawals_returns_newest_first_with_availability(
+        self,
+    ) -> None:
         account = await self._create_account(balance=120, referral_earnings=120)
         self._current_account_id = account.id
 

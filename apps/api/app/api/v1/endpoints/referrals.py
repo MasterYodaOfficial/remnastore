@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error_from_exception
 from app.api.dependencies import get_current_account
 from app.core.audit import build_request_audit_context, log_audit_event
 from app.db.models import Account
@@ -57,7 +58,7 @@ async def claim_referral(
             referral_code=payload.referral_code,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except ReferralSelfAttributionError as exc:
         log_audit_event(
             "referral.claim",
@@ -68,7 +69,7 @@ async def claim_referral(
             referral_code=payload.referral_code,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except ReferralAlreadyAttributedError as exc:
         log_audit_event(
             "referral.claim",
@@ -79,7 +80,7 @@ async def claim_referral(
             referral_code=payload.referral_code,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except ReferralAttributionWindowClosedError as exc:
         log_audit_event(
             "referral.claim",
@@ -90,7 +91,7 @@ async def claim_referral(
             referral_code=payload.referral_code,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
 
     await session.commit()
     await clear_account_cache(current_account.id)

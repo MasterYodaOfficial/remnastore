@@ -55,7 +55,9 @@ class TrialEligibilityError(SubscriptionServiceError):
 
 
 class SubscriptionPurchaseBlockedError(SubscriptionServiceError):
-    pass
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code
 
 
 @dataclass(slots=True)
@@ -117,7 +119,9 @@ async def _find_remnawave_identity_conflict(
                 return remote_user
 
     if account.telegram_id is not None:
-        users_with_telegram = await gateway.get_users_by_telegram_id(account.telegram_id)
+        users_with_telegram = await gateway.get_users_by_telegram_id(
+            account.telegram_id
+        )
         for remote_user in users_with_telegram:
             if remote_user.uuid != target_uuid:
                 return remote_user
@@ -135,12 +139,18 @@ async def sync_current_subscription(
     try:
         gateway = get_remnawave_gateway()
     except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_not_configured")) from exc
+        raise RemnawaveSyncError(
+            translate("api.purchases.errors.remnawave_not_configured")
+        ) from exc
 
     try:
-        remote_user = await gateway.get_user_by_uuid(target_remnawave_user_uuid(account))
+        remote_user = await gateway.get_user_by_uuid(
+            target_remnawave_user_uuid(account)
+        )
     except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_unavailable")) from exc
+        raise RemnawaveSyncError(
+            translate("api.purchases.errors.remnawave_unavailable")
+        ) from exc
 
     if remote_user is None:
         clear_remote_subscription_snapshot(account)
@@ -168,22 +178,32 @@ async def get_trial_eligibility(
         try:
             gateway = get_remnawave_gateway()
         except RemnawaveConfigurationError:
-            eligibility = TrialEligibility(eligible=False, reason="remnawave_not_configured")
+            eligibility = TrialEligibility(
+                eligible=False, reason="remnawave_not_configured"
+            )
         else:
             try:
-                remote_user = await gateway.get_user_by_uuid(target_remnawave_user_uuid(account))
+                remote_user = await gateway.get_user_by_uuid(
+                    target_remnawave_user_uuid(account)
+                )
             except RemnawaveRequestError:
-                eligibility = TrialEligibility(eligible=False, reason="remnawave_unavailable")
+                eligibility = TrialEligibility(
+                    eligible=False, reason="remnawave_unavailable"
+                )
             else:
                 if remote_user is not None:
                     apply_remote_subscription_snapshot(account, remote_user)
                     await session.commit()
                     await session.refresh(account)
                     await _clear_account_cache(account.id)
-                    eligibility = TrialEligibility(eligible=False, reason="subscription_exists")
+                    eligibility = TrialEligibility(
+                        eligible=False, reason="subscription_exists"
+                    )
                 else:
                     try:
-                        identity_conflict = await _find_remnawave_identity_conflict(account, gateway)
+                        identity_conflict = await _find_remnawave_identity_conflict(
+                            account, gateway
+                        )
                     except RemnawaveRequestError:
                         eligibility = TrialEligibility(
                             eligible=False,
@@ -195,7 +215,10 @@ async def get_trial_eligibility(
                                 eligible=False,
                                 reason="remnawave_identity_conflict",
                             )
-                        elif account.subscription_url or account.subscription_expires_at is not None:
+                        elif (
+                            account.subscription_url
+                            or account.subscription_expires_at is not None
+                        ):
                             eligibility = TrialEligibility(
                                 eligible=False,
                                 reason="subscription_exists",
@@ -229,7 +252,9 @@ async def activate_trial(
             status_code = 502
         elif eligibility.reason == "remnawave_not_configured":
             status_code = 503
-        raise TrialEligibilityError(eligibility.reason or "trial_not_eligible", status_code=status_code)
+        raise TrialEligibilityError(
+            eligibility.reason or "trial_not_eligible", status_code=status_code
+        )
 
     purchase_result = await apply_trial_purchase(
         account,
@@ -272,12 +297,16 @@ async def sync_subscription_by_remnawave_user_uuid(
     try:
         gateway = get_remnawave_gateway()
     except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_not_configured")) from exc
+        raise RemnawaveSyncError(
+            translate("api.purchases.errors.remnawave_not_configured")
+        ) from exc
 
     try:
         remote_user = await gateway.get_user_by_uuid(remnawave_user_uuid)
     except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(translate("api.purchases.errors.remnawave_unavailable")) from exc
+        raise RemnawaveSyncError(
+            translate("api.purchases.errors.remnawave_unavailable")
+        ) from exc
 
     if remote_user is None:
         clear_remote_subscription_snapshot(account)
@@ -299,7 +328,10 @@ async def purchase_subscription_with_wallet(
     promo_code: str | None = None,
 ) -> SubscriptionStateResponse:
     if account.status == AccountStatus.BLOCKED:
-        raise SubscriptionPurchaseBlockedError(_subscription_error("account_blocked_purchase"))
+        raise SubscriptionPurchaseBlockedError(
+            _subscription_error("account_blocked_purchase"),
+            code="account_blocked_purchase",
+        )
 
     if promo_code is None:
         account = await purchase_plan_with_wallet(
@@ -324,9 +356,17 @@ async def purchase_subscription_with_wallet(
             reference_id=idempotency_key,
         )
         if existing_redemption is not None:
-            existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
-            if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
-                raise PurchaseConflictError(_subscription_error("idempotency_promo_conflict"))
+            existing_promo_code = await session.get(
+                PromoCode, existing_redemption.promo_code_id
+            )
+            if (
+                existing_promo_code is None
+                or existing_promo_code.code != normalize_promo_code(promo_code)
+            ):
+                raise PurchaseConflictError(
+                    _subscription_error("idempotency_promo_conflict"),
+                    code="idempotency_promo_conflict",
+                )
             account = await finalize_wallet_plan_purchase(
                 session,
                 account_id=account.id,

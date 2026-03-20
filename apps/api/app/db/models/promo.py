@@ -65,7 +65,9 @@ class PromoCampaign(Base):
     __table_args__ = (
         Index("ix_promo_campaigns_status_created", "status", "created_at"),
         Index("ix_promo_campaigns_window", "starts_at", "ends_at"),
-        Index("ix_promo_campaigns_created_by_admin", "created_by_admin_id", "created_at"),
+        Index(
+            "ix_promo_campaigns_created_by_admin", "created_by_admin_id", "created_at"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -83,9 +85,15 @@ class PromoCampaign(Base):
     effect_value: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     plan_codes: Mapped[list[str] | None] = mapped_column(JSON())
-    first_purchase_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    requires_active_subscription: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    requires_no_active_subscription: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_purchase_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    requires_active_subscription: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    requires_no_active_subscription: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_redemptions_limit: Mapped[int | None] = mapped_column()
@@ -138,7 +146,9 @@ class PromoCode(Base):
 class PromoRedemption(Base):
     __tablename__ = "promo_redemptions"
     __table_args__ = (
-        UniqueConstraint("reference_type", "reference_id", name="uq_promo_redemptions_reference"),
+        UniqueConstraint(
+            "reference_type", "reference_id", name="uq_promo_redemptions_reference"
+        ),
         Index("ix_promo_redemptions_campaign_created", "campaign_id", "created_at"),
         Index("ix_promo_redemptions_code_created", "promo_code_id", "created_at"),
         Index("ix_promo_redemptions_account_created", "account_id", "created_at"),
@@ -177,7 +187,9 @@ class PromoRedemption(Base):
     final_amount: Mapped[int | None] = mapped_column(BigInteger())
     granted_duration_days: Mapped[int | None] = mapped_column()
     balance_credit_amount: Mapped[int | None] = mapped_column(BigInteger())
-    payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id", ondelete="SET NULL"))
+    payment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payments.id", ondelete="SET NULL")
+    )
     subscription_grant_id: Mapped[int | None] = mapped_column(
         ForeignKey("subscription_grants.id", ondelete="SET NULL")
     )

@@ -67,7 +67,9 @@ class MediaRegistry:
 
         return FSInputFile(asset.path)
 
-    async def remember_message_media(self, asset_name: str, message: Message | None) -> None:
+    async def remember_message_media(
+        self, asset_name: str, message: Message | None
+    ) -> None:
         if message is None or not message.photo:
             return
 

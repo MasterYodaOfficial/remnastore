@@ -34,7 +34,7 @@ class NotificationServiceError(Exception):
 
 
 class NotificationNotFoundError(NotificationServiceError):
-    pass
+    code = "notification_not_found"
 
 
 class TelegramNotificationConfigurationError(NotificationServiceError):
@@ -159,7 +159,9 @@ async def _resolve_notification_channels(
 
     account_row = (
         await session.execute(
-            select(Account.telegram_id, Account.telegram_bot_blocked_at).where(Account.id == account_id)
+            select(Account.telegram_id, Account.telegram_bot_blocked_at).where(
+                Account.id == account_id
+            )
         )
     ).one_or_none()
     if (
@@ -191,7 +193,9 @@ def _calculate_retry_delay_seconds(
         return retry_after_seconds
 
     base_seconds = max(5, int(settings.notification_telegram_retry_base_seconds))
-    max_seconds = max(base_seconds, int(settings.notification_telegram_retry_max_seconds))
+    max_seconds = max(
+        base_seconds, int(settings.notification_telegram_retry_max_seconds)
+    )
     exponent = max(0, attempts_count - 1)
     return min(max_seconds, base_seconds * (2**exponent))
 
@@ -206,7 +210,9 @@ class TelegramNotificationClient:
     ) -> None:
         normalized_token = bot_token.strip()
         if not normalized_token:
-            raise TelegramNotificationConfigurationError("Telegram bot token is not configured")
+            raise TelegramNotificationConfigurationError(
+                "Telegram bot token is not configured"
+            )
         self._bot_token = normalized_token
         self._client = httpx.AsyncClient(
             base_url=api_base_url.rstrip("/"),
@@ -236,7 +242,9 @@ class TelegramNotificationClient:
                 str(payload.get("description") or "Telegram rate limit exceeded"),
                 code="rate_limited",
                 retryable=True,
-                retry_after_seconds=int(retry_after) if isinstance(retry_after, int) else None,
+                retry_after_seconds=int(retry_after)
+                if isinstance(retry_after, int)
+                else None,
             )
 
         if response.status_code >= 500:
@@ -247,7 +255,9 @@ class TelegramNotificationClient:
             )
 
         if response.status_code >= 400 or payload.get("ok") is False:
-            description = str(payload.get("description") or "Telegram API rejected the message")
+            description = str(
+                payload.get("description") or "Telegram API rejected the message"
+            )
             if _is_telegram_bot_blocked_error(
                 status_code=response.status_code,
                 description=description,
@@ -367,7 +377,9 @@ async def create_notification(
     normalized_action_url = _normalize_optional_text(action_url)
     normalized_dedupe_key = _normalize_optional_text(dedupe_key)
 
-    account_exists = await session.scalar(select(Account.id).where(Account.id == account_id))
+    account_exists = await session.scalar(
+        select(Account.id).where(Account.id == account_id)
+    )
     if account_exists is None:
         logger.warning(
             "Skipping notification for missing account_id=%s type=%s dedupe_key=%s",
@@ -445,7 +457,9 @@ async def notify_payment_succeeded(
             provider=_get_payment_provider_label(payment.provider),
         )
     else:
-        plan_name = _get_payment_plan_name(payment) or translate("api.notifications.plan_fallback")
+        plan_name = _get_payment_plan_name(payment) or translate(
+            "api.notifications.plan_fallback"
+        )
         title = translate("api.notifications.payment_succeeded.plan.title")
         body = translate(
             "api.notifications.payment_succeeded.plan.body",
@@ -490,7 +504,9 @@ async def notify_payment_failed(
             provider=provider_label,
         )
     else:
-        plan_name = _get_payment_plan_name(payment) or translate("api.notifications.plan_fallback")
+        plan_name = _get_payment_plan_name(payment) or translate(
+            "api.notifications.plan_fallback"
+        )
         title = translate("api.notifications.payment_failed.plan.title")
         body = translate(
             "api.notifications.payment_failed.plan.body",
@@ -847,12 +863,14 @@ async def mark_notification_read(
 ) -> Notification:
     result = await session.execute(
         select(Notification)
-        .where(Notification.id == notification_id, Notification.account_id == account_id)
+        .where(
+            Notification.id == notification_id, Notification.account_id == account_id
+        )
         .with_for_update()
     )
     notification = result.scalar_one_or_none()
     if notification is None:
-        raise NotificationNotFoundError(f"notification not found: {notification_id}")
+        raise NotificationNotFoundError(translate("api.notifications.errors.not_found"))
 
     if notification.read_at is None:
         notification.read_at = datetime.now(UTC)

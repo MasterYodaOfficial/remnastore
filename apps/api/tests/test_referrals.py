@@ -66,7 +66,9 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self._original_cache = cache_module._cache
         cache_module._cache = DummyCache()
 
-        self._original_default_referral_reward_rate = settings.default_referral_reward_rate
+        self._original_default_referral_reward_rate = (
+            settings.default_referral_reward_rate
+        )
         self._original_api_token = settings.api_token
         settings.default_referral_reward_rate = 20.0
         settings.api_token = "test-api-token"
@@ -79,16 +81,22 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -97,7 +105,9 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
         self.app.dependency_overrides.clear()
-        settings.default_referral_reward_rate = self._original_default_referral_reward_rate
+        settings.default_referral_reward_rate = (
+            self._original_default_referral_reward_rate
+        )
         settings.api_token = self._original_api_token
         self._cache_module._cache = self._original_cache
         await self._engine.dispose()
@@ -115,17 +125,23 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             return await session.get(Account, account_id)
 
-    async def _get_referral_rewards(self, referrer_account_id: uuid.UUID) -> list[ReferralReward]:
+    async def _get_referral_rewards(
+        self, referrer_account_id: uuid.UUID
+    ) -> list[ReferralReward]:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(ReferralReward).where(ReferralReward.referrer_account_id == referrer_account_id)
+                select(ReferralReward).where(
+                    ReferralReward.referrer_account_id == referrer_account_id
+                )
             )
             return list(result.scalars().all())
 
     async def _get_ledger_entries(self, account_id: uuid.UUID) -> list[LedgerEntry]:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(LedgerEntry).where(LedgerEntry.account_id == account_id).order_by(LedgerEntry.id.asc())
+                select(LedgerEntry)
+                .where(LedgerEntry.account_id == account_id)
+                .order_by(LedgerEntry.id.asc())
             )
             return list(result.scalars().all())
 
@@ -145,14 +161,20 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return result.scalar_one_or_none()
 
-    async def _get_telegram_referral_intent(self, telegram_id: int) -> TelegramReferralIntent | None:
+    async def _get_telegram_referral_intent(
+        self, telegram_id: int
+    ) -> TelegramReferralIntent | None:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(TelegramReferralIntent).where(TelegramReferralIntent.telegram_id == telegram_id)
+                select(TelegramReferralIntent).where(
+                    TelegramReferralIntent.telegram_id == telegram_id
+                )
             )
             return result.scalar_one_or_none()
 
-    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+    async def _get_account_event_logs(
+        self, account_id: uuid.UUID
+    ) -> list[AccountEventLog]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(AccountEventLog)
@@ -202,7 +224,9 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(first_response.json()["created"], True)
-        self.assertEqual(first_response.json()["referred_by_account_id"], str(referrer.id))
+        self.assertEqual(
+            first_response.json()["referred_by_account_id"], str(referrer.id)
+        )
 
         second_response = await self.client.post(
             "/api/v1/referrals/claim",
@@ -221,8 +245,12 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         assert stored_referrer is not None
         self.assertEqual(stored_referrer.referrals_count, 1)
 
-        referred_event_types = [item.event_type for item in await self._get_account_event_logs(referred.id)]
-        referrer_event_types = [item.event_type for item in await self._get_account_event_logs(referrer.id)]
+        referred_event_types = [
+            item.event_type for item in await self._get_account_event_logs(referred.id)
+        ]
+        referrer_event_types = [
+            item.event_type for item in await self._get_account_event_logs(referrer.id)
+        ]
         self.assertIn("referral.claim", referred_event_types)
         self.assertIn("referral.attributed", referrer_event_types)
 
@@ -239,6 +267,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.referrals.errors.self_referral"),
         )
+        self.assertEqual(response.json()["error_code"], "self_referral")
 
     async def test_claim_referral_code_rejects_after_first_paid_purchase(self) -> None:
         referrer = await self._create_account(referral_code="ref-late")
@@ -255,13 +284,16 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.referrals.errors.window_closed"),
         )
+        self.assertEqual(response.json()["error_code"], "window_closed")
 
         stored_referrer = await self._get_account(referrer.id)
         self.assertIsNotNone(stored_referrer)
         assert stored_referrer is not None
         self.assertEqual(stored_referrer.referrals_count, 0)
 
-    async def test_claim_referral_code_allows_admin_grant_before_first_paid_purchase(self) -> None:
+    async def test_claim_referral_code_allows_admin_grant_before_first_paid_purchase(
+        self,
+    ) -> None:
         referrer = await self._create_account(referral_code="ref-admin")
         referred = await self._create_account(referral_code="ref-manual")
         await self._create_subscription_grant(
@@ -336,7 +368,9 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].amount, 59)
 
-        event_types = [item.event_type for item in await self._get_account_event_logs(referrer.id)]
+        event_types = [
+            item.event_type for item in await self._get_account_event_logs(referrer.id)
+        ]
         self.assertIn("referral.reward.granted", event_types)
 
     async def test_bot_webhook_records_pending_telegram_referral_intent(self) -> None:
@@ -437,6 +471,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.accounts.errors.account_blocked"),
         )
+        self.assertEqual(response.json()["error_code"], "account_blocked")
 
     async def test_internal_telegram_access_reports_full_block(self) -> None:
         await self._create_account(
@@ -506,13 +541,17 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             session.add(second_grant)
             await session.flush()
 
-            first_reward = await referrals_service.apply_first_referral_reward_for_grant(
-                session,
-                grant=first_grant,
+            first_reward = (
+                await referrals_service.apply_first_referral_reward_for_grant(
+                    session,
+                    grant=first_grant,
+                )
             )
-            second_reward = await referrals_service.apply_first_referral_reward_for_grant(
-                session,
-                grant=second_grant,
+            second_reward = (
+                await referrals_service.apply_first_referral_reward_for_grant(
+                    session,
+                    grant=second_grant,
+                )
             )
             await session.commit()
 
@@ -529,7 +568,9 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
 
         notifications = await self._get_notifications(referrer.id)
         self.assertEqual(len(notifications), 1)
-        self.assertEqual(notifications[0].type, NotificationType.REFERRAL_REWARD_RECEIVED)
+        self.assertEqual(
+            notifications[0].type, NotificationType.REFERRAL_REWARD_RECEIVED
+        )
 
 
 if __name__ == "__main__":

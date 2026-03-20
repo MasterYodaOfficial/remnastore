@@ -22,7 +22,11 @@ from app.services.payments import (
 )
 from app.services.plans import get_subscription_plans
 from app.services.referrals import get_referral_summary
-from app.services.subscriptions import activate_trial, get_current_subscription, get_trial_eligibility
+from app.services.subscriptions import (
+    activate_trial,
+    get_current_subscription,
+    get_trial_eligibility,
+)
 
 
 class BotMenuServiceError(Exception):
@@ -110,7 +114,9 @@ async def activate_trial_for_telegram_account(
 ):
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
-        raise BotMenuAccountNotFoundError(translate("api.accounts.errors.account_not_found"))
+        raise BotMenuAccountNotFoundError(
+            translate("api.accounts.errors.account_not_found")
+        )
     return await activate_trial(session, account=account, source="bot")
 
 
@@ -123,7 +129,9 @@ async def create_telegram_stars_plan_payment_for_telegram_account(
 ) -> BotPlanPaymentResponse:
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
-        raise BotMenuAccountNotFoundError(translate("api.accounts.errors.account_not_found"))
+        raise BotMenuAccountNotFoundError(
+            translate("api.accounts.errors.account_not_found")
+        )
 
     snapshot = await create_telegram_stars_plan_purchase_payment(
         session,
@@ -158,7 +166,9 @@ async def create_yookassa_plan_payment_for_telegram_account(
 ) -> BotPlanPaymentResponse:
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
     if account is None:
-        raise BotMenuAccountNotFoundError(translate("api.accounts.errors.account_not_found"))
+        raise BotMenuAccountNotFoundError(
+            translate("api.accounts.errors.account_not_found")
+        )
 
     resolved_success_url = success_url or _build_telegram_bot_return_url()
     snapshot = await create_yookassa_plan_purchase_payment(

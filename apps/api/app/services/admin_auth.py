@@ -23,7 +23,7 @@ class AdminAlreadyExistsError(AdminAuthError):
 
 
 class AdminInvalidCredentialsError(AdminAuthError):
-    pass
+    code = "admin_invalid_credentials"
 
 
 def _normalize_required_login(value: str, *, field_name: str) -> str:
@@ -40,7 +40,9 @@ def _normalize_optional_text(value: str | None) -> str | None:
     return normalized or None
 
 
-async def get_admin_by_id(session: AsyncSession, admin_id: str | uuid.UUID) -> Admin | None:
+async def get_admin_by_id(
+    session: AsyncSession, admin_id: str | uuid.UUID
+) -> Admin | None:
     if isinstance(admin_id, str):
         try:
             admin_id = uuid.UUID(admin_id)
@@ -85,7 +87,9 @@ async def create_admin(
             select(Admin).where(func.lower(Admin.email) == normalized_email)
         )
         if result.scalar_one_or_none() is not None:
-            raise AdminAlreadyExistsError(f"admin already exists for email: {normalized_email}")
+            raise AdminAlreadyExistsError(
+                f"admin already exists for email: {normalized_email}"
+            )
 
     admin = Admin(
         username=normalized_username,
@@ -107,7 +111,11 @@ async def authenticate_admin(
     password: str,
 ) -> Admin:
     admin = await get_admin_by_login(session, login)
-    if admin is None or not admin.is_active or not verify_password(password, admin.password_hash):
+    if (
+        admin is None
+        or not admin.is_active
+        or not verify_password(password, admin.password_hash)
+    ):
         raise AdminInvalidCredentialsError("invalid admin credentials")
     return admin
 
@@ -120,7 +128,9 @@ async def ensure_bootstrap_admin(session: AsyncSession) -> Admin | None:
         return None
 
     if not username or not password:
-        logger.warning("Admin bootstrap skipped: both ADMIN_BOOTSTRAP_USERNAME and ADMIN_BOOTSTRAP_PASSWORD are required")
+        logger.warning(
+            "Admin bootstrap skipped: both ADMIN_BOOTSTRAP_USERNAME and ADMIN_BOOTSTRAP_PASSWORD are required"
+        )
         return None
 
     admins_count = await session.scalar(select(func.count()).select_from(Admin))

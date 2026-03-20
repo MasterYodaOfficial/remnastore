@@ -26,6 +26,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.main import create_app
 from app.services.admin_auth import create_admin
+from app.services.i18n import translate
 from app.services.withdrawals import create_withdrawal_request
 
 
@@ -61,10 +62,18 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._admin_auth_service = admin_auth_service
-        self._original_bootstrap_username = admin_auth_service.settings.admin_bootstrap_username
-        self._original_bootstrap_password = admin_auth_service.settings.admin_bootstrap_password
-        self._original_bootstrap_email = admin_auth_service.settings.admin_bootstrap_email
-        self._original_bootstrap_full_name = admin_auth_service.settings.admin_bootstrap_full_name
+        self._original_bootstrap_username = (
+            admin_auth_service.settings.admin_bootstrap_username
+        )
+        self._original_bootstrap_password = (
+            admin_auth_service.settings.admin_bootstrap_password
+        )
+        self._original_bootstrap_email = (
+            admin_auth_service.settings.admin_bootstrap_email
+        )
+        self._original_bootstrap_full_name = (
+            admin_auth_service.settings.admin_bootstrap_full_name
+        )
         admin_auth_service.settings.admin_bootstrap_username = ""
         admin_auth_service.settings.admin_bootstrap_password = ""
         admin_auth_service.settings.admin_bootstrap_email = ""
@@ -89,10 +98,18 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._cache_module._cache = self._original_cache
-        self._admin_auth_service.settings.admin_bootstrap_username = self._original_bootstrap_username
-        self._admin_auth_service.settings.admin_bootstrap_password = self._original_bootstrap_password
-        self._admin_auth_service.settings.admin_bootstrap_email = self._original_bootstrap_email
-        self._admin_auth_service.settings.admin_bootstrap_full_name = self._original_bootstrap_full_name
+        self._admin_auth_service.settings.admin_bootstrap_username = (
+            self._original_bootstrap_username
+        )
+        self._admin_auth_service.settings.admin_bootstrap_password = (
+            self._original_bootstrap_password
+        )
+        self._admin_auth_service.settings.admin_bootstrap_email = (
+            self._original_bootstrap_email
+        )
+        self._admin_auth_service.settings.admin_bootstrap_full_name = (
+            self._original_bootstrap_full_name
+        )
         settings.min_withdrawal_amount_rub = self._original_min_withdrawal_amount_rub
         await self._engine.dispose()
         self._tmpdir.cleanup()
@@ -172,7 +189,9 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+    async def _get_account_event_logs(
+        self, account_id: uuid.UUID
+    ) -> list[AccountEventLog]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(AccountEventLog)
@@ -196,8 +215,12 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
             balance=160,
             referral_earnings=160,
         )
-        first_withdrawal = await self._create_withdrawal(account_id=first_account.id, amount=40)
-        second_withdrawal = await self._create_withdrawal(account_id=second_account.id, amount=60)
+        first_withdrawal = await self._create_withdrawal(
+            account_id=first_account.id, amount=40
+        )
+        second_withdrawal = await self._create_withdrawal(
+            account_id=second_account.id, amount=60
+        )
 
         async with self._session_factory() as session:
             stored_second = await session.get(Withdrawal, second_withdrawal.id)
@@ -213,7 +236,10 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["total"], 2)
-        self.assertEqual([item["id"] for item in body["items"]], [first_withdrawal.id, second_withdrawal.id])
+        self.assertEqual(
+            [item["id"] for item in body["items"]],
+            [first_withdrawal.id, second_withdrawal.id],
+        )
         self.assertEqual(body["items"][0]["account_email"], "queue-first@example.com")
         self.assertEqual(body["items"][1]["status"], WithdrawalStatus.IN_PROGRESS.value)
 
@@ -256,7 +282,9 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(duplicate_response.status_code, 200)
         duplicate_body = duplicate_response.json()
         self.assertEqual(duplicate_body["audit_log_id"], body["audit_log_id"])
-        self.assertEqual(duplicate_body["released_ledger_entry_id"], body["released_ledger_entry_id"])
+        self.assertEqual(
+            duplicate_body["released_ledger_entry_id"], body["released_ledger_entry_id"]
+        )
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
@@ -267,39 +295,56 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_withdrawal)
         assert stored_withdrawal is not None
         self.assertEqual(stored_withdrawal.status, WithdrawalStatus.REJECTED)
-        self.assertEqual(stored_withdrawal.admin_comment, "Реквизиты не прошли проверку")
+        self.assertEqual(
+            stored_withdrawal.admin_comment, "Реквизиты не прошли проверку"
+        )
 
         ledger_entries = await self._get_ledger_entries(account.id)
-        self.assertEqual([entry.entry_type for entry in ledger_entries], [
-            LedgerEntryType.WITHDRAWAL_RESERVE,
-            LedgerEntryType.WITHDRAWAL_RELEASE,
-        ])
+        self.assertEqual(
+            [entry.entry_type for entry in ledger_entries],
+            [
+                LedgerEntryType.WITHDRAWAL_RESERVE,
+                LedgerEntryType.WITHDRAWAL_RELEASE,
+            ],
+        )
         self.assertEqual(ledger_entries[1].amount, 40)
 
         notifications = await self._get_notifications(account.id)
-        self.assertEqual([notification.type for notification in notifications], [
-            NotificationType.WITHDRAWAL_CREATED,
-            NotificationType.WITHDRAWAL_REJECTED,
-        ])
+        self.assertEqual(
+            [notification.type for notification in notifications],
+            [
+                NotificationType.WITHDRAWAL_CREATED,
+                NotificationType.WITHDRAWAL_REJECTED,
+            ],
+        )
 
         async with self._session_factory() as session:
             audit_logs = list(
                 (
                     await session.execute(
-                        select(AdminActionLog).where(AdminActionLog.target_account_id == account.id)
+                        select(AdminActionLog).where(
+                            AdminActionLog.target_account_id == account.id
+                        )
                     )
                 ).scalars()
             )
             self.assertEqual(len(audit_logs), 1)
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], [
-            "withdrawal.created",
-            "admin.withdrawal.status_change",
-        ])
-        self.assertEqual(event_logs[1].payload["next_status"], WithdrawalStatus.REJECTED.value)
+        self.assertEqual(
+            [item.event_type for item in event_logs],
+            [
+                "withdrawal.created",
+                "admin.withdrawal.status_change",
+            ],
+        )
+        self.assertEqual(
+            event_logs[1].payload["next_status"], WithdrawalStatus.REJECTED.value
+        )
 
-    async def test_mark_withdrawal_paid_updates_status_and_keeps_reserved_balance(self) -> None:
+    async def test_mark_withdrawal_paid_updates_status_and_keeps_reserved_balance(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         account = await self._create_account(
             email="paid-withdraw@example.com",
@@ -338,20 +383,87 @@ class AdminWithdrawalEndpointsTests(unittest.IsolatedAsyncioTestCase):
 
         ledger_entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(ledger_entries), 1)
-        self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.WITHDRAWAL_RESERVE)
+        self.assertEqual(
+            ledger_entries[0].entry_type, LedgerEntryType.WITHDRAWAL_RESERVE
+        )
 
         notifications = await self._get_notifications(account.id)
-        self.assertEqual([notification.type for notification in notifications], [
-            NotificationType.WITHDRAWAL_CREATED,
-            NotificationType.WITHDRAWAL_PAID,
-        ])
+        self.assertEqual(
+            [notification.type for notification in notifications],
+            [
+                NotificationType.WITHDRAWAL_CREATED,
+                NotificationType.WITHDRAWAL_PAID,
+            ],
+        )
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], [
-            "withdrawal.created",
-            "admin.withdrawal.status_change",
-        ])
-        self.assertEqual(event_logs[1].payload["next_status"], WithdrawalStatus.PAID.value)
+        self.assertEqual(
+            [item.event_type for item in event_logs],
+            [
+                "withdrawal.created",
+                "admin.withdrawal.status_change",
+            ],
+        )
+        self.assertEqual(
+            event_logs[1].payload["next_status"], WithdrawalStatus.PAID.value
+        )
+
+    async def test_change_withdrawal_status_returns_error_code_when_item_missing(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.post(
+            "/api/v1/admin/withdrawals/999999/status",
+            json={
+                "status": WithdrawalStatus.PAID.value,
+                "comment": "Выплачено",
+                "idempotency_key": "admin-withdrawal-missing",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.withdrawal_not_found"),
+                "error_code": "admin_withdrawal_not_found",
+            },
+        )
+
+    async def test_change_withdrawal_status_rejects_invalid_status_with_error_code(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+        account = await self._create_account(
+            email="invalid-status@example.com",
+            balance=100,
+            referral_earnings=100,
+        )
+        withdrawal = await self._create_withdrawal(
+            account_id=account.id,
+            amount=40,
+        )
+
+        response = await self.client.post(
+            f"/api/v1/admin/withdrawals/{withdrawal.id}/status",
+            json={
+                "status": WithdrawalStatus.NEW.value,
+                "comment": "Проверка недопустимого статуса",
+                "idempotency_key": "admin-withdrawal-invalid-status",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.withdrawal_invalid_status"),
+                "error_code": "admin_withdrawal_invalid_status",
+            },
+        )
 
 
 if __name__ == "__main__":

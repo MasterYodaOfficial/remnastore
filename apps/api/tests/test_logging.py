@@ -4,7 +4,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.core.logging import configure_logging, resolve_log_format, resolve_log_level
-from common.logging_setup import SensitiveDataFilter, build_logging_config, redact_sensitive_text
+from common.logging_setup import (
+    SensitiveDataFilter,
+    build_logging_config,
+    redact_sensitive_text,
+)
 
 
 class LoggingConfigTests(unittest.TestCase):

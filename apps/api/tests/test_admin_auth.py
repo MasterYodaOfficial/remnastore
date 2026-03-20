@@ -20,6 +20,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.main import create_app
+from app.services.i18n import translate
 from app.services.admin_auth import create_admin
 
 
@@ -49,10 +50,18 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._admin_auth_service = admin_auth_service
-        self._original_bootstrap_username = admin_auth_service.settings.admin_bootstrap_username
-        self._original_bootstrap_password = admin_auth_service.settings.admin_bootstrap_password
-        self._original_bootstrap_email = admin_auth_service.settings.admin_bootstrap_email
-        self._original_bootstrap_full_name = admin_auth_service.settings.admin_bootstrap_full_name
+        self._original_bootstrap_username = (
+            admin_auth_service.settings.admin_bootstrap_username
+        )
+        self._original_bootstrap_password = (
+            admin_auth_service.settings.admin_bootstrap_password
+        )
+        self._original_bootstrap_email = (
+            admin_auth_service.settings.admin_bootstrap_email
+        )
+        self._original_bootstrap_full_name = (
+            admin_auth_service.settings.admin_bootstrap_full_name
+        )
         admin_auth_service.settings.admin_bootstrap_username = ""
         admin_auth_service.settings.admin_bootstrap_password = ""
         admin_auth_service.settings.admin_bootstrap_email = ""
@@ -74,10 +83,18 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._cache_module._cache = self._original_cache
-        self._admin_auth_service.settings.admin_bootstrap_username = self._original_bootstrap_username
-        self._admin_auth_service.settings.admin_bootstrap_password = self._original_bootstrap_password
-        self._admin_auth_service.settings.admin_bootstrap_email = self._original_bootstrap_email
-        self._admin_auth_service.settings.admin_bootstrap_full_name = self._original_bootstrap_full_name
+        self._admin_auth_service.settings.admin_bootstrap_username = (
+            self._original_bootstrap_username
+        )
+        self._admin_auth_service.settings.admin_bootstrap_password = (
+            self._original_bootstrap_password
+        )
+        self._admin_auth_service.settings.admin_bootstrap_email = (
+            self._original_bootstrap_email
+        )
+        self._admin_auth_service.settings.admin_bootstrap_full_name = (
+            self._original_bootstrap_full_name
+        )
         await self._engine.dispose()
         self._tmpdir.cleanup()
 
@@ -109,7 +126,12 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["access_token"])
         self.assertEqual(body["admin"]["username"], "root")
         self.assertTrue(body["admin"]["is_active"])
-        self.assertTrue(any("event=admin.login" in line and "outcome=success" in line for line in captured.output))
+        self.assertTrue(
+            any(
+                "event=admin.login" in line and "outcome=success" in line
+                for line in captured.output
+            )
+        )
 
     async def test_admin_login_failure_emits_audit_log(self) -> None:
         await self._create_admin()
@@ -121,7 +143,34 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 401)
-        self.assertTrue(any("event=admin.login" in line and "outcome=failure" in line for line in captured.output))
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.invalid_credentials"),
+                "error_code": "admin_invalid_credentials",
+            },
+        )
+        self.assertTrue(
+            any(
+                "event=admin.login" in line and "outcome=failure" in line
+                for line in captured.output
+            )
+        )
+
+    async def test_admin_me_rejects_invalid_token_with_error_code(self) -> None:
+        response = await self.client.get(
+            "/api/v1/admin/auth/me",
+            headers={"Authorization": "Bearer invalid-admin-token"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.invalid_token"),
+                "error_code": "admin_invalid_token",
+            },
+        )
 
     async def test_admin_me_requires_admin_token(self) -> None:
         await self._create_admin()

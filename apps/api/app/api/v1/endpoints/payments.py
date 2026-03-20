@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error, api_error_from_exception
 from app.api.dependencies import get_current_account
 from app.db.models import Account
 from app.db.session import get_session
@@ -44,9 +45,8 @@ async def list_subscription_plans() -> list[SubscriptionPlanResponse]:
     try:
         plans = get_subscription_plans()
     except SubscriptionPlanError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_503_SERVICE_UNAVAILABLE, exc
         ) from exc
 
     return [
@@ -79,7 +79,10 @@ async def list_payments(
         active_only=active_only,
     )
     return PaymentListResponse(
-        items=[PaymentListItemResponse.model_validate(item, from_attributes=True) for item in payments],
+        items=[
+            PaymentListItemResponse.model_validate(item, from_attributes=True)
+            for item in payments
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -101,10 +104,7 @@ async def get_payment_status(
             provider_payment_id=provider_payment_id,
         )
     except PaymentNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
 
     return PaymentStatusResponse(
         provider=payment.provider,
@@ -136,24 +136,18 @@ async def create_yookassa_topup(
             idempotency_key=payload.idempotency_key,
         )
     except PaymentGatewayConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_503_SERVICE_UNAVAILABLE, exc
         ) from exc
     except PaymentConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PaymentAccountBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PaymentGatewayError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=translate("api.payments.errors.gateway_failed"),
+        raise api_error(
+            status.HTTP_502_BAD_GATEWAY,
+            translate("api.payments.errors.gateway_failed"),
+            error_code="gateway_failed",
         ) from exc
 
     return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)
@@ -178,49 +172,30 @@ async def create_yookassa_plan_purchase(
             promo_code=payload.promo_code,
         )
     except SubscriptionPlanError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except PromoCodeNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except PaymentGatewayConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_503_SERVICE_UNAVAILABLE, exc
         ) from exc
     except PaymentConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PromoConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PaymentAccountBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PromoBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PromoValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
         ) from exc
     except PaymentGatewayError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=translate("api.payments.errors.gateway_failed"),
+        raise api_error(
+            status.HTTP_502_BAD_GATEWAY,
+            translate("api.payments.errors.gateway_failed"),
+            error_code="gateway_failed",
         ) from exc
 
     return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)
@@ -243,49 +218,30 @@ async def create_telegram_stars_plan_purchase(
             promo_code=payload.promo_code,
         )
     except SubscriptionPlanError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except PromoCodeNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except PaymentGatewayConfigurationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_503_SERVICE_UNAVAILABLE, exc
         ) from exc
     except PaymentConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PromoConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PaymentAccountBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PromoBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PromoValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
         ) from exc
     except PaymentGatewayError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=translate("api.payments.errors.gateway_failed"),
+        raise api_error(
+            status.HTTP_502_BAD_GATEWAY,
+            translate("api.payments.errors.gateway_failed"),
+            error_code="gateway_failed",
         ) from exc
 
     return PaymentIntentResponse.model_validate(snapshot, from_attributes=True)

@@ -122,7 +122,9 @@ def _safe_list(value: object) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
-def _top_webapp_row(*, locale: str | None, referral_code: str | None) -> list[InlineKeyboardButton]:
+def _top_webapp_row(
+    *, locale: str | None, referral_code: str | None
+) -> list[InlineKeyboardButton]:
     return [
         InlineKeyboardButton(
             text=translate("common.actions.open_webapp", locale=locale),
@@ -151,7 +153,9 @@ def _subscription_status(subscription: dict[str, Any], *, locale: str | None) ->
         return translate("bot.menu.values.not_connected", locale=locale)
 
     if subscription.get("is_trial"):
-        trial_ends_at = subscription.get("trial_ends_at") or subscription.get("expires_at")
+        trial_ends_at = subscription.get("trial_ends_at") or subscription.get(
+            "expires_at"
+        )
         if trial_ends_at:
             return translate(
                 "bot.menu.values.trial_active_until",
@@ -188,7 +192,9 @@ def _trial_status(
     locale: str | None,
 ) -> str:
     if subscription.get("is_trial"):
-        trial_ends_at = subscription.get("trial_ends_at") or subscription.get("expires_at")
+        trial_ends_at = subscription.get("trial_ends_at") or subscription.get(
+            "expires_at"
+        )
         if trial_ends_at:
             return translate(
                 "bot.menu.values.trial_active_until",
@@ -206,7 +212,9 @@ def _trial_status(
 
 def _config_status(subscription: dict[str, Any], *, locale: str | None) -> str:
     return translate(
-        "bot.menu.values.yes" if subscription.get("subscription_url") else "bot.menu.values.no",
+        "bot.menu.values.yes"
+        if subscription.get("subscription_url")
+        else "bot.menu.values.no",
         locale=locale,
     )
 
@@ -272,7 +280,9 @@ def _amount_label(amount: object, currency: object, *, locale: str | None) -> st
     return str(normalized_amount)
 
 
-def _extract_http_error_detail(exc: httpx.HTTPStatusError, *, locale: str | None) -> str:
+def _extract_http_error_detail(
+    exc: httpx.HTTPStatusError, *, locale: str | None
+) -> str:
     detail = translate("bot.menu.messages.generic_error", locale=locale)
     response = exc.response
     try:
@@ -287,7 +297,9 @@ def _extract_http_error_detail(exc: httpx.HTTPStatusError, *, locale: str | None
     return translate("bot.errors.api_http_error", locale=locale, detail=detail)
 
 
-async def _get_dashboard_payload(client: ApiClient, *, telegram_id: int) -> dict[str, Any]:
+async def _get_dashboard_payload(
+    client: ApiClient, *, telegram_id: int
+) -> dict[str, Any]:
     try:
         return _safe_dict(await client.get_bot_dashboard(telegram_id=telegram_id))
     except httpx.HTTPError:
@@ -302,7 +314,9 @@ async def _get_plans_payload(client: ApiClient) -> list[dict[str, Any]]:
     return _safe_list(payload.get("items"))
 
 
-def _build_home_keyboard(*, locale: str | None, referral_code: str | None) -> InlineKeyboardMarkup:
+def _build_home_keyboard(
+    *, locale: str | None, referral_code: str | None
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             _top_webapp_row(locale=locale, referral_code=referral_code),
@@ -337,7 +351,9 @@ def _build_subscription_keyboard(
     locale: str | None,
     referral_code: str | None,
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [_top_webapp_row(locale=locale, referral_code=referral_code)]
+    rows: list[list[InlineKeyboardButton]] = [
+        _top_webapp_row(locale=locale, referral_code=referral_code)
+    ]
 
     subscription_url = _safe_string(subscription.get("subscription_url"), fallback="")
     if subscription_url:
@@ -367,16 +383,14 @@ def _build_subscription_keyboard(
                 callback_data=nav(SCREEN_PLANS),
             ),
             InlineKeyboardButton(
-                text=translate("common.actions.open_subscription_in_webapp", locale=locale),
+                text=translate(
+                    "common.actions.open_subscription_in_webapp", locale=locale
+                ),
                 web_app=WebAppInfo(url=build_webapp_url(referral_code, route_path="/")),
             ),
         ]
     )
-    rows.append(
-        [
-            _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
-        ]
-    )
+    rows.append([_back_button(locale=locale, callback_data=nav(SCREEN_HOME))])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -387,7 +401,9 @@ def _build_plans_keyboard(
     locale: str | None,
     referral_code: str | None,
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [_top_webapp_row(locale=locale, referral_code=referral_code)]
+    rows: list[list[InlineKeyboardButton]] = [
+        _top_webapp_row(locale=locale, referral_code=referral_code)
+    ]
 
     for plan in plans:
         plan_code = _safe_string(plan.get("code"), fallback="")
@@ -406,15 +422,13 @@ def _build_plans_keyboard(
         [
             InlineKeyboardButton(
                 text=translate("common.actions.open_plans_in_webapp", locale=locale),
-                web_app=WebAppInfo(url=build_webapp_url(referral_code, route_path="/plans")),
+                web_app=WebAppInfo(
+                    url=build_webapp_url(referral_code, route_path="/plans")
+                ),
             )
         ]
     )
-    rows.append(
-        [
-            _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
-        ]
-    )
+    rows.append([_back_button(locale=locale, callback_data=nav(SCREEN_HOME))])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -428,7 +442,9 @@ def _build_plan_detail_keyboard(
     promo_code: str | None = None,
 ) -> InlineKeyboardMarkup:
     plan_code = _safe_string(plan.get("code"), fallback="")
-    rows: list[list[InlineKeyboardButton]] = [_top_webapp_row(locale=locale, referral_code=referral_code)]
+    rows: list[list[InlineKeyboardButton]] = [
+        _top_webapp_row(locale=locale, referral_code=referral_code)
+    ]
     promo_checkout_url = ""
     if plan_code and promo_code:
         promo_checkout_url = build_webapp_url(
@@ -445,7 +461,9 @@ def _build_plan_detail_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=translate("common.actions.apply_promo_in_webapp", locale=locale),
+                    text=translate(
+                        "common.actions.apply_promo_in_webapp", locale=locale
+                    ),
                     web_app=WebAppInfo(url=promo_checkout_url),
                 )
             ]
@@ -497,40 +515,46 @@ def _build_plan_detail_keyboard(
         [
             InlineKeyboardButton(
                 text=translate("common.actions.open_plans_in_webapp", locale=locale),
-                web_app=WebAppInfo(url=build_webapp_url(referral_code, route_path="/plans")),
+                web_app=WebAppInfo(
+                    url=build_webapp_url(referral_code, route_path="/plans")
+                ),
             )
         ]
     )
-    rows.append(
-        [
-            _back_button(locale=locale, callback_data=nav(SCREEN_PLANS))
-        ]
-    )
+    rows.append([_back_button(locale=locale, callback_data=nav(SCREEN_PLANS))])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _build_referrals_keyboard(*, locale: str | None, referral_code: str | None) -> InlineKeyboardMarkup:
+def _build_referrals_keyboard(
+    *, locale: str | None, referral_code: str | None
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             _top_webapp_row(locale=locale, referral_code=referral_code),
             [
                 InlineKeyboardButton(
-                    text=translate("common.actions.open_referrals_in_webapp", locale=locale),
-                    web_app=WebAppInfo(url=build_webapp_url(referral_code, route_path="/referral")),
+                    text=translate(
+                        "common.actions.open_referrals_in_webapp", locale=locale
+                    ),
+                    web_app=WebAppInfo(
+                        url=build_webapp_url(referral_code, route_path="/referral")
+                    ),
                 )
             ],
-            [
-                _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
-            ],
+            [_back_button(locale=locale, callback_data=nav(SCREEN_HOME))],
         ]
     )
 
 
-def _build_help_keyboard(*, locale: str | None, referral_code: str | None) -> InlineKeyboardMarkup:
+def _build_help_keyboard(
+    *, locale: str | None, referral_code: str | None
+) -> InlineKeyboardMarkup:
     from bot.core.config import settings
 
-    rows: list[list[InlineKeyboardButton]] = [_top_webapp_row(locale=locale, referral_code=referral_code)]
+    rows: list[list[InlineKeyboardButton]] = [
+        _top_webapp_row(locale=locale, referral_code=referral_code)
+    ]
 
     help_buttons: list[InlineKeyboardButton] = []
     if settings.bot_help_telegram_url.strip():
@@ -554,15 +578,13 @@ def _build_help_keyboard(*, locale: str | None, referral_code: str | None) -> In
         [
             InlineKeyboardButton(
                 text=translate("common.actions.faq_in_webapp", locale=locale),
-                web_app=WebAppInfo(url=build_webapp_url(referral_code, route_path="/faq")),
+                web_app=WebAppInfo(
+                    url=build_webapp_url(referral_code, route_path="/faq")
+                ),
             )
         ]
     )
-    rows.append(
-        [
-            _back_button(locale=locale, callback_data=nav(SCREEN_HOME))
-        ]
-    )
+    rows.append([_back_button(locale=locale, callback_data=nav(SCREEN_HOME))])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -574,7 +596,9 @@ def _build_payment_ready_keyboard(
     payment_url: str,
     plan_code: str | None,
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [_top_webapp_row(locale=locale, referral_code=referral_code)]
+    rows: list[list[InlineKeyboardButton]] = [
+        _top_webapp_row(locale=locale, referral_code=referral_code)
+    ]
     rows.append(
         [
             InlineKeyboardButton(
@@ -587,7 +611,9 @@ def _build_payment_ready_keyboard(
     if plan_code:
         rows.append(
             [
-                _back_button(locale=locale, callback_data=action("plan", "open", plan_code))
+                _back_button(
+                    locale=locale, callback_data=action("plan", "open", plan_code)
+                )
             ]
         )
     else:
@@ -620,7 +646,9 @@ async def build_rendered_menu(
         if not dashboard.get("exists"):
             return RenderedMenu(
                 caption=translate("bot.menu.home.guest_caption", locale=locale),
-                reply_markup=_build_home_keyboard(locale=locale, referral_code=referral_code),
+                reply_markup=_build_home_keyboard(
+                    locale=locale, referral_code=referral_code
+                ),
                 screen=SCREEN_HOME,
                 asset_name=ASSET_WELCOME,
             )
@@ -635,9 +663,13 @@ async def build_rendered_menu(
                 balance_rub=_format_integer(account.get("balance")),
                 subscription_status=_subscription_status(subscription, locale=locale),
                 referrals_count=_format_integer(referral.get("referrals_count")),
-                available_for_withdraw_rub=_format_integer(referral.get("available_for_withdraw")),
+                available_for_withdraw_rub=_format_integer(
+                    referral.get("available_for_withdraw")
+                ),
             ),
-            reply_markup=_build_home_keyboard(locale=locale, referral_code=referral_code),
+            reply_markup=_build_home_keyboard(
+                locale=locale, referral_code=referral_code
+            ),
             screen=SCREEN_HOME,
             asset_name=ASSET_WELCOME,
         )
@@ -670,7 +702,9 @@ async def build_rendered_menu(
                 else translate("bot.menu.values.days_unknown", locale=locale),
                 access_type=_access_type(subscription, locale=locale),
                 config_status=_config_status(subscription, locale=locale),
-                trial_status=_trial_status(subscription, trial_eligibility, locale=locale),
+                trial_status=_trial_status(
+                    subscription, trial_eligibility, locale=locale
+                ),
             ),
             reply_markup=_build_subscription_keyboard(
                 subscription,
@@ -690,7 +724,9 @@ async def build_rendered_menu(
                 locale=locale,
                 plans_overview=_plans_overview(plans, locale=locale),
             ),
-            reply_markup=_build_plans_keyboard(plans, locale=locale, referral_code=referral_code),
+            reply_markup=_build_plans_keyboard(
+                plans, locale=locale, referral_code=referral_code
+            ),
             screen=SCREEN_PLANS,
             asset_name=ASSET_LOGO,
         )
@@ -700,7 +736,11 @@ async def build_rendered_menu(
         plan_code = _safe_string(params.get("plan_code"), fallback="")
         promo_code = _normalize_promo_code(params.get("promo_code"))
         selected_plan = next(
-            (plan for plan in plans if _safe_string(plan.get("code"), fallback="") == plan_code),
+            (
+                plan
+                for plan in plans
+                if _safe_string(plan.get("code"), fallback="") == plan_code
+            ),
             None,
         )
         if selected_plan is None:
@@ -731,7 +771,11 @@ async def build_rendered_menu(
             caption = "\n\n".join(
                 [
                     caption,
-                    translate("bot.menu.plan_detail.promo_line", locale=locale, promo_code=promo_code),
+                    translate(
+                        "bot.menu.plan_detail.promo_line",
+                        locale=locale,
+                        promo_code=promo_code,
+                    ),
                     translate("bot.menu.plan_detail.promo_hint", locale=locale),
                 ]
             )
@@ -757,7 +801,9 @@ async def build_rendered_menu(
         if not dashboard.get("exists"):
             return RenderedMenu(
                 caption=translate("bot.menu.referrals.guest_caption", locale=locale),
-                reply_markup=_build_referrals_keyboard(locale=locale, referral_code=referral_code),
+                reply_markup=_build_referrals_keyboard(
+                    locale=locale, referral_code=referral_code
+                ),
                 screen=SCREEN_REFERRALS,
                 asset_name=ASSET_LOGO,
             )
@@ -773,10 +819,16 @@ async def build_rendered_menu(
                 ),
                 referrals_count=_format_integer(referral.get("referrals_count")),
                 total_earnings_rub=_format_integer(referral.get("referral_earnings")),
-                available_for_withdraw_rub=_format_integer(referral.get("available_for_withdraw")),
-                reward_rate_percent=_format_percent(referral.get("effective_reward_rate")),
+                available_for_withdraw_rub=_format_integer(
+                    referral.get("available_for_withdraw")
+                ),
+                reward_rate_percent=_format_percent(
+                    referral.get("effective_reward_rate")
+                ),
             ),
-            reply_markup=_build_referrals_keyboard(locale=locale, referral_code=referral_code),
+            reply_markup=_build_referrals_keyboard(
+                locale=locale, referral_code=referral_code
+            ),
             screen=SCREEN_REFERRALS,
             asset_name=ASSET_LOGO,
         )
@@ -784,7 +836,9 @@ async def build_rendered_menu(
     if screen == SCREEN_HELP:
         return RenderedMenu(
             caption=translate("bot.menu.help.caption", locale=locale),
-            reply_markup=_build_help_keyboard(locale=locale, referral_code=referral_code),
+            reply_markup=_build_help_keyboard(
+                locale=locale, referral_code=referral_code
+            ),
             screen=SCREEN_HELP,
             asset_name=ASSET_LOGO,
         )
@@ -799,7 +853,9 @@ async def build_rendered_menu(
                     params.get("plan_name"),
                     fallback=_safe_string(
                         params.get("plan_code"),
-                        fallback=translate("bot.menu.values.plan_fallback", locale=locale),
+                        fallback=translate(
+                            "bot.menu.values.plan_fallback", locale=locale
+                        ),
                     ),
                 ),
                 provider_label=_provider_label(
@@ -882,7 +938,9 @@ async def present_menu(
                     reply_markup=rendered.reply_markup,
                 )
                 sent_message = result if isinstance(result, Message) else None
-                await media_registry.remember_message_media(rendered.asset_name, sent_message)
+                await media_registry.remember_message_media(
+                    rendered.asset_name, sent_message
+                )
 
             await session_store.save(
                 MenuSession(
@@ -1060,7 +1118,11 @@ async def create_plan_payment_and_render(
 
     plans = await _get_plans_payload(client)
     selected_plan = next(
-        (plan for plan in plans if _safe_string(plan.get("code"), fallback="") == plan_code),
+        (
+            plan
+            for plan in plans
+            if _safe_string(plan.get("code"), fallback="") == plan_code
+        ),
         None,
     )
     plan_name = _safe_string(
@@ -1080,7 +1142,9 @@ async def create_plan_payment_and_render(
             screen_params={
                 "plan_code": plan_code,
                 "plan_name": plan_name,
-                "provider": _safe_string(payment_data.get("provider"), fallback=provider),
+                "provider": _safe_string(
+                    payment_data.get("provider"), fallback=provider
+                ),
                 "amount": str(payment_data.get("amount") or ""),
                 "currency": _safe_string(payment_data.get("currency"), fallback=""),
                 "payment_url": payment_url,

@@ -61,7 +61,9 @@ def main_menu(
             [
                 InlineKeyboardButton(
                     text=translate("common.actions.open_webapp", locale=locale),
-                    web_app=WebAppInfo(url=build_webapp_url(referral_code, route_path=route_path)),
+                    web_app=WebAppInfo(
+                        url=build_webapp_url(referral_code, route_path=route_path)
+                    ),
                 )
             ],
         ]

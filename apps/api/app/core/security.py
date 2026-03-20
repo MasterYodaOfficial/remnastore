@@ -24,13 +24,19 @@ def _constant_time_compare(val1: bytes, val2: bytes) -> bool:
     return hmac.compare_digest(val1, val2)
 
 
-def create_access_token(payload: Dict[str, Any], *, secret: str, expires_in_seconds: int) -> str:
+def create_access_token(
+    payload: Dict[str, Any], *, secret: str, expires_in_seconds: int
+) -> str:
     now = int(time.time())
     claims = {**payload, "exp": now + expires_in_seconds, "iat": now}
 
     header = {"alg": "HS256", "typ": "JWT"}
-    header_b64 = _b64encode(json.dumps(header, separators=(",", ":"), sort_keys=True).encode())
-    claims_b64 = _b64encode(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode())
+    header_b64 = _b64encode(
+        json.dumps(header, separators=(",", ":"), sort_keys=True).encode()
+    )
+    claims_b64 = _b64encode(
+        json.dumps(claims, separators=(",", ":"), sort_keys=True).encode()
+    )
     signing_input = f"{header_b64}.{claims_b64}".encode()
     signature = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
     signature_b64 = _b64encode(signature)
@@ -103,7 +109,9 @@ def verify_telegram_init_data(
 
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
     secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
-    expected_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    expected_hash = hmac.new(
+        secret_key, data_check_string.encode(), hashlib.sha256
+    ).hexdigest()
 
     if not hmac.compare_digest(expected_hash, provided_hash):
         raise HTTPException(

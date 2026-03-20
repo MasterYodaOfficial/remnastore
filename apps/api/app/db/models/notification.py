@@ -4,7 +4,18 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, JSON, String, Text, Uuid, UniqueConstraint, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    JSON,
+    String,
+    Text,
+    Uuid,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -50,15 +61,24 @@ class NotificationDeliveryStatus(str, enum.Enum):
 class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (
-        UniqueConstraint("account_id", "dedupe_key", name="uq_notifications_account_dedupe_key"),
+        UniqueConstraint(
+            "account_id", "dedupe_key", name="uq_notifications_account_dedupe_key"
+        ),
         Index("ix_notifications_account_created", "account_id", "created_at"),
-        Index("ix_notifications_account_read_created", "account_id", "read_at", "created_at"),
+        Index(
+            "ix_notifications_account_read_created",
+            "account_id",
+            "read_at",
+            "created_at",
+        ),
         Index("ix_notifications_type_created", "type", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
     )
     type: Mapped[NotificationType] = mapped_column(
         Enum(NotificationType, **notification_enum_kwargs, length=32),
@@ -76,13 +96,17 @@ class Notification(Base):
     action_url: Mapped[str | None] = mapped_column(String(512))
     dedupe_key: Mapped[str | None] = mapped_column(String(191))
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
 
 
 class NotificationDelivery(Base):
     __tablename__ = "notification_deliveries"
     __table_args__ = (
-        UniqueConstraint("notification_id", "channel", name="uq_notification_deliveries_channel"),
+        UniqueConstraint(
+            "notification_id", "channel", name="uq_notification_deliveries_channel"
+        ),
         Index("ix_notification_deliveries_status_retry", "status", "next_retry_at"),
         Index("ix_notification_deliveries_channel_status", "channel", "status"),
     )
@@ -106,7 +130,9 @@ class NotificationDelivery(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(Text())
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
         onupdate=func.now(),

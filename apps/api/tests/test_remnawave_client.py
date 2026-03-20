@@ -129,15 +129,23 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         self._original_username_prefix = settings.remnawave_username_prefix
         self._original_user_label = settings.remnawave_user_label
         self._original_bot_username = settings.telegram_bot_username
-        self._original_default_squad_uuid = settings.remnawave_default_internal_squad_uuid
-        self._original_default_squad_name = settings.remnawave_default_internal_squad_name
+        self._original_default_squad_uuid = (
+            settings.remnawave_default_internal_squad_uuid
+        )
+        self._original_default_squad_name = (
+            settings.remnawave_default_internal_squad_name
+        )
 
     def tearDown(self) -> None:
         settings.remnawave_username_prefix = self._original_username_prefix
         settings.remnawave_user_label = self._original_user_label
         settings.telegram_bot_username = self._original_bot_username
-        settings.remnawave_default_internal_squad_uuid = self._original_default_squad_uuid
-        settings.remnawave_default_internal_squad_name = self._original_default_squad_name
+        settings.remnawave_default_internal_squad_uuid = (
+            self._original_default_squad_uuid
+        )
+        settings.remnawave_default_internal_squad_name = (
+            self._original_default_squad_name
+        )
 
     def _make_gateway(self, *, squads) -> RemnawaveGateway:
         gateway = object.__new__(RemnawaveGateway)
@@ -153,7 +161,9 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         gateway.get_users_by_telegram_id = _async_empty_list
         return gateway
 
-    def test_build_remnawave_username_uses_configured_prefix_and_telegram_id(self) -> None:
+    def test_build_remnawave_username_uses_configured_prefix_and_telegram_id(
+        self,
+    ) -> None:
         settings.remnawave_username_prefix = "Logo VPN"
         user_uuid = uuid.UUID("11111111-1111-1111-1111-111111111111")
 
@@ -204,7 +214,9 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(user.username, "remna_tg700001")
 
-    async def test_provision_user_resolves_internal_squad_by_configured_name(self) -> None:
+    async def test_provision_user_resolves_internal_squad_by_configured_name(
+        self,
+    ) -> None:
         settings.remnawave_default_internal_squad_uuid = ""
         settings.remnawave_default_internal_squad_name = "VIP"
         default_uuid = uuid.UUID("44444444-4444-4444-4444-444444444444")
@@ -228,7 +240,9 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         body = gateway._sdk.users.created_bodies[0]
         self.assertEqual(body.active_internal_squads, [vip_uuid])
 
-    async def test_provision_user_requires_explicit_config_when_multiple_squads_exist(self) -> None:
+    async def test_provision_user_requires_explicit_config_when_multiple_squads_exist(
+        self,
+    ) -> None:
         settings.remnawave_default_internal_squad_uuid = ""
         settings.remnawave_default_internal_squad_name = ""
         gateway = self._make_gateway(
@@ -290,7 +304,9 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("tag", patch_call["json"])
         self.assertIsNone(patch_call["json"]["tag"])
 
-    async def test_provision_user_reuses_existing_remote_user_found_by_username(self) -> None:
+    async def test_provision_user_reuses_existing_remote_user_found_by_username(
+        self,
+    ) -> None:
         settings.remnawave_username_prefix = "acc"
         squad_uuid = uuid.UUID("88888888-8888-8888-8888-888888888888")
         gateway = self._make_gateway(
@@ -329,7 +345,9 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gateway._sdk.users.updated_bodies[0].uuid, existing_uuid)
         self.assertEqual(user.uuid, existing_uuid)
 
-    async def test_provision_user_reuses_unique_remote_user_found_by_telegram_id(self) -> None:
+    async def test_provision_user_reuses_unique_remote_user_found_by_telegram_id(
+        self,
+    ) -> None:
         settings.remnawave_username_prefix = "acc"
         squad_uuid = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
         gateway = self._make_gateway(

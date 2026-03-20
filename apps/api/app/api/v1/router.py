@@ -35,13 +35,21 @@ api_router.include_router(linking_router, prefix="/accounts", tags=["linking"])
 protected_router = APIRouter(dependencies=[Depends(get_current_account)])
 protected_router.include_router(bootstrap_router, tags=["bootstrap"])
 protected_router.include_router(ledger_router, prefix="/ledger", tags=["ledger"])
-protected_router.include_router(notifications_router, prefix="/notifications", tags=["notifications"])
+protected_router.include_router(
+    notifications_router, prefix="/notifications", tags=["notifications"]
+)
 protected_router.include_router(payments_router, prefix="/payments", tags=["payments"])
 protected_router.include_router(promos_router, prefix="/promos", tags=["promos"])
-protected_router.include_router(referrals_router, prefix="/referrals", tags=["referrals"])
+protected_router.include_router(
+    referrals_router, prefix="/referrals", tags=["referrals"]
+)
 protected_router.include_router(users_router, prefix="/users", tags=["users"])
-protected_router.include_router(subscriptions_router, prefix="/subscriptions", tags=["subscriptions"])
-protected_router.include_router(withdrawals_router, prefix="/withdrawals", tags=["withdrawals"])
+protected_router.include_router(
+    subscriptions_router, prefix="/subscriptions", tags=["subscriptions"]
+)
+protected_router.include_router(
+    withdrawals_router, prefix="/withdrawals", tags=["withdrawals"]
+)
 protected_router.include_router(webapp_router, prefix="/webapp", tags=["webapp"])
 protected_router.include_router(accounts_router, tags=["accounts"])
 
@@ -49,9 +57,19 @@ api_router.include_router(protected_router)
 api_router.include_router(webhooks_router, prefix="/webhooks", tags=["webhooks"])
 
 admin_router = APIRouter(prefix="/admin", dependencies=[Depends(get_current_admin)])
-admin_router.include_router(admin_accounts_router, prefix="/accounts", tags=["admin-accounts"])
-admin_router.include_router(admin_broadcasts_router, prefix="/broadcasts", tags=["admin-broadcasts"])
-admin_router.include_router(admin_dashboard_router, prefix="/dashboard", tags=["admin-dashboard"])
-admin_router.include_router(admin_promocodes_router, prefix="/promos", tags=["admin-promos"])
-admin_router.include_router(admin_withdrawals_router, prefix="/withdrawals", tags=["admin-withdrawals"])
+admin_router.include_router(
+    admin_accounts_router, prefix="/accounts", tags=["admin-accounts"]
+)
+admin_router.include_router(
+    admin_broadcasts_router, prefix="/broadcasts", tags=["admin-broadcasts"]
+)
+admin_router.include_router(
+    admin_dashboard_router, prefix="/dashboard", tags=["admin-dashboard"]
+)
+admin_router.include_router(
+    admin_promocodes_router, prefix="/promos", tags=["admin-promos"]
+)
+admin_router.include_router(
+    admin_withdrawals_router, prefix="/withdrawals", tags=["admin-withdrawals"]
+)
 api_router.include_router(admin_router)

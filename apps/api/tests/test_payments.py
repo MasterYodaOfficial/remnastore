@@ -59,19 +59,23 @@ class DummyYooKassaResponse:
         self.status = status
         self.amount = SimpleNamespace(value=amount_value, currency=currency)
         self.confirmation = (
-            SimpleNamespace(confirmation_url=confirmation_url) if confirmation_url else None
+            SimpleNamespace(confirmation_url=confirmation_url)
+            if confirmation_url
+            else None
         )
         self.expires_at = expires_at
 
     def json(self) -> str:
-        return json.dumps({
-            "id": self.id,
-            "status": self.status,
-            "amount": {
-                "value": self.amount.value,
-                "currency": self.amount.currency,
-            },
-        })
+        return json.dumps(
+            {
+                "id": self.id,
+                "status": self.status,
+                "amount": {
+                    "value": self.amount.value,
+                    "currency": self.amount.currency,
+                },
+            }
+        )
 
 
 class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
@@ -106,11 +110,15 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.status, PaymentStatus.PENDING)
         self.assertEqual(snapshot.amount, 499)
         self.assertEqual(snapshot.currency, "RUB")
-        self.assertEqual(snapshot.provider_payment_id, "2d10f42f-000f-5000-9000-1a2b3c4d5e6f")
+        self.assertEqual(
+            snapshot.provider_payment_id, "2d10f42f-000f-5000-9000-1a2b3c4d5e6f"
+        )
         self.assertEqual(snapshot.external_reference, "pay-123")
         self.assertEqual(snapshot.confirmation_url, "https://yookassa.test/confirm")
         self.assertIsInstance(snapshot.raw_payload, dict)
-        self.assertEqual(snapshot.raw_payload["id"], "2d10f42f-000f-5000-9000-1a2b3c4d5e6f")
+        self.assertEqual(
+            snapshot.raw_payload["id"], "2d10f42f-000f-5000-9000-1a2b3c4d5e6f"
+        )
 
         create_payment.assert_called_once()
         params, idempotency_key = create_payment.call_args.args
@@ -166,8 +174,13 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(event.provider, PaymentProvider.YOOKASSA)
-        self.assertEqual(event.provider_event_id, "payment.succeeded:2419a771-000f-5000-9000-1edaf29243f2")
-        self.assertEqual(event.provider_payment_id, "2419a771-000f-5000-9000-1edaf29243f2")
+        self.assertEqual(
+            event.provider_event_id,
+            "payment.succeeded:2419a771-000f-5000-9000-1edaf29243f2",
+        )
+        self.assertEqual(
+            event.provider_payment_id, "2419a771-000f-5000-9000-1edaf29243f2"
+        )
         self.assertEqual(event.status, PaymentStatus.SUCCEEDED)
         self.assertEqual(event.amount, 1000)
         self.assertEqual(event.currency, "RUB")
@@ -175,7 +188,9 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.account_id, account_id)
         self.assertEqual(event.external_reference, "purchase-1")
         self.assertIsInstance(event.raw_payload, dict)
-        self.assertEqual(event.raw_payload["id"], "2419a771-000f-5000-9000-1edaf29243f2")
+        self.assertEqual(
+            event.raw_payload["id"], "2419a771-000f-5000-9000-1edaf29243f2"
+        )
 
     async def test_parse_webhook_rejects_missing_metadata(self) -> None:
         gateway = YooKassaGateway(
@@ -214,7 +229,9 @@ class YooKassaGatewayTests(unittest.IsolatedAsyncioTestCase):
 class TelegramStarsGatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_payment_intent_returns_invoice_link(self) -> None:
         account_id = uuid.uuid4()
-        gateway = TelegramStarsGateway(bot_token="telegram-token", api_base_url="https://api.telegram.org")
+        gateway = TelegramStarsGateway(
+            bot_token="telegram-token", api_base_url="https://api.telegram.org"
+        )
         command = CreatePaymentIntentCommand(
             account_id=account_id,
             flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
@@ -226,7 +243,11 @@ class TelegramStarsGatewayTests(unittest.IsolatedAsyncioTestCase):
             metadata={"rm_plan_name": "1 месяц"},
         )
 
-        with patch.object(gateway, "_call_bot_api", return_value={"result": "https://t.me/invoice/test"}) as bot_api:
+        with patch.object(
+            gateway,
+            "_call_bot_api",
+            return_value={"result": "https://t.me/invoice/test"},
+        ) as bot_api:
             with patch("app.services.payments.settings.api_token", "internal-token"):
                 snapshot = await gateway.create_payment_intent(command)
 
@@ -310,7 +331,9 @@ class FakeYooKassaGateway:
             external_reference=command.idempotency_key,
             confirmation_url="https://yookassa.test/confirm",
             expires_at=None,
-            raw_payload={"provider_payment_id": f"yoopay-{command.idempotency_key or 'generated'}"},
+            raw_payload={
+                "provider_payment_id": f"yoopay-{command.idempotency_key or 'generated'}"
+            },
         )
 
     async def parse_webhook(self, *, raw_body: bytes, headers):
@@ -322,7 +345,9 @@ class FakeYooKassaGateway:
     def put_event(self, event_id: str, event: PaymentWebhookEvent) -> None:
         self._events[event_id] = event
 
-    async def fetch_payment_snapshot(self, provider_payment_id: str) -> PaymentIntentSnapshot:
+    async def fetch_payment_snapshot(
+        self, provider_payment_id: str
+    ) -> PaymentIntentSnapshot:
         return self._status_snapshots[provider_payment_id]
 
     def put_status_snapshot(self, snapshot: PaymentIntentSnapshot) -> None:
@@ -387,9 +412,13 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self._payments_service = payments_service
         self._original_gateway_factory = payments_service.get_yookassa_gateway
-        self._original_stars_gateway_factory = payments_service.get_telegram_stars_gateway
+        self._original_stars_gateway_factory = (
+            payments_service.get_telegram_stars_gateway
+        )
         self._original_api_token = payments_service.settings.api_token
-        self._original_yookassa_pending_ttl_seconds = payments_service.settings.payment_pending_ttl_seconds_yookassa
+        self._original_yookassa_pending_ttl_seconds = (
+            payments_service.settings.payment_pending_ttl_seconds_yookassa
+        )
         self._original_telegram_stars_pending_ttl_seconds = (
             payments_service.settings.payment_pending_ttl_seconds_telegram_stars
         )
@@ -411,16 +440,22 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -430,7 +465,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._payments_service.get_yookassa_gateway = self._original_gateway_factory
-        self._payments_service.get_telegram_stars_gateway = self._original_stars_gateway_factory
+        self._payments_service.get_telegram_stars_gateway = (
+            self._original_stars_gateway_factory
+        )
         self._payments_service.settings.api_token = self._original_api_token
         self._payments_service.settings.payment_pending_ttl_seconds_yookassa = (
             self._original_yookassa_pending_ttl_seconds
@@ -460,7 +497,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
     async def _get_payment(self, provider_payment_id: str) -> Payment | None:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(Payment).where(Payment.provider_payment_id == provider_payment_id)
+                select(Payment).where(
+                    Payment.provider_payment_id == provider_payment_id
+                )
             )
             return result.scalar_one_or_none()
 
@@ -473,7 +512,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_subscription_grants(self, account_id: uuid.UUID) -> list[SubscriptionGrant]:
+    async def _get_subscription_grants(
+        self, account_id: uuid.UUID
+    ) -> list[SubscriptionGrant]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(SubscriptionGrant)
@@ -491,7 +532,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_account_event_logs(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+    async def _get_account_event_logs(
+        self, account_id: uuid.UUID
+    ) -> list[AccountEventLog]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(AccountEventLog)
@@ -510,7 +553,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 200)
 
-    async def test_create_yookassa_topup_endpoint_persists_pending_payment(self) -> None:
+    async def test_create_yookassa_topup_endpoint_persists_pending_payment(
+        self,
+    ) -> None:
         account = await self._create_account(balance=0, email="payer@example.com")
         self._current_account_id = account.id
 
@@ -539,9 +584,13 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_payment.expires_at)
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["payment.intent.created"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["payment.intent.created"]
+        )
         self.assertEqual(event_logs[0].payload["payment_id"], stored_payment.id)
-        self.assertEqual(event_logs[0].payload["provider_payment_id"], "yoopay-topup-500")
+        self.assertEqual(
+            event_logs[0].payload["provider_payment_id"], "yoopay-topup-500"
+        )
 
     async def test_create_yookassa_topup_rejects_blocked_account(self) -> None:
         account = await self._create_account(
@@ -564,9 +613,12 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             response.json()["detail"],
             translate("api.payments.errors.account_blocked"),
         )
+        self.assertEqual(response.json()["error_code"], "account_blocked")
         self.assertIsNone(await self._get_payment("yoopay-blocked-topup-500"))
 
-    async def test_create_bot_yookassa_plan_payment_uses_telegram_return_url(self) -> None:
+    async def test_create_bot_yookassa_plan_payment_uses_telegram_return_url(
+        self,
+    ) -> None:
         account = await self._create_account(
             balance=0,
             email="bot-payer@example.com",
@@ -591,10 +643,14 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["payment.intent.created"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["payment.intent.created"]
+        )
         self.assertEqual(event_logs[0].source, "bot")
 
-    async def test_create_bot_telegram_stars_plan_payment_persists_bot_source(self) -> None:
+    async def test_create_bot_telegram_stars_plan_payment_persists_bot_source(
+        self,
+    ) -> None:
         account = await self._create_account(
             balance=0,
             email="bot-stars@example.com",
@@ -616,7 +672,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://t.me/invoice/", body["confirmation_url"])
 
         event_logs = await self._get_account_event_logs(account.id)
-        self.assertEqual([item.event_type for item in event_logs], ["payment.intent.created"])
+        self.assertEqual(
+            [item.event_type for item in event_logs], ["payment.intent.created"]
+        )
         self.assertEqual(event_logs[0].source, "bot")
 
     async def test_list_subscription_plans_returns_backend_catalog(self) -> None:
@@ -664,7 +722,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(body["expires_at"])
         self.assertIsNone(body["finalized_at"])
 
-    async def test_list_payments_can_return_only_active_items_for_current_account(self) -> None:
+    async def test_list_payments_can_return_only_active_items_for_current_account(
+        self,
+    ) -> None:
         account = await self._create_account(balance=0, email="list@example.com")
         other_account = await self._create_account(balance=0, email="other@example.com")
         self._current_account_id = account.id
@@ -778,7 +838,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(notifications), 1)
         self.assertEqual(notifications[0].type, NotificationType.PAYMENT_SUCCEEDED)
 
-        event_types = [item.event_type for item in await self._get_account_event_logs(account.id)]
+        event_types = [
+            item.event_type for item in await self._get_account_event_logs(account.id)
+        ]
         self.assertIn("payment.intent.created", event_types)
         self.assertIn("payment.topup.applied", event_types)
         self.assertEqual(notifications[0].payload["payment_id"], stored_payment.id)
@@ -798,8 +860,12 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_account.balance, 600)
         self.assertEqual(len(await self._get_notifications(account.id)), 1)
 
-    async def test_yookassa_webhook_cancelled_creates_failure_notification(self) -> None:
-        account = await self._create_account(balance=100, email="payer-cancel@example.com")
+    async def test_yookassa_webhook_cancelled_creates_failure_notification(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            balance=100, email="payer-cancel@example.com"
+        )
         self._current_account_id = account.id
 
         create_response = await self.client.post(
@@ -850,8 +916,12 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notifications[0].type, NotificationType.PAYMENT_FAILED)
         self.assertEqual(notifications[0].payload["status"], "cancelled")
 
-    async def test_yookassa_webhook_cancelled_orphan_payment_does_not_fail(self) -> None:
-        account = await self._create_account(balance=100, email="payer-orphan@example.com")
+    async def test_yookassa_webhook_cancelled_orphan_payment_does_not_fail(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            balance=100, email="payer-orphan@example.com"
+        )
         self._current_account_id = account.id
 
         create_response = await self.client.post(
@@ -902,10 +972,14 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_payment.finalized_at)
 
         async with self._session_factory() as session:
-            result = await session.execute(select(Notification).order_by(Notification.id.asc()))
+            result = await session.execute(
+                select(Notification).order_by(Notification.id.asc())
+            )
             self.assertEqual(list(result.scalars().all()), [])
 
-    async def test_expire_stale_payments_marks_unpaid_stars_payment_as_expired(self) -> None:
+    async def test_expire_stale_payments_marks_unpaid_stars_payment_as_expired(
+        self,
+    ) -> None:
         account = await self._create_account(
             balance=0,
             email="stars-stale@example.com",
@@ -932,7 +1006,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._session_factory() as session:
             result = await session.execute(
-                select(Payment).where(Payment.provider_payment_id == provider_payment_id)
+                select(Payment).where(
+                    Payment.provider_payment_id == provider_payment_id
+                )
             )
             payment = result.scalar_one()
             payment.expires_at = datetime.now(UTC) - timedelta(minutes=1)
@@ -954,7 +1030,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(notifications[0].type, NotificationType.PAYMENT_FAILED)
         self.assertEqual(notifications[0].payload["status"], "expired")
 
-    async def test_reconcile_pending_yookassa_payment_applies_success_without_webhook(self) -> None:
+    async def test_reconcile_pending_yookassa_payment_applies_success_without_webhook(
+        self,
+    ) -> None:
         account = await self._create_account(balance=100, email="reconcile@example.com")
         self._current_account_id = account.id
 
@@ -970,7 +1048,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._session_factory() as session:
             result = await session.execute(
-                select(Payment).where(Payment.provider_payment_id == "yoopay-topup-reconcile-500")
+                select(Payment).where(
+                    Payment.provider_payment_id == "yoopay-topup-reconcile-500"
+                )
             )
             payment = result.scalar_one()
             payment.created_at = datetime.now(UTC) - timedelta(minutes=10)
@@ -993,7 +1073,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async with self._session_factory() as session:
-            summary = await reconcile_pending_yookassa_payments(session, limit=10, min_age_seconds=0)
+            summary = await reconcile_pending_yookassa_payments(
+                session, limit=10, min_age_seconds=0
+            )
 
         self.assertEqual(summary.succeeded, 1)
 
@@ -1070,7 +1152,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
-            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
             account_obj.subscription_is_trial = False
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
@@ -1178,7 +1262,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
-            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
             account_obj.subscription_is_trial = False
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
@@ -1227,7 +1313,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
 
         referrer_notifications = await self._get_notifications(referrer.id)
         self.assertEqual(len(referrer_notifications), 1)
-        self.assertEqual(referrer_notifications[0].type, NotificationType.REFERRAL_REWARD_RECEIVED)
+        self.assertEqual(
+            referrer_notifications[0].type, NotificationType.REFERRAL_REWARD_RECEIVED
+        )
 
     async def test_duplicate_event_can_resume_pending_plan_finalization(self) -> None:
         account = await self._create_account(balance=0, email="resume@example.com")
@@ -1243,7 +1331,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
-            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
             account_obj.subscription_is_trial = False
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
@@ -1326,8 +1416,12 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(grants), 1)
         self.assertIsNotNone(grants[0].applied_at)
 
-    async def test_reconcile_succeeded_plan_payment_resumes_pending_finalization(self) -> None:
-        account = await self._create_account(balance=0, email="resume-reconcile@example.com")
+    async def test_reconcile_succeeded_plan_payment_resumes_pending_finalization(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            balance=0, email="resume-reconcile@example.com"
+        )
         self._current_account_id = account.id
 
         async def fake_apply_paid_purchase(
@@ -1340,7 +1434,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
-            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
             account_obj.subscription_is_trial = False
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
@@ -1412,7 +1508,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(grants), 1)
         self.assertIsNotNone(grants[0].applied_at)
 
-    async def test_create_telegram_stars_plan_purchase_persists_pending_payment(self) -> None:
+    async def test_create_telegram_stars_plan_purchase_persists_pending_payment(
+        self,
+    ) -> None:
         account = await self._create_account(
             balance=0,
             email="stars@example.com",
@@ -1451,7 +1549,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored_payment.plan_code, "plan_1m")
         self.assertIsNotNone(stored_payment.expires_at)
 
-    async def test_telegram_stars_pre_checkout_rejects_fully_blocked_account(self) -> None:
+    async def test_telegram_stars_pre_checkout_rejects_fully_blocked_account(
+        self,
+    ) -> None:
         account = await self._create_account(
             balance=0,
             email="stars-blocked@example.com",
@@ -1499,7 +1599,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             {"ok": False, "error_message": "Аккаунт полностью заблокирован"},
         )
 
-    async def test_telegram_stars_pre_checkout_and_successful_payment_finalize_once(self) -> None:
+    async def test_telegram_stars_pre_checkout_and_successful_payment_finalize_once(
+        self,
+    ) -> None:
         account = await self._create_account(
             balance=0,
             email="stars-paid@example.com",
@@ -1517,7 +1619,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
-            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
             account_obj.subscription_is_trial = False
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
@@ -1551,7 +1655,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             headers={"Authorization": "Bearer internal-token"},
         )
         self.assertEqual(pre_checkout_response.status_code, 200)
-        self.assertEqual(pre_checkout_response.json(), {"ok": True, "error_message": None})
+        self.assertEqual(
+            pre_checkout_response.json(), {"ok": True, "error_message": None}
+        )
 
         long_charge_id = "tg-charge-" + ("x" * 180)
 
@@ -1609,7 +1715,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         assert stored_account is not None
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
 
-        event_types = [item.event_type for item in await self._get_account_event_logs(account.id)]
+        event_types = [
+            item.event_type for item in await self._get_account_event_logs(account.id)
+        ]
         self.assertIn("payment.intent.created", event_types)
         self.assertIn("subscription.direct_payment.staged", event_types)
         self.assertIn("subscription.direct_payment.applied", event_types)

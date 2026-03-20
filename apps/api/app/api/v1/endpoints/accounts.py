@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import ApiError, api_error, api_error_from_exception
 from app.api.dependencies import bearer_scheme, get_current_account
 from app.core.audit import build_request_audit_context, log_audit_event
 from app.core.config import settings
@@ -37,31 +38,32 @@ class LinkBrowserCompleteRequest(BaseModel):
     link_token: str
 
 
-def _link_token_http_error(exc: Exception) -> HTTPException:
+def _link_token_http_error(exc: Exception) -> ApiError:
     if isinstance(exc, LinkTokenNotFoundError):
-        return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=translate("api.linking.errors.token_not_found"),
+        return api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.linking.errors.token_not_found"),
+            error_code="token_not_found",
         )
     if isinstance(exc, LinkTokenExpiredError):
-        return HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.token_expired"),
+        return api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.token_expired"),
+            error_code="token_expired",
         )
     if isinstance(exc, LinkTokenAlreadyConsumedError):
-        return HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.token_already_used"),
+        return api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.token_already_used"),
+            error_code="token_already_used",
         )
     if isinstance(exc, LinkTokenTypeMismatchError):
-        return HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.token_type_invalid"),
+        return api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.token_type_invalid"),
+            error_code="token_type_invalid",
         )
-    return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=str(exc),
-    )
+    return api_error_from_exception(status.HTTP_400_BAD_REQUEST, exc)
 
 
 @router.post("/accounts/telegram", response_model=AccountResponse)
@@ -72,9 +74,10 @@ async def upsert_account_from_telegram(
 ) -> AccountResponse:
     # Ensure the caller updates only their own account
     if current_account.telegram_id != payload.telegram_id:
-        raise HTTPException(
-            status_code=403,
-            detail=translate("api.linking.errors.cannot_modify_another_account"),
+        raise api_error(
+            status.HTTP_403_FORBIDDEN,
+            translate("api.linking.errors.cannot_modify_another_account"),
+            error_code="cannot_modify_another_account",
         )
 
     account = await upsert_telegram_account(
@@ -133,18 +136,19 @@ async def generate_telegram_link(
             telegram_id=current_account.telegram_id,
             **request_context,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.telegram_already_linked"),
+        raise api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.telegram_already_linked"),
+            error_code="telegram_already_linked",
         )
-    
+
     link_token, link_url_template = await create_telegram_link_token(
         session,
         account_id=current_account.id,
         ttl_seconds=3600,
     )
     await session.commit()
-    
+
     # Replace placeholder with actual bot username from config
     link_url = link_url_template.format(bot_username=settings.telegram_bot_username)
     log_audit_event(
@@ -155,7 +159,7 @@ async def generate_telegram_link(
         expires_in_seconds=3600,
         **request_context,
     )
-    
+
     return LinkTelegramResponse(
         link_url=link_url,
         link_token=link_token,
@@ -180,9 +184,10 @@ async def generate_browser_link(
             account_id=current_account.id,
             **request_context,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.telegram_required"),
+        raise api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.telegram_required"),
+            error_code="telegram_required",
         )
 
     if not settings.webapp_url:
@@ -195,9 +200,10 @@ async def generate_browser_link(
             telegram_id=current_account.telegram_id,
             **request_context,
         )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=translate("api.linking.errors.webapp_url_missing"),
+        raise api_error(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            translate("api.linking.errors.webapp_url_missing"),
+            error_code="webapp_url_missing",
         )
 
     link_token, link_url_template = await create_browser_link_token(
@@ -273,9 +279,11 @@ async def complete_browser_link(
             browser_account_id=current_account.id,
             **request_context,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+        error_code = "account_not_found" if isinstance(exc, ValueError) else None
+        raise api_error_from_exception(
+            status.HTTP_400_BAD_REQUEST,
+            exc,
+            error_code=error_code,
         ) from exc
 
     mark_link_token_consumed(token)

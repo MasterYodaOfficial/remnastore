@@ -11,6 +11,8 @@ __pycache__/
 # Node
 node_modules/
 dist/
+test-results/
+playwright-report/
 
 # Env
 .env_old

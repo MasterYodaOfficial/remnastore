@@ -46,7 +46,9 @@ class SubscriptionStateResponse(BaseModel):
         if expires_at is not None:
             comparable_expires_at = expires_at
             if comparable_expires_at.tzinfo is None:
-                comparable_expires_at = comparable_expires_at.replace(tzinfo=timezone.utc)
+                comparable_expires_at = comparable_expires_at.replace(
+                    tzinfo=timezone.utc
+                )
 
             delta_seconds = (comparable_expires_at - now).total_seconds()
             if delta_seconds > 0 and account.subscription_status == "ACTIVE":

@@ -11,7 +11,11 @@ from remnawave import RemnawaveSDK
 from remnawave.enums import UserStatus
 from remnawave.exceptions import ApiError, NotFoundError
 from remnawave.models.internal_squads import InternalSquadDto
-from remnawave.models.users import CreateUserRequestDto, UpdateUserRequestDto, UpdateUserResponseDto
+from remnawave.models.users import (
+    CreateUserRequestDto,
+    UpdateUserRequestDto,
+    UpdateUserResponseDto,
+)
 
 from app.core.config import settings
 
@@ -84,7 +88,9 @@ def build_remnawave_description(
     telegram_id: int | None,
     is_trial: bool,
 ) -> str:
-    label = (settings.remnawave_user_label or settings.telegram_bot_username or "Remnastore").strip()
+    label = (
+        settings.remnawave_user_label or settings.telegram_bot_username or "Remnastore"
+    ).strip()
     parts = [label]
     if telegram_id is not None:
         parts.append(f"tg:{telegram_id}")
@@ -247,7 +253,9 @@ class RemnawaveGateway:
                 payload["tag"] = None
                 response = await self._sdk.users.client.patch("users", json=payload)
                 response.raise_for_status()
-                return _to_user_snapshot(UpdateUserResponseDto.model_validate(response.json()))
+                return _to_user_snapshot(
+                    UpdateUserResponseDto.model_validate(response.json())
+                )
 
             response = await self._sdk.users.update_user(body)
             return _to_user_snapshot(response)
@@ -280,7 +288,9 @@ class RemnawaveGateway:
             email=email,
             telegram_id=telegram_id,
         )
-        clear_tag = existing_user is not None and existing_user.tag is not None and tag is None
+        clear_tag = (
+            existing_user is not None and existing_user.tag is not None and tag is None
+        )
 
         try:
             if existing_user is None:
@@ -344,7 +354,9 @@ class RemnawaveGateway:
             email=email,
             telegram_id=telegram_id,
         )
-        clear_tag = existing_user is not None and existing_user.tag is not None and tag is None
+        clear_tag = (
+            existing_user is not None and existing_user.tag is not None and tag is None
+        )
 
         try:
             if existing_user is None:
@@ -404,7 +416,9 @@ class RemnawaveGateway:
         except (ApiError, httpx.HTTPError) as exc:
             raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
-        return [_to_internal_squad_snapshot(squad) for squad in response.internal_squads]
+        return [
+            _to_internal_squad_snapshot(squad) for squad in response.internal_squads
+        ]
 
     async def get_all_users(self, *, page_size: int = 500) -> list[RemnawaveUser]:
         if page_size <= 0:
@@ -415,7 +429,9 @@ class RemnawaveGateway:
 
         while True:
             try:
-                response = await self._sdk.users.get_all_users(start=offset, size=page_size)
+                response = await self._sdk.users.get_all_users(
+                    start=offset, size=page_size
+                )
             except (ApiError, httpx.HTTPError) as exc:
                 raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
@@ -441,7 +457,10 @@ class RemnawaveGateway:
         return [default_squad_uuid]
 
     async def _resolve_default_internal_squad_uuid(self) -> UUID:
-        if self._default_internal_squad_uuid_resolved and self._default_internal_squad_uuid_cache is not None:
+        if (
+            self._default_internal_squad_uuid_resolved
+            and self._default_internal_squad_uuid_cache is not None
+        ):
             return self._default_internal_squad_uuid_cache
 
         internal_squads = await self.get_internal_squads()

@@ -20,6 +20,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.main import create_app
 from app.services.admin_auth import create_admin
+from app.services.i18n import translate
 
 
 class DummyCache:
@@ -48,10 +49,18 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._admin_auth_service = admin_auth_service
-        self._original_bootstrap_username = admin_auth_service.settings.admin_bootstrap_username
-        self._original_bootstrap_password = admin_auth_service.settings.admin_bootstrap_password
-        self._original_bootstrap_email = admin_auth_service.settings.admin_bootstrap_email
-        self._original_bootstrap_full_name = admin_auth_service.settings.admin_bootstrap_full_name
+        self._original_bootstrap_username = (
+            admin_auth_service.settings.admin_bootstrap_username
+        )
+        self._original_bootstrap_password = (
+            admin_auth_service.settings.admin_bootstrap_password
+        )
+        self._original_bootstrap_email = (
+            admin_auth_service.settings.admin_bootstrap_email
+        )
+        self._original_bootstrap_full_name = (
+            admin_auth_service.settings.admin_bootstrap_full_name
+        )
         admin_auth_service.settings.admin_bootstrap_username = ""
         admin_auth_service.settings.admin_bootstrap_password = ""
         admin_auth_service.settings.admin_bootstrap_email = ""
@@ -73,10 +82,18 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._cache_module._cache = self._original_cache
-        self._admin_auth_service.settings.admin_bootstrap_username = self._original_bootstrap_username
-        self._admin_auth_service.settings.admin_bootstrap_password = self._original_bootstrap_password
-        self._admin_auth_service.settings.admin_bootstrap_email = self._original_bootstrap_email
-        self._admin_auth_service.settings.admin_bootstrap_full_name = self._original_bootstrap_full_name
+        self._admin_auth_service.settings.admin_bootstrap_username = (
+            self._original_bootstrap_username
+        )
+        self._admin_auth_service.settings.admin_bootstrap_password = (
+            self._original_bootstrap_password
+        )
+        self._admin_auth_service.settings.admin_bootstrap_email = (
+            self._original_bootstrap_email
+        )
+        self._admin_auth_service.settings.admin_bootstrap_full_name = (
+            self._original_bootstrap_full_name
+        )
         await self._engine.dispose()
         self._tmpdir.cleanup()
 
@@ -184,7 +201,44 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        self.assertIn("mutually exclusive", response.json()["detail"])
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_validation_failed"),
+                "error_code": "admin_promo_validation_failed",
+            },
+        )
+
+    async def test_create_code_rejects_invalid_characters_with_error_code(self) -> None:
+        token = await self._create_admin_token()
+
+        campaign_response = await self.client.post(
+            "/api/v1/admin/promos/campaigns",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Invalid code payload",
+                "status": "active",
+                "effect_type": "balance_credit",
+                "effect_value": 300,
+            },
+        )
+        self.assertEqual(campaign_response.status_code, 201)
+        campaign_id = campaign_response.json()["id"]
+
+        response = await self.client.post(
+            f"/api/v1/admin/promos/campaigns/{campaign_id}/codes",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"code": "bad promo!*"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_validation_failed"),
+                "error_code": "admin_promo_validation_failed",
+            },
+        )
 
     async def test_create_code_rejects_duplicate_normalized_value(self) -> None:
         token = await self._create_admin_token()
@@ -215,7 +269,13 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={"code": " BONUS-300 "},
         )
         self.assertEqual(duplicate_code_response.status_code, 409)
-        self.assertEqual(duplicate_code_response.json()["detail"], "promo code already exists")
+        self.assertEqual(
+            duplicate_code_response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_code_conflict"),
+                "error_code": "admin_promo_code_conflict",
+            },
+        )
 
     async def test_update_campaign_changes_status_effect_and_limits(self) -> None:
         token = await self._create_admin_token()
@@ -349,10 +409,16 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._session_factory() as session:
             code_rows = (
-                await session.execute(
-                    PromoCode.__table__.select().where(PromoCode.campaign_id == campaign_id)
+                (
+                    await session.execute(
+                        PromoCode.__table__.select().where(
+                            PromoCode.campaign_id == campaign_id
+                        )
+                    )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
             first_code_id = int(code_rows[0]["id"])
             first_code_value = str(code_rows[0]["code"])
             second_code_id = int(code_rows[1]["id"])
@@ -448,7 +514,13 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
             headers={"Authorization": f"Bearer {token}"},
         )
         self.assertEqual(invalid_account_response.status_code, 422)
-        self.assertEqual(invalid_account_response.json()["detail"], "invalid account_id")
+        self.assertEqual(
+            invalid_account_response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_invalid_account_id"),
+                "error_code": "admin_promo_invalid_account_id",
+            },
+        )
 
     async def test_import_and_export_promo_codes(self) -> None:
         token = await self._create_admin_token()
@@ -487,7 +559,10 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(import_body["created_count"], 2)
         self.assertEqual(import_body["skipped_count"], 1)
         self.assertEqual(import_body["skipped_codes"], ["AFF-EXISTING"])
-        self.assertEqual(sorted(item["code"] for item in import_body["items"]), ["AFF-NEW-1", "AFF-NEW-2"])
+        self.assertEqual(
+            sorted(item["code"] for item in import_body["items"]),
+            ["AFF-NEW-1", "AFF-NEW-2"],
+        )
 
         export_response = await self.client.get(
             f"/api/v1/admin/promos/campaigns/{campaign_id}/codes/export",
@@ -510,4 +585,61 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(conflict_response.status_code, 409)
-        self.assertEqual(conflict_response.json()["detail"], "promo code already exists: AFF-NEW-1")
+        self.assertEqual(
+            conflict_response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_import_conflict"),
+                "error_code": "admin_promo_import_conflict",
+            },
+        )
+
+    async def test_read_codes_returns_error_code_when_campaign_missing(self) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.get(
+            "/api/v1/admin/promos/campaigns/999999/codes",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_campaign_not_found"),
+                "error_code": "admin_promo_campaign_not_found",
+            },
+        )
+
+    async def test_update_code_returns_error_code_when_code_missing(self) -> None:
+        token = await self._create_admin_token()
+        campaign_response = await self.client.post(
+            "/api/v1/admin/promos/campaigns",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Missing code target",
+                "status": "active",
+                "effect_type": "fixed_discount",
+                "effect_value": 250,
+            },
+        )
+        self.assertEqual(campaign_response.status_code, 201)
+        campaign_id = campaign_response.json()["id"]
+
+        response = await self.client.put(
+            f"/api/v1/admin/promos/campaigns/{campaign_id}/codes/999999",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "max_redemptions": None,
+                "assigned_account_id": None,
+                "is_active": False,
+            },
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.promo_code_not_found"),
+                "error_code": "admin_promo_code_not_found",
+            },
+        )

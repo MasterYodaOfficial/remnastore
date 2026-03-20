@@ -13,6 +13,7 @@ def resolve_log_level(raw_level: object) -> int | str:
 def resolve_log_format(raw_format: object) -> str:
     return resolve_runtime_log_format(raw_format)
 
+
 def configure_logging(*, component_name: str = "api") -> None:
     configure_runtime_logging(
         service_name=settings.app_name,

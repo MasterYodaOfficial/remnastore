@@ -64,22 +64,34 @@ class Account(Base):
     last_name: Mapped[Optional[str]] = mapped_column(String(64))
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     locale: Mapped[Optional[str]] = mapped_column(String(16))
-    telegram_bot_blocked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    telegram_bot_blocked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     remnawave_user_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True))
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))
     subscription_status: Mapped[Optional[str]] = mapped_column(String(32))
-    subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    subscription_last_synced_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    subscription_is_trial: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    subscription_last_synced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    subscription_is_trial: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
-    referral_earnings: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_earnings: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
     referrals_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    referral_reward_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+    referral_reward_rate: Mapped[float] = mapped_column(
+        Numeric(5, 2), nullable=False, default=0
+    )
     referred_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL")
     )
@@ -108,7 +120,10 @@ class Account(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
     auth_accounts: Mapped[list["AuthAccount"]] = relationship(
@@ -136,7 +151,9 @@ class AuthAccount(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
     )
     provider: Mapped[AuthProvider] = mapped_column(
         Enum(AuthProvider, **provider_enum_kwargs), nullable=False
@@ -166,7 +183,9 @@ class AuthLinkToken(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
     )
 
     link_token: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -178,7 +197,9 @@ class AuthLinkToken(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
 
-    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     consumed_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
 
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger)

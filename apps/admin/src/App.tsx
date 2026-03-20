@@ -1,4 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { DashboardCard } from "./components/DashboardCard";
+import { DetailFact } from "./components/DetailFact";
+import { parseAdminApiErrorPayload } from "./lib/api-errors";
 import {
   formatAccountIdentity,
   formatCompactId,
@@ -38,12 +41,6 @@ type AdminAuthResponse = {
   access_token: string;
   token_type: string;
   admin: AdminProfile;
-};
-
-type DashboardCardProps = {
-  label: string;
-  value: string | number;
-  hint: string;
 };
 
 type AdminAccountSearchItem = {
@@ -892,8 +889,8 @@ async function readErrorMessage(response: Response): Promise<string> {
   }
 
   try {
-    const parsed = JSON.parse(text) as { detail?: string };
-    return parsed.detail || text;
+    const parsed = JSON.parse(text) as unknown;
+    return parseAdminApiErrorPayload(parsed, text).detail;
   } catch {
     return text;
   }
@@ -1629,25 +1626,6 @@ function buildMoscowScheduleIso(value: string): string {
 
 function renderBroadcastPreviewHtml(html: string): string {
   return html.replace(/\n/g, "<br />");
-}
-
-function DashboardCard({ label, value, hint }: DashboardCardProps) {
-  return (
-    <article className="metric-card">
-      <span className="metric-label">{label}</span>
-      <strong className="metric-value">{value}</strong>
-      <span className="metric-hint">{hint}</span>
-    </article>
-  );
-}
-
-function DetailFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="detail-fact">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
 }
 
 export default function App() {

@@ -99,17 +99,27 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._admin_auth_service = admin_auth_service
-        self._original_bootstrap_username = admin_auth_service.settings.admin_bootstrap_username
-        self._original_bootstrap_password = admin_auth_service.settings.admin_bootstrap_password
-        self._original_bootstrap_email = admin_auth_service.settings.admin_bootstrap_email
-        self._original_bootstrap_full_name = admin_auth_service.settings.admin_bootstrap_full_name
+        self._original_bootstrap_username = (
+            admin_auth_service.settings.admin_bootstrap_username
+        )
+        self._original_bootstrap_password = (
+            admin_auth_service.settings.admin_bootstrap_password
+        )
+        self._original_bootstrap_email = (
+            admin_auth_service.settings.admin_bootstrap_email
+        )
+        self._original_bootstrap_full_name = (
+            admin_auth_service.settings.admin_bootstrap_full_name
+        )
         admin_auth_service.settings.admin_bootstrap_username = ""
         admin_auth_service.settings.admin_bootstrap_password = ""
         admin_auth_service.settings.admin_bootstrap_email = ""
         admin_auth_service.settings.admin_bootstrap_full_name = ""
 
         self._admin_subscriptions_service = admin_subscriptions_service
-        self._original_admin_gateway_factory = admin_subscriptions_service.get_remnawave_gateway
+        self._original_admin_gateway_factory = (
+            admin_subscriptions_service.get_remnawave_gateway
+        )
         admin_subscriptions_service.get_remnawave_gateway = lambda: self._fake_gateway
 
         self.app = create_app()
@@ -128,11 +138,21 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._cache_module._cache = self._original_cache
-        self._admin_auth_service.settings.admin_bootstrap_username = self._original_bootstrap_username
-        self._admin_auth_service.settings.admin_bootstrap_password = self._original_bootstrap_password
-        self._admin_auth_service.settings.admin_bootstrap_email = self._original_bootstrap_email
-        self._admin_auth_service.settings.admin_bootstrap_full_name = self._original_bootstrap_full_name
-        self._admin_subscriptions_service.get_remnawave_gateway = self._original_admin_gateway_factory
+        self._admin_auth_service.settings.admin_bootstrap_username = (
+            self._original_bootstrap_username
+        )
+        self._admin_auth_service.settings.admin_bootstrap_password = (
+            self._original_bootstrap_password
+        )
+        self._admin_auth_service.settings.admin_bootstrap_email = (
+            self._original_bootstrap_email
+        )
+        self._admin_auth_service.settings.admin_bootstrap_full_name = (
+            self._original_bootstrap_full_name
+        )
+        self._admin_subscriptions_service.get_remnawave_gateway = (
+            self._original_admin_gateway_factory
+        )
         await self._engine.dispose()
         self._tmpdir.cleanup()
 
@@ -212,7 +232,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(body[0]["code"], str)
         self.assertIsInstance(body[0]["duration_days"], int)
 
-    async def test_account_detail_returns_recent_finance_and_subscription_blocks(self) -> None:
+    async def test_account_detail_returns_recent_finance_and_subscription_blocks(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         async with self._session_factory() as session:
@@ -303,8 +325,12 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(body["recent_payments"]), 1)
         self.assertEqual(len(body["recent_withdrawals"]), 1)
         self.assertEqual(body["recent_ledger_entries"][0]["comment"], "Пополнение")
-        self.assertEqual(body["recent_payments"][0]["status"], PaymentStatus.PENDING.value)
-        self.assertEqual(body["recent_withdrawals"][0]["status"], WithdrawalStatus.NEW.value)
+        self.assertEqual(
+            body["recent_payments"][0]["status"], PaymentStatus.PENDING.value
+        )
+        self.assertEqual(
+            body["recent_withdrawals"][0]["status"], WithdrawalStatus.NEW.value
+        )
         self.assertEqual(body["referral_chain"]["direct_referrals_count"], 0)
         self.assertEqual(body["referral_chain"]["rewarded_direct_referrals_count"], 0)
         self.assertEqual(body["referral_chain"]["pending_direct_referrals_count"], 0)
@@ -423,7 +449,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chain["direct_referrals"][0]["username"], "pending_ref")
         self.assertEqual(chain["direct_referrals"][0]["reward_status"], "pending")
         self.assertEqual(chain["direct_referrals"][0]["reward_amount"], 0)
-        self.assertEqual(chain["direct_referrals"][0]["status"], AccountStatus.BLOCKED.value)
+        self.assertEqual(
+            chain["direct_referrals"][0]["status"], AccountStatus.BLOCKED.value
+        )
         self.assertEqual(chain["direct_referrals"][1]["username"], "rewarded_ref")
         self.assertEqual(chain["direct_referrals"][1]["reward_status"], "rewarded")
         self.assertEqual(chain["direct_referrals"][1]["reward_amount"], 180)
@@ -432,7 +460,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chain["direct_referrals"][1]["subscription_status"], "ACTIVE")
         self.assertIsNotNone(chain["direct_referrals"][1]["reward_created_at"])
 
-    async def test_account_ledger_entries_history_supports_pagination_and_entry_type_filter(self) -> None:
+    async def test_account_ledger_entries_history_supports_pagination_and_entry_type_filter(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         async with self._session_factory() as session:
@@ -499,15 +529,22 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         page_body = page_response.json()
         self.assertEqual(page_body["total"], 3)
         self.assertEqual(page_body["limit"], 2)
-        self.assertEqual([item["entry_type"] for item in page_body["items"]], [
-            LedgerEntryType.ADMIN_DEBIT.value,
-            LedgerEntryType.ADMIN_CREDIT.value,
-        ])
+        self.assertEqual(
+            [item["entry_type"] for item in page_body["items"]],
+            [
+                LedgerEntryType.ADMIN_DEBIT.value,
+                LedgerEntryType.ADMIN_CREDIT.value,
+            ],
+        )
         self.assertIsNotNone(page_body["items"][0]["created_by_admin_id"])
 
         filtered_response = await self.client.get(
             f"/api/v1/admin/accounts/{account_id}/ledger-entries",
-            params={"entry_type": LedgerEntryType.ADMIN_CREDIT.value, "limit": 10, "offset": 0},
+            params={
+                "entry_type": LedgerEntryType.ADMIN_CREDIT.value,
+                "limit": 10,
+                "offset": 0,
+            },
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -515,7 +552,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         filtered_body = filtered_response.json()
         self.assertEqual(filtered_body["total"], 1)
         self.assertEqual(len(filtered_body["items"]), 1)
-        self.assertEqual(filtered_body["items"][0]["entry_type"], LedgerEntryType.ADMIN_CREDIT.value)
+        self.assertEqual(
+            filtered_body["items"][0]["entry_type"], LedgerEntryType.ADMIN_CREDIT.value
+        )
         self.assertEqual(filtered_body["items"][0]["comment"], "Ручное начисление")
 
     async def test_balance_adjustment_updates_balance_and_is_idempotent(self) -> None:
@@ -546,9 +585,13 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
         self.assertEqual(body["account_id"], account_id)
         self.assertEqual(body["balance"], 1250)
-        self.assertEqual(body["ledger_entry"]["entry_type"], LedgerEntryType.ADMIN_CREDIT.value)
+        self.assertEqual(
+            body["ledger_entry"]["entry_type"], LedgerEntryType.ADMIN_CREDIT.value
+        )
         self.assertEqual(body["ledger_entry"]["amount"], 250)
-        self.assertEqual(body["ledger_entry"]["comment"], "Ручная корректировка по сверке")
+        self.assertEqual(
+            body["ledger_entry"]["comment"], "Ручная корректировка по сверке"
+        )
 
         duplicate_response = await self.client.post(
             f"/api/v1/admin/accounts/{account_id}/balance-adjustments",
@@ -557,7 +600,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(duplicate_response.status_code, 200)
         duplicate_body = duplicate_response.json()
-        self.assertEqual(duplicate_body["ledger_entry"]["id"], body["ledger_entry"]["id"])
+        self.assertEqual(
+            duplicate_body["ledger_entry"]["id"], body["ledger_entry"]["id"]
+        )
         self.assertEqual(duplicate_body["balance"], 1250)
 
         async with self._session_factory() as session:
@@ -583,7 +628,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ).scalars()
             )
-            self.assertEqual([item.event_type for item in event_logs], ["admin.balance_adjustment"])
+            self.assertEqual(
+                [item.event_type for item in event_logs], ["admin.balance_adjustment"]
+            )
             self.assertEqual(event_logs[0].payload["ledger_entry_id"], entries[0].id)
 
     async def test_balance_adjustment_rejects_insufficient_funds(self) -> None:
@@ -609,7 +656,13 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             headers={"Authorization": f"Bearer {token}"},
         )
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(response.json()["detail"], translate("api.ledger.errors.insufficient_funds"))
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.ledger.errors.insufficient_funds"),
+                "error_code": "insufficient_funds",
+            },
+        )
 
         async with self._session_factory() as session:
             stored_account = await session.get(Account, uuid.UUID(account_id))
@@ -621,7 +674,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(list(result.scalars().all()), [])
 
-    async def test_subscription_grant_updates_subscription_and_is_idempotent(self) -> None:
+    async def test_subscription_grant_updates_subscription_and_is_idempotent(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         async with self._session_factory() as session:
@@ -662,7 +717,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(duplicate_response.status_code, 200)
         duplicate_body = duplicate_response.json()
-        self.assertEqual(duplicate_body["subscription_grant_id"], body["subscription_grant_id"])
+        self.assertEqual(
+            duplicate_body["subscription_grant_id"], body["subscription_grant_id"]
+        )
         self.assertEqual(duplicate_body["audit_log_id"], body["audit_log_id"])
 
         async with self._session_factory() as session:
@@ -703,8 +760,12 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ).scalars()
             )
-            self.assertEqual([item.event_type for item in event_logs], ["admin.subscription_grant"])
-            self.assertEqual(event_logs[0].payload["subscription_grant_id"], grants[0].id)
+            self.assertEqual(
+                [item.event_type for item in event_logs], ["admin.subscription_grant"]
+            )
+            self.assertEqual(
+                event_logs[0].payload["subscription_grant_id"], grants[0].id
+            )
 
     async def test_account_status_change_updates_status_and_is_idempotent(self) -> None:
         token = await self._create_admin_token()
@@ -759,8 +820,12 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             logs = list(logs_result.scalars().all())
             self.assertEqual(len(logs), 1)
             self.assertEqual(logs[0].comment, "Блокировка по abuse signal")
-            self.assertEqual(logs[0].payload["previous_status"], AccountStatus.ACTIVE.value)
-            self.assertEqual(logs[0].payload["next_status"], AccountStatus.BLOCKED.value)
+            self.assertEqual(
+                logs[0].payload["previous_status"], AccountStatus.ACTIVE.value
+            )
+            self.assertEqual(
+                logs[0].payload["next_status"], AccountStatus.BLOCKED.value
+            )
 
             event_logs = list(
                 (
@@ -771,8 +836,195 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ).scalars()
             )
-            self.assertEqual([item.event_type for item in event_logs], ["admin.account_status_change"])
-            self.assertEqual(event_logs[0].payload["next_status"], AccountStatus.BLOCKED.value)
+            self.assertEqual(
+                [item.event_type for item in event_logs],
+                ["admin.account_status_change"],
+            )
+            self.assertEqual(
+                event_logs[0].payload["next_status"], AccountStatus.BLOCKED.value
+            )
+
+    async def test_account_status_change_returns_error_code_when_account_missing(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{uuid.uuid4()}/status",
+            json={
+                "status": AccountStatus.BLOCKED.value,
+                "comment": "Блокировка по abuse signal",
+                "idempotency_key": "admin-status-missing",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.account_not_found"),
+                "error_code": "admin_account_not_found",
+            },
+        )
+
+    async def test_subscription_grant_returns_error_code_when_account_missing(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+        missing_account_id = str(uuid.uuid4())
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{missing_account_id}/subscription-grants",
+            json={
+                "plan_code": "plan_1m",
+                "comment": "Выдать доступ вручную",
+                "idempotency_key": "admin-subscription-missing",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.account_not_found"),
+                "error_code": "admin_account_not_found",
+            },
+        )
+
+    async def test_subscription_grant_requires_comment(self) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(email="grant-comment@example.com", display_name="Grant")
+            session.add(account)
+            await session.commit()
+            account_id = str(account.id)
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/subscription-grants",
+            json={
+                "plan_code": "plan_1m",
+                "comment": "   ",
+                "idempotency_key": "admin-subscription-comment-required",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.comment_required"),
+                "error_code": "admin_comment_required",
+            },
+        )
+
+    async def test_subscription_grant_returns_error_code_when_plan_missing(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(email="grant-plan@example.com", display_name="Grant")
+            session.add(account)
+            await session.commit()
+            account_id = str(account.id)
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/subscription-grants",
+            json={
+                "plan_code": "plan_missing",
+                "comment": "Выдать вручную",
+                "idempotency_key": "admin-subscription-unknown-plan",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.plans.errors.unknown_plan"),
+                "error_code": "unknown_plan",
+            },
+        )
+
+    async def test_subscription_grant_returns_error_code_on_idempotency_plan_conflict(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(email="grant-conflict@example.com", display_name="Grant")
+            session.add(account)
+            await session.commit()
+            account_id = str(account.id)
+
+        initial_response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/subscription-grants",
+            json={
+                "plan_code": "plan_1m",
+                "comment": "Первичная выдача",
+                "idempotency_key": "admin-subscription-plan-conflict",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(initial_response.status_code, 200)
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/subscription-grants",
+            json={
+                "plan_code": "plan_3m",
+                "comment": "Первичная выдача",
+                "idempotency_key": "admin-subscription-plan-conflict",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.purchases.errors.idempotency_plan_conflict"),
+                "error_code": "idempotency_plan_conflict",
+            },
+        )
+
+    async def test_account_status_change_returns_error_code_on_status_conflict(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        async with self._session_factory() as session:
+            account = Account(
+                email="already-blocked@example.com",
+                display_name="Already Blocked",
+                status=AccountStatus.BLOCKED,
+            )
+            session.add(account)
+            await session.commit()
+            account_id = str(account.id)
+
+        response = await self.client.post(
+            f"/api/v1/admin/accounts/{account_id}/status",
+            json={
+                "status": AccountStatus.BLOCKED.value,
+                "comment": "Повторная блокировка",
+                "idempotency_key": "admin-status-conflict",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.account_status_conflict"),
+                "error_code": "admin_account_status_conflict",
+            },
+        )
 
     async def test_account_event_logs_endpoint_returns_latest_events(self) -> None:
         token = await self._create_admin_token()
@@ -798,7 +1050,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     AccountEventLog(
                         account_id=account.id,
-                        actor_admin_id=uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                        actor_admin_id=uuid.UUID(
+                            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                        ),
                         event_type="payment.finalized",
                         outcome="failure",
                         source="webhook",
@@ -807,7 +1061,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
                     ),
                     AccountEventLog(
                         account_id=account.id,
-                        actor_admin_id=uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                        actor_admin_id=uuid.UUID(
+                            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+                        ),
                         event_type="admin.balance_adjustment",
                         outcome="success",
                         source="admin",
@@ -843,10 +1099,14 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filtered_response.status_code, 200)
         filtered_body = filtered_response.json()
         self.assertEqual(filtered_body["total"], 1)
-        self.assertEqual(filtered_body["items"][0]["event_type"], "payment.intent.created")
+        self.assertEqual(
+            filtered_body["items"][0]["event_type"], "payment.intent.created"
+        )
         self.assertEqual(filtered_body["items"][0]["payload"]["payment_id"], 11)
 
-    async def test_global_account_event_log_search_returns_context_and_supports_filters(self) -> None:
+    async def test_global_account_event_log_search_returns_context_and_supports_filters(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         async with self._session_factory() as session:
@@ -914,9 +1174,15 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(filtered_response.status_code, 200)
         filtered_body = filtered_response.json()
         self.assertEqual(filtered_body["total"], 1)
-        self.assertEqual(filtered_body["items"][0]["event_type"], "admin.balance_adjustment")
-        self.assertEqual(filtered_body["items"][0]["account"]["display_name"], "Beta User")
-        self.assertEqual(filtered_body["items"][0]["actor_account"]["username"], "alpha")
+        self.assertEqual(
+            filtered_body["items"][0]["event_type"], "admin.balance_adjustment"
+        )
+        self.assertEqual(
+            filtered_body["items"][0]["account"]["display_name"], "Beta User"
+        )
+        self.assertEqual(
+            filtered_body["items"][0]["actor_account"]["username"], "alpha"
+        )
         self.assertEqual(filtered_body["items"][0]["actor_admin"]["username"], "root")
 
         telegram_response = await self.client.get(
@@ -941,5 +1207,9 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(request_response.status_code, 200)
         request_body = request_response.json()
         self.assertEqual(request_body["total"], 1)
-        self.assertEqual(request_body["items"][0]["account"]["email"], "beta@example.com")
-        self.assertEqual(request_body["items"][0]["payload"]["reason"], "provider_error")
+        self.assertEqual(
+            request_body["items"][0]["account"]["email"], "beta@example.com"
+        )
+        self.assertEqual(
+            request_body["items"][0]["payload"]["reason"], "provider_error"
+        )

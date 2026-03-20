@@ -37,7 +37,12 @@ def upgrade() -> None:
             sa.Column("source", sa.String(length=64), nullable=True),
             sa.Column("request_id", sa.String(length=128), nullable=True),
             sa.Column("payload", sa.JSON(), nullable=True),
-            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.func.now(),
+                nullable=False,
+            ),
             sa.PrimaryKeyConstraint("id"),
         )
         existing_indexes: set[str] = set()
@@ -74,9 +79,15 @@ def downgrade() -> None:
 
     existing_indexes = _get_index_names(inspector, "account_event_logs")
     if "ix_account_event_logs_request_id" in existing_indexes:
-        op.drop_index("ix_account_event_logs_request_id", table_name="account_event_logs")
+        op.drop_index(
+            "ix_account_event_logs_request_id", table_name="account_event_logs"
+        )
     if "ix_account_event_logs_event_created" in existing_indexes:
-        op.drop_index("ix_account_event_logs_event_created", table_name="account_event_logs")
+        op.drop_index(
+            "ix_account_event_logs_event_created", table_name="account_event_logs"
+        )
     if "ix_account_event_logs_account_created" in existing_indexes:
-        op.drop_index("ix_account_event_logs_account_created", table_name="account_event_logs")
+        op.drop_index(
+            "ix_account_event_logs_account_created", table_name="account_event_logs"
+        )
     op.drop_table("account_event_logs")

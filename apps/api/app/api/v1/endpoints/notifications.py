@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error_from_exception
 from app.api.dependencies import get_current_account
 from app.db.models import Account
 from app.db.session import get_session
@@ -38,7 +39,10 @@ async def read_notifications(
         unread_only=unread_only,
     )
     return NotificationListResponse(
-        items=[NotificationResponse.model_validate(item, from_attributes=True) for item in items],
+        items=[
+            NotificationResponse.model_validate(item, from_attributes=True)
+            for item in items
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -71,7 +75,7 @@ async def read_notification_mark_read(
             notification_id=notification_id,
         )
     except NotificationNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
 
     await session.commit()
     await session.refresh(notification)

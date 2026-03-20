@@ -32,6 +32,7 @@ from app.db.session import get_session
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.main import create_app
 from app.services.admin_auth import create_admin
+from app.services.i18n import translate
 
 
 class DummyCache:
@@ -110,19 +111,31 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._admin_auth_service = admin_auth_service
-        self._original_bootstrap_username = admin_auth_service.settings.admin_bootstrap_username
-        self._original_bootstrap_password = admin_auth_service.settings.admin_bootstrap_password
-        self._original_bootstrap_email = admin_auth_service.settings.admin_bootstrap_email
-        self._original_bootstrap_full_name = admin_auth_service.settings.admin_bootstrap_full_name
+        self._original_bootstrap_username = (
+            admin_auth_service.settings.admin_bootstrap_username
+        )
+        self._original_bootstrap_password = (
+            admin_auth_service.settings.admin_bootstrap_password
+        )
+        self._original_bootstrap_email = (
+            admin_auth_service.settings.admin_bootstrap_email
+        )
+        self._original_bootstrap_full_name = (
+            admin_auth_service.settings.admin_bootstrap_full_name
+        )
         admin_auth_service.settings.admin_bootstrap_username = ""
         admin_auth_service.settings.admin_bootstrap_password = ""
         admin_auth_service.settings.admin_bootstrap_email = ""
         admin_auth_service.settings.admin_bootstrap_full_name = ""
 
         self._broadcasts_service = broadcasts_service
-        self._original_telegram_client_factory = broadcasts_service.get_telegram_notification_client
+        self._original_telegram_client_factory = (
+            broadcasts_service.get_telegram_notification_client
+        )
         self._fake_telegram_client = FakeTelegramClient()
-        broadcasts_service.get_telegram_notification_client = lambda: self._fake_telegram_client
+        broadcasts_service.get_telegram_notification_client = lambda: (
+            self._fake_telegram_client
+        )
 
         self.app = create_app()
 
@@ -140,15 +153,27 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         self._cache_module._cache = self._original_cache
-        self._admin_auth_service.settings.admin_bootstrap_username = self._original_bootstrap_username
-        self._admin_auth_service.settings.admin_bootstrap_password = self._original_bootstrap_password
-        self._admin_auth_service.settings.admin_bootstrap_email = self._original_bootstrap_email
-        self._admin_auth_service.settings.admin_bootstrap_full_name = self._original_bootstrap_full_name
-        self._broadcasts_service.get_telegram_notification_client = self._original_telegram_client_factory
+        self._admin_auth_service.settings.admin_bootstrap_username = (
+            self._original_bootstrap_username
+        )
+        self._admin_auth_service.settings.admin_bootstrap_password = (
+            self._original_bootstrap_password
+        )
+        self._admin_auth_service.settings.admin_bootstrap_email = (
+            self._original_bootstrap_email
+        )
+        self._admin_auth_service.settings.admin_bootstrap_full_name = (
+            self._original_bootstrap_full_name
+        )
+        self._broadcasts_service.get_telegram_notification_client = (
+            self._original_telegram_client_factory
+        )
         await self._engine.dispose()
         self._tmpdir.cleanup()
 
-    async def _create_admin_token(self, *, is_superuser: bool = True, username: str = "root") -> str:
+    async def _create_admin_token(
+        self, *, is_superuser: bool = True, username: str = "root"
+    ) -> str:
         async with self._session_factory() as session:
             admin = await create_admin(
                 session,
@@ -175,8 +200,16 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             session.add_all(
                 [
-                    Account(email="a@example.com", status=AccountStatus.ACTIVE, telegram_id=111001),
-                    Account(email="b@example.com", status=AccountStatus.ACTIVE, telegram_id=None),
+                    Account(
+                        email="a@example.com",
+                        status=AccountStatus.ACTIVE,
+                        telegram_id=111001,
+                    ),
+                    Account(
+                        email="b@example.com",
+                        status=AccountStatus.ACTIVE,
+                        telegram_id=None,
+                    ),
                     Account(
                         email="blocked@example.com",
                         status=AccountStatus.BLOCKED,
@@ -198,7 +231,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "name": "Spring promo",
                 "title": "Весеннее обновление",
-                "body_html": "<b>Скидка</b> на продление и <a href=\"https://example.com/pay\">ссылка</a>",
+                "body_html": '<b>Скидка</b> на продление и <a href="https://example.com/pay">ссылка</a>',
                 "content_type": "text",
                 "channels": ["in_app", "telegram"],
                 "buttons": [{"text": "Открыть", "url": "https://example.com/pay"}],
@@ -216,17 +249,28 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["buttons"][0]["text"], "Открыть")
 
         async with self._session_factory() as session:
-            self.assertEqual(await session.scalar(select(func.count()).select_from(Broadcast)), 1)
-            self.assertEqual(await session.scalar(select(func.count()).select_from(AdminActionLog)), 1)
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(Broadcast)), 1
+            )
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(AdminActionLog)),
+                1,
+            )
 
-    async def test_create_broadcast_draft_excludes_telegram_bot_blocked_accounts_from_telegram_estimate(self) -> None:
+    async def test_create_broadcast_draft_excludes_telegram_bot_blocked_accounts_from_telegram_estimate(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
         async with self._session_factory() as session:
             session.add_all(
                 [
-                    Account(email="active@example.com", status=AccountStatus.ACTIVE, telegram_id=111001),
+                    Account(
+                        email="active@example.com",
+                        status=AccountStatus.ACTIVE,
+                        telegram_id=111001,
+                    ),
                     Account(
                         email="bot-blocked@example.com",
                         status=AccountStatus.ACTIVE,
@@ -336,10 +380,70 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(delete_response.status_code, 204)
 
         async with self._session_factory() as session:
-            self.assertEqual(await session.scalar(select(func.count()).select_from(BroadcastAudiencePreset)), 0)
-            self.assertEqual(await session.scalar(select(func.count()).select_from(AdminActionLog)), 3)
+            self.assertEqual(
+                await session.scalar(
+                    select(func.count()).select_from(BroadcastAudiencePreset)
+                ),
+                0,
+            )
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(AdminActionLog)),
+                3,
+            )
 
-    async def test_estimate_broadcast_audience_manual_list_deduplicates_and_excludes_blocked(self) -> None:
+    async def test_update_broadcast_audience_preset_returns_error_code_when_missing(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.put(
+            "/api/v1/admin/broadcasts/audiences/999999",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Missing preset",
+                "description": None,
+                "audience": {
+                    "segment": "all",
+                    "exclude_blocked": True,
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate(
+                    "api.admin.errors.broadcast_audience_preset_not_found"
+                ),
+                "error_code": "admin_broadcast_audience_preset_not_found",
+            },
+        )
+
+    async def test_delete_broadcast_audience_preset_returns_error_code_when_missing(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.delete(
+            "/api/v1/admin/broadcasts/audiences/999999",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate(
+                    "api.admin.errors.broadcast_audience_preset_not_found"
+                ),
+                "error_code": "admin_broadcast_audience_preset_not_found",
+            },
+        )
+
+    async def test_estimate_broadcast_audience_manual_list_deduplicates_and_excludes_blocked(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         selected_by_all_identifiers = Account(
@@ -398,14 +502,21 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["estimated_in_app_recipients"], 3)
         self.assertEqual(body["estimated_telegram_recipients"], 2)
         self.assertEqual(body["audience"]["segment"], "manual_list")
-        self.assertEqual(body["audience"]["manual_account_ids"], [str(selected_by_all_identifiers.id)])
+        self.assertEqual(
+            body["audience"]["manual_account_ids"],
+            [str(selected_by_all_identifiers.id)],
+        )
         self.assertEqual(
             body["audience"]["manual_emails"],
             ["target@example.com", "email-match@example.com", "blocked@example.com"],
         )
-        self.assertEqual(body["audience"]["manual_telegram_ids"], [111001, 333003, 444004])
+        self.assertEqual(
+            body["audience"]["manual_telegram_ids"], [111001, 333003, 444004]
+        )
 
-    async def test_estimate_broadcast_audience_inactive_accounts_respects_last_seen_filters(self) -> None:
+    async def test_estimate_broadcast_audience_inactive_accounts_respects_last_seen_filters(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
@@ -468,7 +579,11 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             session.add_all(
                 [
-                    Account(email="active@example.com", status=AccountStatus.ACTIVE, telegram_id=111001),
+                    Account(
+                        email="active@example.com",
+                        status=AccountStatus.ACTIVE,
+                        telegram_id=111001,
+                    ),
                     Account(
                         email="expired@example.com",
                         status=AccountStatus.ACTIVE,
@@ -502,10 +617,17 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["audience"]["segment"], "expired")
 
         async with self._session_factory() as session:
-            self.assertEqual(await session.scalar(select(func.count()).select_from(Broadcast)), 0)
-            self.assertEqual(await session.scalar(select(func.count()).select_from(AdminActionLog)), 0)
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(Broadcast)), 0
+            )
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(AdminActionLog)),
+                0,
+            )
 
-    async def test_estimate_broadcast_audience_abandoned_checkout_uses_latest_direct_plan_payment(self) -> None:
+    async def test_estimate_broadcast_audience_abandoned_checkout_uses_latest_direct_plan_payment(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
@@ -624,7 +746,9 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["audience"]["pending_payment_older_than_minutes"], 30)
         self.assertEqual(body["audience"]["pending_payment_within_last_days"], 7)
 
-    async def test_estimate_broadcast_audience_expired_window_filters_old_subscriptions(self) -> None:
+    async def test_estimate_broadcast_audience_expired_window_filters_old_subscriptions(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
@@ -675,7 +799,9 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["audience"]["subscription_expired_from_days"], 30)
         self.assertEqual(body["audience"]["subscription_expired_to_days"], 90)
 
-    async def test_preview_broadcast_audience_returns_match_reasons_and_delivery_gaps(self) -> None:
+    async def test_preview_broadcast_audience_returns_match_reasons_and_delivery_gaps(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
@@ -699,7 +825,9 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async with self._session_factory() as session:
-            session.add_all([ready_account, missing_telegram_account, blocked_telegram_account])
+            session.add_all(
+                [ready_account, missing_telegram_account, blocked_telegram_account]
+            )
             await session.flush()
             session.add_all(
                 [
@@ -766,18 +894,37 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         ready_item = items_by_email["ready@example.com"]
         self.assertEqual(ready_item["delivery_channels"], ["telegram"])
         self.assertEqual(ready_item["delivery_notes"], [])
-        self.assertTrue(any("не завершена" in reason for reason in ready_item["match_reasons"]))
+        self.assertTrue(
+            any("не завершена" in reason for reason in ready_item["match_reasons"])
+        )
 
         missing_telegram_item = items_by_email["missing-telegram@example.com"]
         self.assertEqual(missing_telegram_item["delivery_channels"], [])
-        self.assertTrue(any("не привязан" in note for note in missing_telegram_item["delivery_notes"]))
-        self.assertTrue(any("не будет доставки" in note for note in missing_telegram_item["delivery_notes"]))
+        self.assertTrue(
+            any(
+                "не привязан" in note
+                for note in missing_telegram_item["delivery_notes"]
+            )
+        )
+        self.assertTrue(
+            any(
+                "не будет доставки" in note
+                for note in missing_telegram_item["delivery_notes"]
+            )
+        )
 
         blocked_telegram_item = items_by_email["blocked-telegram@example.com"]
         self.assertEqual(blocked_telegram_item["delivery_channels"], [])
-        self.assertTrue(any("бот заблокирован" in note for note in blocked_telegram_item["delivery_notes"]))
+        self.assertTrue(
+            any(
+                "бот заблокирован" in note
+                for note in blocked_telegram_item["delivery_notes"]
+            )
+        )
 
-    async def test_preview_manual_list_audience_returns_resolution_diagnostics(self) -> None:
+    async def test_preview_manual_list_audience_returns_resolution_diagnostics(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
         admin_id = uuid.uuid4()
@@ -894,7 +1041,9 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics["matched_accounts"], 3)
         self.assertEqual(diagnostics["final_accounts"], 1)
         self.assertEqual(diagnostics["unresolved_emails_count"], 1)
-        self.assertEqual(diagnostics["unresolved_emails_sample"], ["missing-manual@example.com"])
+        self.assertEqual(
+            diagnostics["unresolved_emails_sample"], ["missing-manual@example.com"]
+        )
         self.assertEqual(diagnostics["unresolved_telegram_ids_count"], 1)
         self.assertEqual(diagnostics["unresolved_telegram_ids_sample"], [999999])
         self.assertEqual(diagnostics["excluded_accounts_count"], 2)
@@ -905,8 +1054,13 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         }
         self.assertIn("blocked-manual-preview@example.com", excluded_by_email)
         self.assertIn("cooled-manual@example.com", excluded_by_email)
-        self.assertIn("blocked", excluded_by_email["blocked-manual-preview@example.com"]["reasons"])
-        self.assertIn("cooldown", excluded_by_email["cooled-manual@example.com"]["reasons"])
+        self.assertIn(
+            "blocked",
+            excluded_by_email["blocked-manual-preview@example.com"]["reasons"],
+        )
+        self.assertIn(
+            "cooldown", excluded_by_email["cooled-manual@example.com"]["reasons"]
+        )
 
     async def test_estimate_broadcast_audience_respects_cooldown_family(self) -> None:
         token = await self._create_admin_token()
@@ -1017,7 +1171,11 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             session.add_all(
                 [
-                    Account(email="active@example.com", status=AccountStatus.ACTIVE, telegram_id=111001),
+                    Account(
+                        email="active@example.com",
+                        status=AccountStatus.ACTIVE,
+                        telegram_id=111001,
+                    ),
                     Account(
                         email="expired@example.com",
                         status=AccountStatus.ACTIVE,
@@ -1073,7 +1231,251 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["estimated_telegram_recipients"], 1)
         self.assertEqual(body["image_url"], "https://example.com/banner.png")
 
-    async def test_test_send_broadcast_delivers_to_local_account_and_direct_telegram(self) -> None:
+    async def test_read_broadcast_returns_error_code_when_missing(self) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.get(
+            "/api/v1/admin/broadcasts/999999",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_not_found"),
+                "error_code": "admin_broadcast_not_found",
+            },
+        )
+
+    async def test_read_broadcast_run_returns_error_code_when_missing(self) -> None:
+        token = await self._create_admin_token()
+
+        response = await self.client.get(
+            "/api/v1/admin/broadcasts/runs/999999",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_run_not_found"),
+                "error_code": "admin_broadcast_run_not_found",
+            },
+        )
+
+    async def test_broadcast_draft_only_actions_return_error_codes(self) -> None:
+        token = await self._create_admin_token()
+
+        create_response = await self.client.post(
+            "/api/v1/admin/broadcasts",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Draft only conflicts",
+                "title": "Draft only",
+                "body_html": "Только draft",
+                "content_type": "text",
+                "channels": ["in_app"],
+                "buttons": [],
+                "audience": {"segment": "all", "exclude_blocked": True},
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        broadcast_id = create_response.json()["id"]
+
+        schedule_response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/schedule",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "scheduled_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+                "comment": "Поставить в очередь",
+                "idempotency_key": "broadcast-draft-only-schedule-1",
+            },
+        )
+        self.assertEqual(schedule_response.status_code, 200)
+
+        update_response = await self.client.put(
+            f"/api/v1/admin/broadcasts/{broadcast_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Updated after schedule",
+                "title": "Уже нельзя",
+                "body_html": "Обновление после schedule",
+                "content_type": "text",
+                "channels": ["in_app"],
+                "buttons": [],
+                "audience": {"segment": "all", "exclude_blocked": True},
+            },
+        )
+        self.assertEqual(update_response.status_code, 409)
+        self.assertEqual(
+            update_response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_edit_requires_draft"),
+                "error_code": "broadcast_edit_requires_draft",
+            },
+        )
+
+        delete_response = await self.client.delete(
+            f"/api/v1/admin/broadcasts/{broadcast_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(delete_response.status_code, 409)
+        self.assertEqual(
+            delete_response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_delete_requires_draft"),
+                "error_code": "broadcast_delete_requires_draft",
+            },
+        )
+
+        send_now_response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/send-now",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "comment": "Сразу после schedule",
+                "idempotency_key": "broadcast-draft-only-send-now-1",
+            },
+        )
+        self.assertEqual(send_now_response.status_code, 409)
+        self.assertEqual(
+            send_now_response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_launch_requires_draft"),
+                "error_code": "broadcast_launch_requires_draft",
+            },
+        )
+
+        reschedule_response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/schedule",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "scheduled_at": (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+                "comment": "Повторно в очередь",
+                "idempotency_key": "broadcast-draft-only-schedule-2",
+            },
+        )
+        self.assertEqual(reschedule_response.status_code, 409)
+        self.assertEqual(
+            reschedule_response.json(),
+            {
+                "detail": translate(
+                    "api.admin.errors.broadcast_schedule_requires_draft"
+                ),
+                "error_code": "broadcast_schedule_requires_draft",
+            },
+        )
+
+    async def test_broadcast_runtime_state_conflicts_return_error_codes(self) -> None:
+        token = await self._create_admin_token()
+
+        create_response = await self.client.post(
+            "/api/v1/admin/broadcasts",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Runtime conflicts",
+                "title": "State machine",
+                "body_html": "Проверка конфликтов",
+                "content_type": "text",
+                "channels": ["in_app"],
+                "buttons": [],
+                "audience": {"segment": "all", "exclude_blocked": True},
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        broadcast_id = create_response.json()["id"]
+
+        pause_response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/pause",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"comment": "Пауза", "idempotency_key": "broadcast-runtime-pause-1"},
+        )
+        self.assertEqual(pause_response.status_code, 409)
+        self.assertEqual(
+            pause_response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_pause_invalid_state"),
+                "error_code": "broadcast_pause_invalid_state",
+            },
+        )
+
+        resume_response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/resume",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "comment": "Продолжить",
+                "idempotency_key": "broadcast-runtime-resume-1",
+            },
+        )
+        self.assertEqual(resume_response.status_code, 409)
+        self.assertEqual(
+            resume_response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_resume_invalid_state"),
+                "error_code": "broadcast_resume_invalid_state",
+            },
+        )
+
+        cancel_response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/cancel",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "comment": "Отменить",
+                "idempotency_key": "broadcast-runtime-cancel-1",
+            },
+        )
+        self.assertEqual(cancel_response.status_code, 409)
+        self.assertEqual(
+            cancel_response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_cancel_invalid_state"),
+                "error_code": "broadcast_cancel_invalid_state",
+            },
+        )
+
+    async def test_schedule_broadcast_rejects_past_datetime_with_error_code(
+        self,
+    ) -> None:
+        token = await self._create_admin_token()
+
+        create_response = await self.client.post(
+            "/api/v1/admin/broadcasts",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "name": "Past schedule",
+                "title": "Поздно",
+                "body_html": "Слишком поздно",
+                "content_type": "text",
+                "channels": ["in_app"],
+                "buttons": [],
+                "audience": {"segment": "all", "exclude_blocked": True},
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+        broadcast_id = create_response.json()["id"]
+
+        response = await self.client.post(
+            f"/api/v1/admin/broadcasts/{broadcast_id}/schedule",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "scheduled_at": (datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+                "comment": "Прошедшее время",
+                "idempotency_key": "broadcast-schedule-past-1",
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_schedule_in_past"),
+                "error_code": "broadcast_schedule_in_past",
+            },
+        )
+
+    async def test_test_send_broadcast_delivers_to_local_account_and_direct_telegram(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         async with self._session_factory() as session:
@@ -1091,7 +1493,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "name": "Test send draft",
                 "title": "Тестовая рассылка",
-                "body_html": "<b>Проверка</b> и <a href=\"https://example.com/test\">ссылка</a>",
+                "body_html": '<b>Проверка</b> и <a href="https://example.com/test">ссылка</a>',
                 "content_type": "photo",
                 "image_url": "https://example.com/banner.png",
                 "channels": ["in_app", "telegram"],
@@ -1136,26 +1538,44 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(duplicate_response.status_code, 200)
-        self.assertEqual(duplicate_response.json()["audit_log_id"], body["audit_log_id"])
+        self.assertEqual(
+            duplicate_response.json()["audit_log_id"], body["audit_log_id"]
+        )
 
         self.assertEqual(len(self._fake_telegram_client.sent_photos), 2)
         self.assertEqual(len(self._fake_telegram_client.sent_messages), 0)
-        self.assertEqual(self._fake_telegram_client.sent_photos[0]["telegram_id"], 111001)
-        self.assertEqual(self._fake_telegram_client.sent_photos[1]["telegram_id"], 999888777)
+        self.assertEqual(
+            self._fake_telegram_client.sent_photos[0]["telegram_id"], 111001
+        )
+        self.assertEqual(
+            self._fake_telegram_client.sent_photos[1]["telegram_id"], 999888777
+        )
         self.assertEqual(
             self._fake_telegram_client.sent_photos[0]["reply_markup"],
-            {"inline_keyboard": [[{"text": "Открыть", "url": "https://example.com/test"}]]},
+            {
+                "inline_keyboard": [
+                    [{"text": "Открыть", "url": "https://example.com/test"}]
+                ]
+            },
         )
-        self.assertEqual(self._fake_telegram_client.sent_photos[0]["parse_mode"], "HTML")
-        self.assertIn("Тестовая рассылка", self._fake_telegram_client.sent_photos[0]["caption"])
+        self.assertEqual(
+            self._fake_telegram_client.sent_photos[0]["parse_mode"], "HTML"
+        )
+        self.assertIn(
+            "Тестовая рассылка", self._fake_telegram_client.sent_photos[0]["caption"]
+        )
 
         async with self._session_factory() as session:
             notifications = list(
                 (
                     await session.execute(
-                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                        select(Notification).where(
+                            Notification.type == NotificationType.BROADCAST
+                        )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 1)
             self.assertEqual(notifications[0].title, "Тестовая рассылка")
@@ -1163,11 +1583,18 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(notifications[0].action_label, "Открыть")
             self.assertEqual(notifications[0].action_url, "https://example.com/test")
             self.assertEqual(notifications[0].payload["content_type"], "photo")
-            self.assertEqual(notifications[0].payload["image_url"], "https://example.com/banner.png")
+            self.assertEqual(
+                notifications[0].payload["image_url"], "https://example.com/banner.png"
+            )
 
-            self.assertEqual(await session.scalar(select(func.count()).select_from(AdminActionLog)), 2)
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(AdminActionLog)),
+                2,
+            )
 
-    async def test_send_now_broadcast_creates_run_and_worker_delivers_runtime_targets(self) -> None:
+    async def test_send_now_broadcast_creates_run_and_worker_delivers_runtime_targets(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         async with self._session_factory() as session:
@@ -1225,9 +1652,11 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["latest_run"]["total_deliveries"], 3)
 
         async with self._session_factory() as session:
-            result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                session,
-                limit=20,
+            result = (
+                await self._broadcasts_service.process_pending_broadcast_deliveries(
+                    session,
+                    limit=20,
+                )
             )
             await session.commit()
 
@@ -1270,23 +1699,40 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self._fake_telegram_client.sent_messages), 0)
         self.assertEqual(
             self._fake_telegram_client.sent_photos[0]["reply_markup"],
-            {"inline_keyboard": [[{"text": "Открыть", "url": "https://example.com/runtime"}]]},
+            {
+                "inline_keyboard": [
+                    [{"text": "Открыть", "url": "https://example.com/runtime"}]
+                ]
+            },
         )
 
         async with self._session_factory() as session:
             notifications = list(
                 (
                     await session.execute(
-                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                        select(Notification).where(
+                            Notification.type == NotificationType.BROADCAST
+                        )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 2)
             self.assertEqual(notifications[0].payload["content_type"], "photo")
-            self.assertEqual(await session.scalar(select(func.count()).select_from(BroadcastRun)), 1)
-            self.assertEqual(await session.scalar(select(func.count()).select_from(BroadcastDelivery)), 3)
+            self.assertEqual(
+                await session.scalar(select(func.count()).select_from(BroadcastRun)), 1
+            )
+            self.assertEqual(
+                await session.scalar(
+                    select(func.count()).select_from(BroadcastDelivery)
+                ),
+                3,
+            )
 
-    async def test_send_now_broadcast_paid_before_not_active_now_targets_only_lapsed_payers(self) -> None:
+    async def test_send_now_broadcast_paid_before_not_active_now_targets_only_lapsed_payers(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
@@ -1355,7 +1801,10 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
                 "content_type": "text",
                 "channels": ["in_app", "telegram"],
                 "buttons": [],
-                "audience": {"segment": "paid_before_not_active_now", "exclude_blocked": True},
+                "audience": {
+                    "segment": "paid_before_not_active_now",
+                    "exclude_blocked": True,
+                },
             },
         )
         self.assertEqual(create_response.status_code, 201)
@@ -1378,28 +1827,38 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["latest_run"]["total_deliveries"], 2)
 
         async with self._session_factory() as session:
-            result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                session,
-                limit=20,
+            result = (
+                await self._broadcasts_service.process_pending_broadcast_deliveries(
+                    session,
+                    limit=20,
+                )
             )
             await session.commit()
 
         self.assertEqual(result.processed, 2)
         self.assertEqual(result.delivered, 2)
         self.assertEqual(len(self._fake_telegram_client.sent_messages), 1)
-        self.assertEqual(self._fake_telegram_client.sent_messages[0]["telegram_id"], 111001)
+        self.assertEqual(
+            self._fake_telegram_client.sent_messages[0]["telegram_id"], 111001
+        )
 
         async with self._session_factory() as session:
             notifications = list(
                 (
                     await session.execute(
-                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                        select(Notification).where(
+                            Notification.type == NotificationType.BROADCAST
+                        )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 1)
 
-    async def test_send_now_broadcast_manual_list_targets_only_selected_accounts(self) -> None:
+    async def test_send_now_broadcast_manual_list_targets_only_selected_accounts(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
 
         selected_by_email = Account(
@@ -1427,7 +1886,14 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async with self._session_factory() as session:
-            session.add_all([selected_by_email, selected_by_telegram, blocked_selected, non_selected])
+            session.add_all(
+                [
+                    selected_by_email,
+                    selected_by_telegram,
+                    blocked_selected,
+                    non_selected,
+                ]
+            )
             await session.commit()
 
         create_response = await self.client.post(
@@ -1443,7 +1909,10 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
                 "audience": {
                     "segment": "manual_list",
                     "exclude_blocked": True,
-                    "manual_emails": ["manual-email@example.com", "blocked-manual@example.com"],
+                    "manual_emails": [
+                        "manual-email@example.com",
+                        "blocked-manual@example.com",
+                    ],
                     "manual_telegram_ids": [222002],
                 },
             },
@@ -1470,28 +1939,38 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["latest_run"]["total_deliveries"], 3)
 
         async with self._session_factory() as session:
-            result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                session,
-                limit=20,
+            result = (
+                await self._broadcasts_service.process_pending_broadcast_deliveries(
+                    session,
+                    limit=20,
+                )
             )
             await session.commit()
 
         self.assertEqual(result.processed, 3)
         self.assertEqual(result.delivered, 3)
         self.assertEqual(len(self._fake_telegram_client.sent_messages), 1)
-        self.assertEqual(self._fake_telegram_client.sent_messages[0]["telegram_id"], 222002)
+        self.assertEqual(
+            self._fake_telegram_client.sent_messages[0]["telegram_id"], 222002
+        )
 
         async with self._session_factory() as session:
             notifications = list(
                 (
                     await session.execute(
-                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                        select(Notification).where(
+                            Notification.type == NotificationType.BROADCAST
+                        )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 2)
 
-    async def test_send_now_broadcast_inactive_paid_users_targets_only_dormant_payers(self) -> None:
+    async def test_send_now_broadcast_inactive_paid_users_targets_only_dormant_payers(
+        self,
+    ) -> None:
         token = await self._create_admin_token()
         now = datetime.now(UTC)
 
@@ -1525,7 +2004,9 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
 
         async with self._session_factory() as session:
-            session.add_all([dormant_paid, never_seen_paid, recent_paid, dormant_never_paid])
+            session.add_all(
+                [dormant_paid, never_seen_paid, recent_paid, dormant_never_paid]
+            )
             await session.flush()
             session.add_all(
                 [
@@ -1609,24 +2090,32 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["latest_run"]["total_deliveries"], 3)
 
         async with self._session_factory() as session:
-            result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                session,
-                limit=20,
+            result = (
+                await self._broadcasts_service.process_pending_broadcast_deliveries(
+                    session,
+                    limit=20,
+                )
             )
             await session.commit()
 
         self.assertEqual(result.processed, 3)
         self.assertEqual(result.delivered, 3)
         self.assertEqual(len(self._fake_telegram_client.sent_messages), 1)
-        self.assertEqual(self._fake_telegram_client.sent_messages[0]["telegram_id"], 111001)
+        self.assertEqual(
+            self._fake_telegram_client.sent_messages[0]["telegram_id"], 111001
+        )
 
         async with self._session_factory() as session:
             notifications = list(
                 (
                     await session.execute(
-                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                        select(Notification).where(
+                            Notification.type == NotificationType.BROADCAST
+                        )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 2)
 
@@ -1742,31 +2231,43 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["latest_run"]["total_deliveries"], 2)
 
         async with self._session_factory() as session:
-            result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                session,
-                limit=20,
+            result = (
+                await self._broadcasts_service.process_pending_broadcast_deliveries(
+                    session,
+                    limit=20,
+                )
             )
             await session.commit()
 
         self.assertEqual(result.processed, 2)
         self.assertEqual(result.delivered, 2)
         self.assertEqual(len(self._fake_telegram_client.sent_messages), 1)
-        self.assertEqual(self._fake_telegram_client.sent_messages[0]["telegram_id"], 222002)
+        self.assertEqual(
+            self._fake_telegram_client.sent_messages[0]["telegram_id"], 222002
+        )
 
         async with self._session_factory() as session:
             notifications = list(
                 (
                     await session.execute(
-                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                        select(Notification).where(
+                            Notification.type == NotificationType.BROADCAST
+                        )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 1)
 
     async def test_send_now_broadcast_defers_telegram_in_quiet_hours(self) -> None:
         token = await self._create_admin_token()
-        quiet_now = datetime(2026, 3, 19, 2, 30, tzinfo=self._broadcasts_service.BROADCAST_TZ)
-        active_now = datetime(2026, 3, 19, 9, 5, tzinfo=self._broadcasts_service.BROADCAST_TZ)
+        quiet_now = datetime(
+            2026, 3, 19, 2, 30, tzinfo=self._broadcasts_service.BROADCAST_TZ
+        )
+        active_now = datetime(
+            2026, 3, 19, 9, 5, tzinfo=self._broadcasts_service.BROADCAST_TZ
+        )
 
         async with self._session_factory() as session:
             session.add(
@@ -1815,9 +2316,11 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self._broadcasts_service._now_moscow = lambda: quiet_now
 
             async with self._session_factory() as session:
-                first_result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                    session,
-                    limit=20,
+                first_result = (
+                    await self._broadcasts_service.process_pending_broadcast_deliveries(
+                        session,
+                        limit=20,
+                    )
                 )
                 await session.commit()
 
@@ -1830,34 +2333,56 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
                 deliveries = list(
                     (
                         await session.execute(
-                            select(BroadcastDelivery).where(BroadcastDelivery.broadcast_id == broadcast_id)
+                            select(BroadcastDelivery).where(
+                                BroadcastDelivery.broadcast_id == broadcast_id
+                            )
                         )
-                    ).scalars().all()
+                    )
+                    .scalars()
+                    .all()
                 )
-                telegram_delivery = next(item for item in deliveries if item.channel == BroadcastChannel.TELEGRAM)
-                in_app_delivery = next(item for item in deliveries if item.channel == BroadcastChannel.IN_APP)
+                telegram_delivery = next(
+                    item
+                    for item in deliveries
+                    if item.channel == BroadcastChannel.TELEGRAM
+                )
+                in_app_delivery = next(
+                    item
+                    for item in deliveries
+                    if item.channel == BroadcastChannel.IN_APP
+                )
 
-                self.assertEqual(in_app_delivery.status, BroadcastDeliveryStatus.DELIVERED)
-                self.assertEqual(telegram_delivery.status, BroadcastDeliveryStatus.PENDING)
+                self.assertEqual(
+                    in_app_delivery.status, BroadcastDeliveryStatus.DELIVERED
+                )
+                self.assertEqual(
+                    telegram_delivery.status, BroadcastDeliveryStatus.PENDING
+                )
                 self.assertEqual(telegram_delivery.error_code, "quiet_hours")
                 self.assertIsNotNone(telegram_delivery.next_retry_at)
 
-                telegram_delivery.next_retry_at = datetime.now(UTC) - timedelta(minutes=1)
+                telegram_delivery.next_retry_at = datetime.now(UTC) - timedelta(
+                    minutes=1
+                )
                 await session.commit()
 
             self._broadcasts_service._now_moscow = lambda: active_now
 
             async with self._session_factory() as session:
-                second_result = await self._broadcasts_service.process_pending_broadcast_deliveries(
-                    session,
-                    limit=20,
+                second_result = (
+                    await self._broadcasts_service.process_pending_broadcast_deliveries(
+                        session,
+                        limit=20,
+                    )
                 )
                 await session.commit()
 
             self.assertEqual(second_result.processed, 1)
             self.assertEqual(second_result.delivered, 1)
             self.assertEqual(len(self._fake_telegram_client.sent_messages), 1)
-            self.assertEqual(self._fake_telegram_client.sent_messages[0]["telegram_id"], 111001)
+            self.assertEqual(
+                self._fake_telegram_client.sent_messages[0]["telegram_id"], 111001
+            )
         finally:
             self._broadcasts_service._now_moscow = original_now_moscow
 
@@ -1866,7 +2391,11 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._session_factory() as session:
             session.add(
-                Account(email="receiver@example.com", status=AccountStatus.ACTIVE, telegram_id=111001)
+                Account(
+                    email="receiver@example.com",
+                    status=AccountStatus.ACTIVE,
+                    telegram_id=111001,
+                )
             )
             await session.commit()
 
@@ -1919,7 +2448,10 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         cancel_response = await self.client.post(
             f"/api/v1/admin/broadcasts/{broadcast_id}/cancel",
             headers={"Authorization": f"Bearer {token}"},
-            json={"comment": "Отмена кампании", "idempotency_key": "broadcast-cancel-1"},
+            json={
+                "comment": "Отмена кампании",
+                "idempotency_key": "broadcast-cancel-1",
+            },
         )
         self.assertEqual(cancel_response.status_code, 200)
         self.assertEqual(cancel_response.json()["status"], "cancelled")
@@ -1946,7 +2478,10 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post(
             f"/api/v1/admin/broadcasts/{broadcast_id}/send-now",
             headers={"Authorization": f"Bearer {token}"},
-            json={"comment": "Не должно пройти", "idempotency_key": "broadcast-send-now-operator"},
+            json={
+                "comment": "Не должно пройти",
+                "idempotency_key": "broadcast-send-now-operator",
+            },
         )
         self.assertEqual(response.status_code, 403)
 
@@ -1968,9 +2503,13 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.status_code, 422)
-        detail = response.json()["detail"]
-        self.assertTrue(detail)
-        self.assertIn("unsupported telegram html tag", detail[0]["msg"])
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": translate("api.admin.errors.broadcast_validation_failed"),
+                "error_code": "admin_broadcast_validation_failed",
+            },
+        )
 
     async def test_list_broadcasts_returns_saved_items(self) -> None:
         token = await self._create_admin_token()

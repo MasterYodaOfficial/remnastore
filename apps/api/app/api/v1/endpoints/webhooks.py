@@ -13,7 +13,10 @@ from app.schemas.payment import (
     TelegramStarsPreCheckoutRequest,
     TelegramStarsPreCheckoutResponse,
 )
-from app.schemas.referral import TelegramReferralIntentRequest, TelegramReferralIntentResponse
+from app.schemas.referral import (
+    TelegramReferralIntentRequest,
+    TelegramReferralIntentResponse,
+)
 from app.services.payments import (
     PaymentConflictError,
     PaymentGatewayConfigurationError,
@@ -23,7 +26,10 @@ from app.services.payments import (
     process_yookassa_webhook,
     validate_telegram_stars_pre_checkout,
 )
-from app.services.referrals import ReferralCodeNotFoundError, record_telegram_referral_intent
+from app.services.referrals import (
+    ReferralCodeNotFoundError,
+    record_telegram_referral_intent,
+)
 from app.services.remnawave_webhooks import (
     RemnawaveWebhookPayloadError,
     process_remnawave_webhook,
@@ -57,7 +63,10 @@ def _verify_remnawave_signature(raw_body: bytes, signature: str | None) -> None:
             detail="invalid Remnawave signature",
         )
 
-def _payment_webhook_response(result: PaymentWebhookProcessResult) -> PaymentWebhookProcessResponse:
+
+def _payment_webhook_response(
+    result: PaymentWebhookProcessResult,
+) -> PaymentWebhookProcessResponse:
     return PaymentWebhookProcessResponse(
         payment_id=result.payment_id,
         provider_payment_id=result.provider_payment_id,
@@ -134,7 +143,10 @@ async def yookassa_payments_webhook(
     return _payment_webhook_response(result)
 
 
-@router.post("/payments/telegram-stars/pre-checkout", response_model=TelegramStarsPreCheckoutResponse)
+@router.post(
+    "/payments/telegram-stars/pre-checkout",
+    response_model=TelegramStarsPreCheckoutResponse,
+)
 async def telegram_stars_pre_checkout(
     payload: TelegramStarsPreCheckoutRequest,
     request: Request,
@@ -285,7 +297,9 @@ async def remnawave_webhook(
     except HTTPException as exc:
         log_audit_event(
             "webhook.remnawave",
-            outcome="denied" if exc.status_code == status.HTTP_401_UNAUTHORIZED else "error",
+            outcome="denied"
+            if exc.status_code == status.HTTP_401_UNAUTHORIZED
+            else "error",
             category="security",
             reason=str(exc.detail),
             **request_context,
@@ -319,7 +333,9 @@ async def remnawave_webhook(
         handled=result.handled,
         processed=result.processed,
         account_id=result.account_id,
-        notification_types=",".join(notification_type.value for notification_type in result.notification_types),
+        notification_types=",".join(
+            notification_type.value for notification_type in result.notification_types
+        ),
         **request_context,
     )
     return {
@@ -329,5 +345,7 @@ async def remnawave_webhook(
         "handled": result.handled,
         "processed": result.processed,
         "account_id": str(result.account_id) if result.account_id is not None else None,
-        "notification_types": [notification_type.value for notification_type in result.notification_types],
+        "notification_types": [
+            notification_type.value for notification_type in result.notification_types
+        ],
     }

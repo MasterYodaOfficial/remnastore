@@ -26,14 +26,22 @@ class SubscriptionGrant(Base):
     payment_id: Mapped[int | None] = mapped_column(
         ForeignKey("payments.id", ondelete="RESTRICT"),
     )
-    purchase_source: Mapped[str] = mapped_column(String(32), nullable=False, default="direct_payment")
+    purchase_source: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="direct_payment"
+    )
     reference_type: Mapped[str | None] = mapped_column(String(64))
     reference_id: Mapped[str | None] = mapped_column(String(128))
     plan_code: Mapped[str] = mapped_column(String(64), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     duration_days: Mapped[int] = mapped_column(nullable=False)
-    base_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    target_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    base_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    target_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )

@@ -106,8 +106,13 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
 
         if parsed.scope == "plan" and parsed.action == "open" and parsed.value:
             screen_params = {"plan_code": parsed.value}
-            if session is not None and session.screen_params.get("plan_code") == parsed.value:
-                promo_code = _normalize_promo_code(session.screen_params.get("promo_code"))
+            if (
+                session is not None
+                and session.screen_params.get("plan_code") == parsed.value
+            ):
+                promo_code = _normalize_promo_code(
+                    session.screen_params.get("promo_code")
+                )
                 if promo_code:
                     screen_params["promo_code"] = promo_code
             await present_menu(
@@ -172,7 +177,11 @@ async def handle_menu_callback(callback: CallbackQuery, state: FSMContext) -> No
                 )
             return
 
-        if parsed.scope == "pay" and parsed.action in {"stars", "yookassa"} and parsed.value:
+        if (
+            parsed.scope == "pay"
+            and parsed.action in {"stars", "yookassa"}
+            and parsed.value
+        ):
             provider = "telegram_stars" if parsed.action == "stars" else "yookassa"
             _, error_text = await create_plan_payment_and_render(
                 callback.bot,
@@ -219,7 +228,9 @@ async def handle_plan_promo_code_message(message: Message, state: FSMContext) ->
     data = await state.get_data()
     plan_code = str(data.get("plan_code") or "")
     if not promo_code:
-        await message.answer(translate("bot.menu.messages.enter_promo_code", locale=locale))
+        await message.answer(
+            translate("bot.menu.messages.enter_promo_code", locale=locale)
+        )
         return
 
     await state.clear()

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Account, AdminActionLog, AdminActionType, SubscriptionGrant
 from app.integrations.remnawave import get_remnawave_gateway
 from app.services.account_events import append_account_event
+from app.services.i18n import translate
 from app.services.ledger import clear_account_cache
 from app.services.plans import SubscriptionPlan, get_subscription_plan
 from app.services.purchases import (
@@ -33,6 +34,7 @@ class AdminSubscriptionServiceError(Exception):
 
 
 class AdminSubscriptionCommentRequiredError(AdminSubscriptionServiceError):
+    code = "admin_comment_required"
     pass
 
 
@@ -46,7 +48,7 @@ class AdminSubscriptionGrantResult:
 def _normalize_required_text(value: str, *, field_name: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise PurchaseConflictError(f"{field_name} is required")
+        raise _purchase_conflict("idempotency_required")
     return normalized
 
 
@@ -55,6 +57,14 @@ def _normalize_required_comment(comment: str) -> str:
     if not normalized:
         raise AdminSubscriptionCommentRequiredError("admin comment is required")
     return normalized
+
+
+def _purchase_error(key: str) -> str:
+    return translate(f"api.purchases.errors.{key}")
+
+
+def _purchase_conflict(key: str) -> PurchaseConflictError:
+    return PurchaseConflictError(_purchase_error(key), code=key)
 
 
 async def _get_admin_action_log_by_idempotency_key(
@@ -81,13 +91,13 @@ def _validate_existing_manual_grant(
     plan: SubscriptionPlan,
 ) -> None:
     if grant.account_id != account_id:
-        raise PurchaseConflictError("idempotency key already belongs to another account")
+        raise _purchase_conflict("idempotency_account_conflict")
     if grant.plan_code != plan.code:
-        raise PurchaseConflictError("idempotency key already used for another plan")
+        raise _purchase_conflict("idempotency_plan_conflict")
     if grant.amount != 0 or grant.currency != "RUB":
-        raise PurchaseConflictError("idempotency key already used for another grant amount")
+        raise _purchase_conflict("idempotency_amount_conflict")
     if grant.duration_days != plan.duration_days:
-        raise PurchaseConflictError("idempotency key already used for another duration")
+        raise _purchase_conflict("idempotency_duration_conflict")
 
 
 def _validate_existing_audit_log(
@@ -99,15 +109,15 @@ def _validate_existing_audit_log(
     comment: str,
 ) -> None:
     if audit_log.admin_id != admin_id:
-        raise PurchaseConflictError("idempotency key already belongs to another admin")
+        raise _purchase_conflict("idempotency_admin_conflict")
     if audit_log.target_account_id != account_id:
-        raise PurchaseConflictError("idempotency key already belongs to another account")
+        raise _purchase_conflict("idempotency_account_conflict")
     if (audit_log.comment or "") != comment:
-        raise PurchaseConflictError("idempotency key already used with another comment")
+        raise _purchase_conflict("idempotency_comment_conflict")
 
     payload = audit_log.payload or {}
     if payload.get("plan_code") != plan_code:
-        raise PurchaseConflictError("idempotency key already used for another plan")
+        raise _purchase_conflict("idempotency_plan_conflict")
 
 
 def _build_audit_payload(
@@ -154,7 +164,7 @@ async def _load_existing_result(
         for_update=True,
     )
     if audit_log is None:
-        raise PurchaseConflictError("admin audit log is missing for existing subscription grant")
+        raise _purchase_conflict("manual_grant_inconsistent_state")
     _validate_existing_audit_log(
         audit_log,
         admin_id=admin_id,
@@ -191,7 +201,7 @@ async def _recover_existing_result(
     )
     if existing_result is not None:
         return existing_result
-    raise PurchaseConflictError(error_message)
+    raise _purchase_conflict("manual_grant_inconsistent_state")
 
 
 async def grant_subscription_manually(

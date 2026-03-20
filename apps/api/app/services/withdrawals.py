@@ -8,7 +8,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import Account, AccountStatus, LedgerEntryType, Withdrawal, WithdrawalStatus
+from app.db.models import (
+    Account,
+    AccountStatus,
+    LedgerEntryType,
+    Withdrawal,
+    WithdrawalStatus,
+)
 from app.db.models.withdrawal import WithdrawalDestinationType
 from app.services.account_events import append_account_event
 from app.services.i18n import translate
@@ -17,7 +23,11 @@ from app.services.notifications import notify_withdrawal_created
 
 
 class WithdrawalServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class WithdrawalCommentRequiredError(WithdrawalServiceError):
@@ -25,23 +35,23 @@ class WithdrawalCommentRequiredError(WithdrawalServiceError):
 
 
 class WithdrawalDestinationRequiredError(WithdrawalServiceError):
-    pass
+    default_code = "destination_required"
 
 
 class WithdrawalAmountTooLowError(WithdrawalServiceError):
-    pass
+    default_code = "minimum_amount"
 
 
 class WithdrawalInvalidCardError(WithdrawalServiceError):
-    pass
+    default_code = "invalid_card"
 
 
 class WithdrawalInsufficientAvailableError(WithdrawalServiceError):
-    pass
+    default_code = "insufficient_available"
 
 
 class WithdrawalAccountBlockedError(WithdrawalServiceError):
-    pass
+    default_code = "account_blocked"
 
 
 def _withdrawal_error(key: str, **kwargs: object) -> str:
@@ -55,7 +65,9 @@ class WithdrawalAvailability:
     paid_amount: int
 
 
-def _normalize_required_text(value: str, *, error_type: type[Exception], message: str) -> str:
+def _normalize_required_text(
+    value: str, *, error_type: type[Exception], message: str
+) -> str:
     normalized = value.strip()
     if not normalized:
         raise error_type(message)
@@ -127,7 +139,9 @@ def _get_minimum_withdrawal_amount_rub() -> int:
     return max(1, int(settings.min_withdrawal_amount_rub))
 
 
-async def _load_account_for_update(session: AsyncSession, account_id: uuid.UUID) -> Account:
+async def _load_account_for_update(
+    session: AsyncSession, account_id: uuid.UUID
+) -> Account:
     result = await session.execute(
         select(Account).where(Account.id == account_id).with_for_update()
     )
@@ -173,7 +187,9 @@ async def get_withdrawal_availability(
         0,
         int(account.referral_earnings) - active_requested_amount - paid_amount,
     )
-    available_for_withdraw = max(0, min(int(account.balance), remaining_referral_earnings))
+    available_for_withdraw = max(
+        0, min(int(account.balance), remaining_referral_earnings)
+    )
     return WithdrawalAvailability(
         available_for_withdraw=available_for_withdraw,
         active_requested_amount=active_requested_amount,
@@ -195,7 +211,9 @@ async def create_withdrawal_request(
 
     minimum_amount_rub = _get_minimum_withdrawal_amount_rub()
     if amount < minimum_amount_rub:
-        raise WithdrawalAmountTooLowError(_withdrawal_error("minimum_amount", amount=minimum_amount_rub))
+        raise WithdrawalAmountTooLowError(
+            _withdrawal_error("minimum_amount", amount=minimum_amount_rub)
+        )
 
     normalized_destination_value = normalize_withdrawal_destination_value(
         destination_type=destination_type,
@@ -209,7 +227,9 @@ async def create_withdrawal_request(
 
     availability = await get_withdrawal_availability(session, account=account)
     if amount > availability.available_for_withdraw:
-        raise WithdrawalInsufficientAvailableError(_withdrawal_error("insufficient_available"))
+        raise WithdrawalInsufficientAvailableError(
+            _withdrawal_error("insufficient_available")
+        )
 
     withdrawal = Withdrawal(
         account_id=account.id,
@@ -265,7 +285,9 @@ async def get_account_withdrawals(
     offset: int,
 ) -> tuple[list[Withdrawal], int]:
     total = await session.scalar(
-        select(func.count()).select_from(Withdrawal).where(Withdrawal.account_id == account_id)
+        select(func.count())
+        .select_from(Withdrawal)
+        .where(Withdrawal.account_id == account_id)
     )
     result = await session.execute(
         select(Withdrawal)

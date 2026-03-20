@@ -2,10 +2,11 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import ApiError, api_error, api_error_from_exception
 from app.core.audit import build_request_audit_context, log_audit_event
 from app.db.session import get_session
 from app.schemas.account import AccountResponse
@@ -39,31 +40,32 @@ class LinkBrowserConfirmRequest(BaseModel):
     telegram_id: int
 
 
-def _link_token_http_error(exc: Exception) -> HTTPException:
+def _link_token_http_error(exc: Exception) -> ApiError:
     if isinstance(exc, LinkTokenNotFoundError):
-        return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=translate("api.linking.errors.token_not_found"),
+        return api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.linking.errors.token_not_found"),
+            error_code="token_not_found",
         )
     if isinstance(exc, LinkTokenExpiredError):
-        return HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.token_expired"),
+        return api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.token_expired"),
+            error_code="token_expired",
         )
     if isinstance(exc, LinkTokenAlreadyConsumedError):
-        return HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.token_already_used"),
+        return api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.token_already_used"),
+            error_code="token_already_used",
         )
     if isinstance(exc, LinkTokenTypeMismatchError):
-        return HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=translate("api.linking.errors.token_type_invalid"),
+        return api_error(
+            status.HTTP_400_BAD_REQUEST,
+            translate("api.linking.errors.token_type_invalid"),
+            error_code="token_type_invalid",
         )
-    return HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=str(exc),
-    )
+    return api_error_from_exception(status.HTTP_400_BAD_REQUEST, exc)
 
 
 @router.post("/link-telegram-confirm", response_model=AccountResponse)
@@ -117,9 +119,11 @@ async def confirm_telegram_link(
             telegram_id=payload.telegram_id,
             **request_context,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+        error_code = "account_not_found" if isinstance(exc, ValueError) else None
+        raise api_error_from_exception(
+            status.HTTP_400_BAD_REQUEST,
+            exc,
+            error_code=error_code,
         ) from exc
 
     mark_link_token_consumed(token)
@@ -143,7 +147,8 @@ async def confirm_browser_link(
 ) -> AccountResponse:
     """Legacy endpoint kept only to fail explicitly for deprecated bot-only flow."""
     del payload, session
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=translate("api.linking.errors.browser_complete_in_browser"),
+    raise api_error(
+        status.HTTP_400_BAD_REQUEST,
+        translate("api.linking.errors.browser_complete_in_browser"),
+        error_code="browser_complete_in_browser",
     )

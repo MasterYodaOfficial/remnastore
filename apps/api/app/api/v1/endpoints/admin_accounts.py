@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error, api_error_from_exception
 from app.api.dependencies import get_current_admin
 from app.core.audit import build_request_audit_context, log_audit_event
 from app.db.models import Account, Admin
@@ -51,6 +52,7 @@ from app.services.ledger import (
 )
 from app.services.plans import SubscriptionPlanError, get_subscription_plans
 from app.services.purchases import PurchaseConflictError, RemnawaveSyncError
+from app.services.i18n import translate
 
 
 router = APIRouter()
@@ -63,9 +65,9 @@ async def list_admin_subscription_plans(
     try:
         plans = get_subscription_plans()
     except SubscriptionPlanError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            exc,
         ) from exc
 
     return [
@@ -130,7 +132,9 @@ async def search_account_event_logs(
         offset=offset,
     )
     return AdminGlobalAccountEventLogHistoryResponse(
-        items=[AdminGlobalAccountEventLogResponse.model_validate(item) for item in items],
+        items=[
+            AdminGlobalAccountEventLogResponse.model_validate(item) for item in items
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -145,7 +149,11 @@ async def read_account_detail(
 ) -> AdminAccountDetailResponse:
     detail = await get_admin_account_detail(session, account_id=account_id)
     if detail is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.admin.errors.account_not_found"),
+            error_code="admin_account_not_found",
+        )
     return AdminAccountDetailResponse.model_validate(detail, from_attributes=True)
 
 
@@ -166,7 +174,11 @@ async def read_account_event_logs(
 ) -> AdminAccountEventLogHistoryResponse:
     account = await session.get(Account, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.admin.errors.account_not_found"),
+            error_code="admin_account_not_found",
+        )
 
     items, total = await get_admin_account_event_logs(
         session,
@@ -203,7 +215,11 @@ async def read_account_ledger_entries(
 ) -> AdminAccountLedgerHistoryResponse:
     account = await session.get(Account, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.admin.errors.account_not_found"),
+            error_code="admin_account_not_found",
+        )
 
     items, total = await get_account_ledger_history(
         session,
@@ -237,7 +253,11 @@ async def adjust_account_balance(
     request_context = build_request_audit_context(request)
     account = await session.get(Account, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.admin.errors.account_not_found"),
+            error_code="admin_account_not_found",
+        )
 
     try:
         entry = await admin_adjust_balance(
@@ -259,7 +279,12 @@ async def adjust_account_balance(
             amount=payload.amount,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.comment_required"),)
+        raise api_error_from_exception(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            exc,
+            error_code="admin_comment_required",
+        ) from exc
     except InsufficientFundsError as exc:
         log_audit_event(
             "admin.balance_adjustment",
@@ -271,12 +296,14 @@ async def adjust_account_balance(
             amount=payload.amount,
             **request_context,
         )
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
 
     return AdminBalanceAdjustmentResponse(
         account_id=account.id,
         balance=account.balance,
-        ledger_entry=AdminAccountLedgerEntryResponse.model_validate(entry, from_attributes=True),
+        ledger_entry=AdminAccountLedgerEntryResponse.model_validate(
+            entry, from_attributes=True
+        ),
     )
 
 
@@ -292,7 +319,11 @@ async def change_status(
 ) -> AdminAccountStatusChangeResponse:
     account = await session.get(Account, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.admin.errors.account_not_found"),
+            error_code="admin_account_not_found",
+        )
 
     try:
         result = await change_account_status(
@@ -304,9 +335,14 @@ async def change_status(
             idempotency_key=payload.idempotency_key,
         )
     except AdminAccountStatusCommentRequiredError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.comment_required"),)
+        raise api_error_from_exception(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            exc,
+        ) from exc
     except AdminAccountStatusConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.account_status_conflict"),)
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
 
     return AdminAccountStatusChangeResponse(
         account_id=result.account.id,
@@ -328,7 +364,11 @@ async def grant_account_subscription(
 ) -> AdminSubscriptionGrantResponse:
     account = await session.get(Account, account_id)
     if account is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account not found")
+        raise api_error(
+            status.HTTP_404_NOT_FOUND,
+            translate("api.admin.errors.account_not_found"),
+            error_code="admin_account_not_found",
+        )
 
     try:
         result = await grant_subscription_manually(
@@ -340,13 +380,18 @@ async def grant_account_subscription(
             idempotency_key=payload.idempotency_key,
         )
     except AdminSubscriptionCommentRequiredError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.comment_required"),)
+        raise api_error_from_exception(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            exc,
+            error_code="admin_comment_required",
+        ) from exc
     except SubscriptionPlanError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except PurchaseConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except RemnawaveSyncError as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_502_BAD_GATEWAY, exc) from exc
 
     return AdminSubscriptionGrantResponse(
         account_id=result.account.id,

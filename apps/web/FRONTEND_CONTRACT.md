@@ -59,7 +59,12 @@ Frontend не является источником истины для:
 - `apps/web/src/app/components/PlansPage.tsx` — экран тарифов
 - `apps/web/src/app/components/ReferralPage.tsx` — экран рефералов
 - `apps/web/src/app/components/SettingsPage.tsx` — настройки, тема, account linking actions
+- `apps/web/src/app/components/NotificationsPage.tsx` — notification center
+- `apps/web/src/app/components/PendingPaymentsPage.tsx` — активные и resumable оплаты
+- `apps/web/src/app/components/BalanceHistoryPage.tsx` — история баланса и ledger UI
+- `apps/web/src/app/lib/api-errors.ts` — code-first маппинг `error_code -> translation key`
 - `apps/web/utils/supabase/client.ts` — конфигурация Supabase клиента
+- `apps/web/playwright.config.ts` и `apps/web/e2e/*.e2e.ts` — browser smoke и cross-surface проверки
 
 ## Денежный контракт
 
@@ -224,6 +229,32 @@ Query params:
 - `expires_at`
 - `finalized_at`
 
+`GET /api/v1/payments`
+
+Назначение:
+- получить список backend payment attempt для экрана активных оплат
+- использовать с `active_only=true`, чтобы показывать только живые `created/pending/requires_action` попытки
+
+Query params:
+- `active_only`
+- `limit`
+- `offset`
+
+Ожидаемые поля `items[*]`:
+- `id`
+- `provider`
+- `flow_type`
+- `status`
+- `amount`
+- `currency`
+- `provider_payment_id`
+- `plan_code`
+- `description`
+- `confirmation_url`
+- `expires_at`
+- `finalized_at`
+- `created_at`
+
 `POST /api/v1/subscriptions/wallet/plans/{plan_code}`
 
 Назначение:
@@ -258,6 +289,35 @@ Query params:
 - в обычном браузере кнопка должна открывать `subscription_url` в новом окне
 - в Telegram Mini App кнопка должна делать переход в этом же окне через `window.location.assign(subscription_url)`
 - если `subscription_url` пустой, кнопка должна быть disabled или показывать понятную ошибку
+
+### История баланса
+
+`GET /api/v1/ledger/entries`
+
+Назначение:
+- получить историю денежных операций для отдельного `ledger` / `balance history` экрана
+
+Query params:
+- `limit`
+- `offset`
+
+Ожидаемые поля ответа:
+- `items`
+- `total`
+- `limit`
+- `offset`
+
+Ожидаемые поля `items[*]`:
+- `id`
+- `entry_type`
+- `amount`
+- `currency`
+- `balance_before`
+- `balance_after`
+- `reference_type`
+- `reference_id`
+- `comment`
+- `created_at`
 
 ### Рефералы
 
@@ -476,6 +536,35 @@ Query params:
 Тело запроса:
 - `link_token`
 
+### Ошибки и transport contract
+
+Для user-facing business endpoint-ов frontend ожидает backend-ответ вида:
+- `detail`
+- `error_code`
+- `error_params` опционально
+
+Текущий обязательный code-first contract уже действует для критичных `web` flow:
+- `POST /api/v1/auth/telegram/webapp`
+- `POST /api/v1/subscriptions/trial`
+- `POST /api/v1/promos/quote`
+- `POST /api/v1/promos/redeem`
+- `POST /api/v1/payments/yookassa/topup`
+- `POST /api/v1/payments/yookassa/plans/{plan_code}`
+- `POST /api/v1/payments/telegram-stars/plans/{plan_code}`
+- `POST /api/v1/subscriptions/wallet/plans/{plan_code}`
+- `POST /api/v1/referrals/claim`
+- `POST /api/v1/notifications/{id}/read`
+- `POST /api/v1/withdrawals`
+- `POST /api/v1/accounts/link-telegram`
+- `POST /api/v1/accounts/link-browser`
+- `POST /api/v1/accounts/link-browser-complete`
+
+Правила frontend:
+- сначала парсить `error_code/error_params` через `parseApiErrorPayload`
+- потом маппить `error_code -> translation key`
+- `detail` использовать только как fallback для legacy или пока не покрытых endpoint-ов
+- для параметризованных ошибок вроде `minimum_amount` использовать `error_params`, а не парсинг строки
+
 ## Текущие пользовательские flow
 
 ### Browser login
@@ -524,14 +613,14 @@ Query params:
 
 ## Ограничения текущего состояния
 
-На сегодня frontend еще не переведен полностью на новый коммерческий backend flow.
+На сегодня frontend уже переведен на новый backend flow для browser auth, Telegram auth, trial, promo, topup, plan purchase, notifications, withdrawals и account linking.
 
-Сейчас в интерфейсе заглушками остаются:
-- вывод средств
-
-При этом backend API для выводов уже существует; заглушкой остается именно frontend-экран и пользовательский flow в UI.
-
-Если действие еще не перенесено на новый API, UI должен явно это показывать и не симулировать успешную бизнес-операцию.
+Главные текущие ограничения уже другие:
+- `apps/web/src/app/App.tsx` все еще остается крупным orchestration-файлом и требует дальнейшей декомпозиции
+- новый `error_code/error_params` contract гарантирован для критичных `web` flow, но еще не для всех backend endpoint-ов
+- `POST /api/v1/notifications/read-all` по-прежнему не рассматривается как отдельный code-first endpoint и живет на общем fallback transport
+- единый верхнеуровневый `LocaleProvider` / locale-state contract пока не оформлен
+- Telegram Mini App dependency stack все еще живет на `@telegram-apps/*`; отдельная миграция на более стабильный maintenance track не входит в runtime-contract этого файла
 
 ## Локальные правила разработки
 
@@ -557,6 +646,7 @@ Frontend использует такие переменные:
 - `VITE_SUPABASE_URL` — URL проекта Supabase
 - `VITE_SUPABASE_ANON_KEY` — публичный anon key Supabase
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота для browser login entrypoint
+- `VITE_SUPPORT_TELEGRAM_URL` — ссылка на support chat / support contact action
 
 ## OAuth и Telegram setup
 
@@ -600,11 +690,36 @@ npm run build
 - пройти login через Google или email
 - проверить загрузку `GET /api/v1/bootstrap/me`
 - проверить баланс, профиль и настройки
+- проверить `notifications`, `pending payments` и `balance history`
+- проверить topup через YooKassa redirect
+- проверить покупку тарифа через `wallet` и/или payment provider
+- проверить создание `withdrawal request`
+- проверить promo apply / redeem
 - проверить `Browser -> Telegram`
 - открыть Mini App в Telegram
 - проверить Telegram login
 - проверить `Telegram -> Browser`
 - проверить mobile layout, safe areas и нижнюю навигацию
+
+Автоматический baseline smoke:
+
+```bash
+cd apps/web
+npm run lint
+npm run test
+npm run typecheck
+npm run test:e2e
+```
+
+Текущий `Playwright` smoke покрывает:
+- browser auth
+- notifications
+- promo deep link
+- topup redirect flow
+- withdrawal request flow
+- `Browser -> Telegram`
+- `Telegram -> Browser`
+- cross-surface linking sanity check
 
 ## Frontend progress
 
@@ -620,19 +735,24 @@ npm run build
 - [x] Светлая и темная тема
 - [x] Mobile shell с фиксированными header и bottom navigation
 - [x] Базовые экраны: профиль, тарифы, рефералы, настройки
+- [x] Реальное пополнение баланса через новый API
+- [x] Реальная покупка тарифа через новый API
+- [x] Реальная активация trial через новый API
+- [x] Реальный вывод средств через новый API
+- [x] Детальный referral summary из backend
+- [x] Центр уведомлений
+- [x] Экран активных оплат
+- [x] Экран истории операций и ledger UI
+- [x] FAQ и policy pages с реальным контентом
+- [x] Экран выдачи подписки и конфигов через `subscription_url`
+- [x] Отдельный frontend smoke-suite / `Playwright` e2e tests
+- [x] Code-first обработка `error_code/error_params` для критичных `web` flow
 
 ### Еще не сделано
 
-- [ ] Реальное пополнение баланса через новый API
-- [ ] Реальная покупка тарифа через новый API
-- [x] Реальная активация trial через новый API
-- [ ] Реальный вывод средств через новый API
-- [ ] Детальный список рефералов из backend
-- [ ] Экран истории операций и ledger UI
-- [x] Центр уведомлений
-- [x] FAQ и policy pages с реальным контентом
-- [x] Экран выдачи подписки и конфигов
-- [ ] Отдельный frontend smoke-suite или web e2e tests
+- [ ] Полный системный rollout `error_code/error_params` на все backend endpoint-ы, которые теоретически может дергать `web`
+- [ ] Явный `LocaleProvider` / единый locale-state contract
+- [ ] Дальнейшая декомпозиция `App.tsx` на более узкие runtime-модули
 
 ## Атрибуция и внешние материалы
 

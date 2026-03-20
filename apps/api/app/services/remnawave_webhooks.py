@@ -11,11 +11,21 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, Notification, NotificationType
-from app.integrations.remnawave.models import RemnawaveWebhookEnvelope, RemnawaveWebhookUserData
+from app.integrations.remnawave.models import (
+    RemnawaveWebhookEnvelope,
+    RemnawaveWebhookUserData,
+)
 from app.services.account_events import append_account_event
 from app.services.ledger import clear_account_cache
-from app.services.notifications import notify_subscription_expired, notify_subscription_expiring
-from app.services.purchases import clear_remote_subscription_snapshot, normalize_datetime, utcnow
+from app.services.notifications import (
+    notify_subscription_expired,
+    notify_subscription_expiring,
+)
+from app.services.purchases import (
+    clear_remote_subscription_snapshot,
+    normalize_datetime,
+    utcnow,
+)
 
 
 USER_EXPIRING_EVENT_DAYS = {
@@ -67,7 +77,9 @@ def parse_remnawave_webhook_payload(raw_body: bytes) -> RemnawaveWebhookEnvelope
     return envelope
 
 
-def parse_remnawave_webhook_user_data(envelope: RemnawaveWebhookEnvelope) -> RemnawaveWebhookUserData:
+def parse_remnawave_webhook_user_data(
+    envelope: RemnawaveWebhookEnvelope,
+) -> RemnawaveWebhookUserData:
     data = envelope.data
     if isinstance(data, str):
         try:
@@ -176,8 +188,7 @@ async def _handle_subscription_expired_event(
 
 USER_EVENT_HANDLERS: dict[str, UserWebhookHandler] = {
     **{
-        event: _handle_subscription_expiring_event
-        for event in USER_EXPIRING_EVENT_DAYS
+        event: _handle_subscription_expiring_event for event in USER_EXPIRING_EVENT_DAYS
     },
     USER_EXPIRED_EVENT: _handle_subscription_expired_event,
 }
@@ -235,7 +246,9 @@ async def process_remnawave_webhook(
             else normalize_datetime(account.subscription_expires_at).isoformat(),
             "subscription_url": account.subscription_url,
             "subscription_is_trial": account.subscription_is_trial,
-            "notification_types": [notification.type.value for notification in notifications],
+            "notification_types": [
+                notification.type.value for notification in notifications
+            ],
             "cleared_remote_snapshot": envelope.event == USER_DELETED_EVENT,
         },
     )

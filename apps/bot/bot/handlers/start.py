@@ -26,9 +26,13 @@ async def start_handler(message: Message, state: FSMContext) -> None:
     """Handle /start command with optional linking token parameter."""
     api_client = ApiClient()
     if message.from_user is not None:
-        if await api_client.is_telegram_account_fully_blocked(telegram_id=message.from_user.id):
+        if await api_client.is_telegram_account_fully_blocked(
+            telegram_id=message.from_user.id
+        ):
             return
-        await api_client.mark_telegram_account_reachable(telegram_id=message.from_user.id)
+        await api_client.mark_telegram_account_reachable(
+            telegram_id=message.from_user.id
+        )
 
     args = message.text.split(maxsplit=1)
 
@@ -77,22 +81,20 @@ async def handle_browser_link(message: Message, link_token: str) -> None:
             )
 
         if response.status_code == 200:
-            await message.answer(
-                translate("bot.linking.success", locale=locale)
-            )
+            await message.answer(translate("bot.linking.success", locale=locale))
         elif response.status_code == 400:
             error_data = response.json()
             await message.answer(
                 translate(
                     "bot.linking.error_with_detail",
                     locale=locale,
-                    detail=error_data.get("detail", translate("common.errors.unknown", locale=locale)),
+                    detail=error_data.get(
+                        "detail", translate("common.errors.unknown", locale=locale)
+                    ),
                 )
             )
         else:
-            await message.answer(
-                translate("bot.linking.generic_error", locale=locale)
-            )
+            await message.answer(translate("bot.linking.generic_error", locale=locale))
     except Exception:
         await message.answer(translate("bot.linking.generic_error", locale=locale))
 
@@ -124,22 +126,20 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
             )
 
         if response.status_code == 200:
-            await message.answer(
-                translate("bot.linking.success", locale=locale)
-            )
+            await message.answer(translate("bot.linking.success", locale=locale))
         elif response.status_code == 400:
             error_data = response.json()
             await message.answer(
                 translate(
                     "bot.linking.error_with_detail",
                     locale=locale,
-                    detail=error_data.get("detail", translate("common.errors.unknown", locale=locale)),
+                    detail=error_data.get(
+                        "detail", translate("common.errors.unknown", locale=locale)
+                    ),
                 )
             )
         else:
-            await message.answer(
-                translate("bot.linking.generic_error", locale=locale)
-            )
+            await message.answer(translate("bot.linking.generic_error", locale=locale))
     except Exception:
         await message.answer(translate("bot.linking.generic_error", locale=locale))
 

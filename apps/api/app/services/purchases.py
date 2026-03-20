@@ -34,7 +34,11 @@ class PurchaseSource(str, Enum):
 
 
 class PurchaseServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class RemnawaveSyncError(PurchaseServiceError):
@@ -77,6 +81,10 @@ def _purchase_error(key: str) -> str:
     return translate(f"api.purchases.errors.{key}")
 
 
+def _purchase_exception(error_type, key: str):
+    return error_type(_purchase_error(key), code=key)
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -107,7 +115,9 @@ def compute_paid_plan_window(
     return base_expires_at, base_expires_at + timedelta(days=duration_days)
 
 
-def apply_remote_subscription_snapshot(account: Account, remote_user: RemnawaveUser) -> None:
+def apply_remote_subscription_snapshot(
+    account: Account, remote_user: RemnawaveUser
+) -> None:
     account.remnawave_user_uuid = remote_user.uuid
     account.subscription_url = remote_user.subscription_url
     account.subscription_status = remote_user.status
@@ -134,7 +144,9 @@ def _resolve_gateway(
     try:
         return factory()
     except RemnawaveConfigurationError as exc:
-        raise RemnawaveSyncError(_purchase_error("remnawave_not_configured")) from exc
+        raise _purchase_exception(
+            RemnawaveSyncError, "remnawave_not_configured"
+        ) from exc
 
 
 def _require_subscription_url(remote_user: RemnawaveUser) -> str:
@@ -143,7 +155,9 @@ def _require_subscription_url(remote_user: RemnawaveUser) -> str:
         subscription_url = subscription_url.strip()
 
     if not subscription_url:
-        raise RemnawaveSyncError(_purchase_error("remnawave_subscription_url_missing"))
+        raise _purchase_exception(
+            RemnawaveSyncError, "remnawave_subscription_url_missing"
+        )
 
     return subscription_url
 
@@ -168,7 +182,7 @@ async def _apply_subscription_purchase(
             is_trial=is_trial,
         )
     except RemnawaveRequestError as exc:
-        raise RemnawaveSyncError(_purchase_error("remnawave_unavailable")) from exc
+        raise _purchase_exception(RemnawaveSyncError, "remnawave_unavailable") from exc
 
     remote_user.subscription_url = _require_subscription_url(remote_user)
     apply_remote_subscription_snapshot(account, remote_user)
@@ -231,7 +245,9 @@ async def load_purchase_account_for_update(
     *,
     account_id: UUID,
 ) -> Account:
-    result = await session.execute(select(Account).where(Account.id == account_id).with_for_update())
+    result = await session.execute(
+        select(Account).where(Account.id == account_id).with_for_update()
+    )
     account = result.scalar_one_or_none()
     if account is None:
         raise PurchaseServiceError(_purchase_error("account_not_found"))
@@ -260,7 +276,7 @@ async def get_subscription_grant_by_reference(
 def _normalize_required_reference_id(reference_id: str) -> str:
     normalized = reference_id.strip()
     if not normalized:
-        raise PurchaseConflictError(_purchase_error("idempotency_required"))
+        raise _purchase_exception(PurchaseConflictError, "idempotency_required")
     return normalized
 
 
@@ -273,13 +289,15 @@ def _validate_existing_wallet_grant(
     duration_days: int,
 ) -> None:
     if grant.account_id != account_id:
-        raise PurchaseConflictError(_purchase_error("idempotency_account_conflict"))
+        raise _purchase_exception(PurchaseConflictError, "idempotency_account_conflict")
     if grant.plan_code != plan_code:
-        raise PurchaseConflictError(_purchase_error("idempotency_plan_conflict"))
+        raise _purchase_exception(PurchaseConflictError, "idempotency_plan_conflict")
     if grant.amount != amount or grant.currency != "RUB":
-        raise PurchaseConflictError(_purchase_error("idempotency_amount_conflict"))
+        raise _purchase_exception(PurchaseConflictError, "idempotency_amount_conflict")
     if grant.duration_days != duration_days:
-        raise PurchaseConflictError(_purchase_error("idempotency_duration_conflict"))
+        raise _purchase_exception(
+            PurchaseConflictError, "idempotency_duration_conflict"
+        )
 
 
 async def stage_wallet_plan_purchase(
@@ -294,11 +312,13 @@ async def stage_wallet_plan_purchase(
     normalized_idempotency_key = _normalize_required_reference_id(idempotency_key)
     plan = get_subscription_plan(plan_code)
     amount = plan.price_rub if amount_override is None else amount_override
-    duration_days = plan.duration_days if duration_days_override is None else duration_days_override
+    duration_days = (
+        plan.duration_days if duration_days_override is None else duration_days_override
+    )
     if amount <= 0:
-        raise PurchaseConflictError(_purchase_error("wallet_amount_invalid"))
+        raise _purchase_exception(PurchaseConflictError, "wallet_amount_invalid")
     if duration_days <= 0:
-        raise PurchaseConflictError(_purchase_error("wallet_duration_invalid"))
+        raise _purchase_exception(PurchaseConflictError, "wallet_duration_invalid")
 
     existing_grant = await get_subscription_grant_by_reference(
         session,
@@ -384,7 +404,9 @@ async def stage_wallet_plan_purchase(
                 duration_days=duration_days,
             )
             return existing_grant
-        raise PurchaseConflictError(_purchase_error("wallet_staging_failed")) from exc
+        raise _purchase_exception(
+            PurchaseConflictError, "wallet_staging_failed"
+        ) from exc
 
     await session.refresh(grant)
     return grant
@@ -406,11 +428,15 @@ async def finalize_wallet_plan_purchase(
         for_update=True,
     )
     if grant is None:
-        raise PurchaseServiceError(f"Wallet purchase grant not found: {normalized_idempotency_key}")
+        raise PurchaseServiceError(
+            f"Wallet purchase grant not found: {normalized_idempotency_key}"
+        )
 
     account = await load_purchase_account_for_update(session, account_id=account_id)
     if grant.account_id != account.id:
-        raise PurchaseConflictError(_purchase_error("wallet_grant_account_conflict"))
+        raise _purchase_exception(
+            PurchaseConflictError, "wallet_grant_account_conflict"
+        )
 
     if grant.applied_at is not None:
         await session.refresh(account)

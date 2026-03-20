@@ -103,7 +103,9 @@ class FakeYooKassaGateway:
             external_reference=command.idempotency_key,
             confirmation_url="https://yookassa.test/confirm",
             expires_at=None,
-            raw_payload={"provider_payment_id": f"yoopay-{command.idempotency_key or 'generated'}"},
+            raw_payload={
+                "provider_payment_id": f"yoopay-{command.idempotency_key or 'generated'}"
+            },
         )
 
     async def parse_webhook(self, *, raw_body: bytes, headers):
@@ -143,8 +145,12 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         payments_service.settings.api_token = "internal-token"
 
         self._subscriptions_service = subscriptions_service
-        self._original_subscription_gateway = subscriptions_service.get_remnawave_gateway
-        subscriptions_service.get_remnawave_gateway = lambda: self._fake_remnawave_gateway
+        self._original_subscription_gateway = (
+            subscriptions_service.get_remnawave_gateway
+        )
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            self._fake_remnawave_gateway
+        )
 
         self.app = create_app()
 
@@ -158,11 +164,15 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -174,7 +184,9 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         self._cache_module._cache = self._original_cache
         self._payments_service.get_yookassa_gateway = self._original_yookassa_gateway
         self._payments_service.settings.api_token = self._original_api_token
-        self._subscriptions_service.get_remnawave_gateway = self._original_subscription_gateway
+        self._subscriptions_service.get_remnawave_gateway = (
+            self._original_subscription_gateway
+        )
         await self._engine.dispose()
         self._tmpdir.cleanup()
 
@@ -223,11 +235,15 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
     async def _get_ledger_entries(self, account_id: uuid.UUID) -> list[LedgerEntry]:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(LedgerEntry).where(LedgerEntry.account_id == account_id).order_by(LedgerEntry.id.asc())
+                select(LedgerEntry)
+                .where(LedgerEntry.account_id == account_id)
+                .order_by(LedgerEntry.id.asc())
             )
             return list(result.scalars().all())
 
-    async def _get_subscription_grants(self, account_id: uuid.UUID) -> list[SubscriptionGrant]:
+    async def _get_subscription_grants(
+        self, account_id: uuid.UUID
+    ) -> list[SubscriptionGrant]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(SubscriptionGrant)
@@ -236,7 +252,9 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
             )
             return list(result.scalars().all())
 
-    async def _get_promo_redemptions(self, account_id: uuid.UUID) -> list[PromoRedemption]:
+    async def _get_promo_redemptions(
+        self, account_id: uuid.UUID
+    ) -> list[PromoRedemption]:
         async with self._session_factory() as session:
             result = await session.execute(
                 select(PromoRedemption)
@@ -248,7 +266,9 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
     async def _get_payment(self, provider_payment_id: str) -> Payment | None:
         async with self._session_factory() as session:
             result = await session.execute(
-                select(Payment).where(Payment.provider_payment_id == provider_payment_id)
+                select(Payment).where(
+                    Payment.provider_payment_id == provider_payment_id
+                )
             )
             return result.scalar_one_or_none()
 
@@ -323,7 +343,9 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(redemptions[0].status, PromoRedemptionStatus.APPLIED)
         self.assertEqual(redemptions[0].ledger_entry_id, ledger_entries[0].id)
 
-    async def test_wallet_plan_purchase_with_discounted_promo_tracks_redemption(self) -> None:
+    async def test_wallet_plan_purchase_with_discounted_promo_tracks_redemption(
+        self,
+    ) -> None:
         account = await self._create_account(email="wallet@example.com", balance=1000)
         self._current_account_id = account.id
         await self._create_promo(
@@ -354,7 +376,9 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
 
         ledger_entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(ledger_entries), 1)
-        self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.SUBSCRIPTION_DEBIT)
+        self.assertEqual(
+            ledger_entries[0].entry_type, LedgerEntryType.SUBSCRIPTION_DEBIT
+        )
         self.assertEqual(ledger_entries[0].amount, -150)
 
         grants = await self._get_subscription_grants(account.id)
@@ -370,7 +394,9 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(redemptions[0].final_amount, 150)
         self.assertEqual(redemptions[0].subscription_grant_id, grants[0].id)
 
-    async def test_direct_plan_payment_with_extra_days_applies_extended_grant(self) -> None:
+    async def test_direct_plan_payment_with_extra_days_applies_extended_grant(
+        self,
+    ) -> None:
         account = await self._create_account(email="payment@example.com", balance=0)
         self._current_account_id = account.id
         await self._create_promo(
@@ -429,11 +455,16 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
             account_obj.subscription_expires_at = target_expires_at
-            account_obj.subscription_url = f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
             account_obj.subscription_is_trial = False
             return SimpleNamespace(uuid=account_obj.id, expire_at=target_expires_at)
 
-        with patch("app.services.payments.apply_paid_purchase", side_effect=fake_apply_paid_purchase):
+        with patch(
+            "app.services.payments.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
+        ):
             webhook_response = await self.client.post(
                 "/api/v1/webhooks/payments/yookassa",
                 content=json.dumps({"event_id": "plan-event-plus7"}),

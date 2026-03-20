@@ -22,7 +22,15 @@ from yookassa.domain.exceptions import ApiError as YooKassaApiError
 from yookassa.domain.notification.webhook_notification import WebhookNotification
 
 from app.core.config import settings
-from app.db.models import Account, AccountStatus, LedgerEntryType, Payment, PaymentEvent, PromoCode, SubscriptionGrant
+from app.db.models import (
+    Account,
+    AccountStatus,
+    LedgerEntryType,
+    Payment,
+    PaymentEvent,
+    PromoCode,
+    SubscriptionGrant,
+)
 from app.domain.payments import (
     CreatePaymentIntentCommand,
     PaymentFlowType,
@@ -64,11 +72,15 @@ logger = logging.getLogger(__name__)
 
 
 class PaymentAccountBlockedError(PaymentGatewayError):
-    pass
+    default_code = "account_blocked"
 
 
 def _payment_error(key: str) -> str:
     return translate(f"api.payments.errors.{key}")
+
+
+def _payment_exception(error_type, key: str):
+    return error_type(_payment_error(key), code=key)
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -94,7 +106,9 @@ def _normalize_json_payload(payload: object, *, field_name: str) -> dict | None:
         if not isinstance(parsed, dict):
             raise PaymentGatewayError(f"{field_name} must be a JSON object")
         return parsed
-    raise PaymentGatewayError(f"Unsupported {field_name} payload type: {type(payload).__name__}")
+    raise PaymentGatewayError(
+        f"Unsupported {field_name} payload type: {type(payload).__name__}"
+    )
 
 
 def _require_integer_amount(raw_value: object, *, currency: str) -> int:
@@ -107,7 +121,9 @@ def _require_integer_amount(raw_value: object, *, currency: str) -> int:
         raise PaymentGatewayError(f"Invalid payment amount: {raw_value!r}") from exc
 
     if decimal_value != decimal_value.quantize(Decimal("1")):
-        raise PaymentGatewayError(f"Fractional amounts are not supported: {raw_value!r} {currency}")
+        raise PaymentGatewayError(
+            f"Fractional amounts are not supported: {raw_value!r} {currency}"
+        )
 
     return int(decimal_value)
 
@@ -134,7 +150,9 @@ def _map_yookassa_status(raw_status: str) -> PaymentStatus:
     try:
         return status_map[raw_status]
     except KeyError as exc:
-        raise PaymentGatewayError(f"Unsupported YooKassa status: {raw_status!r}") from exc
+        raise PaymentGatewayError(
+            f"Unsupported YooKassa status: {raw_status!r}"
+        ) from exc
 
 
 def _extract_confirmation_url(response: object) -> str | None:
@@ -201,7 +219,9 @@ class YooKassaGateway:
 
     def _assert_configured(self) -> None:
         if not self._shop_id or not self._secret_key:
-            raise PaymentGatewayConfigurationError(_payment_error("yookassa_not_configured"))
+            raise _payment_exception(
+                PaymentGatewayConfigurationError, "yookassa_not_configured"
+            )
 
     def _configure_sdk(self) -> None:
         self._assert_configured()
@@ -225,7 +245,9 @@ class YooKassaGateway:
     def _resolve_return_url(self, command: CreatePaymentIntentCommand) -> str:
         return_url = command.success_url or settings.webapp_url
         if not return_url:
-            raise PaymentGatewayError("success_url or WEBAPP_URL is required for YooKassa redirect flow")
+            raise PaymentGatewayError(
+                "success_url or WEBAPP_URL is required for YooKassa redirect flow"
+            )
         return return_url
 
     def _create_payment_intent_sync(
@@ -235,7 +257,9 @@ class YooKassaGateway:
     ) -> PaymentIntentSnapshot:
         self._configure_sdk()
         if command.currency != "RUB":
-            raise PaymentGatewayError(f"YooKassa gateway expects RUB currency, got {command.currency!r}")
+            raise PaymentGatewayError(
+                f"YooKassa gateway expects RUB currency, got {command.currency!r}"
+            )
 
         params: dict[str, object] = {
             "amount": {
@@ -266,13 +290,17 @@ class YooKassaGateway:
             flow_type=command.flow_type,
             account_id=command.account_id,
             status=_map_yookassa_status(response.status),
-            amount=_require_integer_amount(response.amount.value, currency=response.amount.currency),
+            amount=_require_integer_amount(
+                response.amount.value, currency=response.amount.currency
+            ),
             currency=response.amount.currency,
             provider_payment_id=response.id,
             external_reference=command.idempotency_key,
             confirmation_url=_extract_confirmation_url(response),
             expires_at=_parse_iso_datetime(getattr(response, "expires_at", None)),
-            raw_payload=_normalize_json_payload(response.json(), field_name="yookassa payment response"),
+            raw_payload=_normalize_json_payload(
+                response.json(), field_name="yookassa payment response"
+            ),
         )
 
     def _fetch_payment_sync(self, provider_payment_id: str) -> object:
@@ -291,43 +319,63 @@ class YooKassaGateway:
         command: CreatePaymentIntentCommand,
     ) -> PaymentIntentSnapshot:
         idempotency_key = command.idempotency_key or str(uuid4())
-        return await asyncio.to_thread(self._create_payment_intent_sync, command, idempotency_key)
+        return await asyncio.to_thread(
+            self._create_payment_intent_sync, command, idempotency_key
+        )
 
-    def _snapshot_from_payment_response(self, response: object) -> PaymentIntentSnapshot:
+    def _snapshot_from_payment_response(
+        self, response: object
+    ) -> PaymentIntentSnapshot:
         metadata = getattr(response, "metadata", None) or {}
         raw_account_id = metadata.get("rm_account_id")
         raw_flow_type = metadata.get("rm_flow_type")
         if not isinstance(raw_account_id, str) or not raw_account_id:
-            raise PaymentGatewayError("YooKassa payment metadata is missing rm_account_id")
+            raise PaymentGatewayError(
+                "YooKassa payment metadata is missing rm_account_id"
+            )
         if not isinstance(raw_flow_type, str) or not raw_flow_type:
-            raise PaymentGatewayError("YooKassa payment metadata is missing rm_flow_type")
+            raise PaymentGatewayError(
+                "YooKassa payment metadata is missing rm_flow_type"
+            )
 
         try:
             account_id = UUID(raw_account_id)
         except ValueError as exc:
-            raise PaymentGatewayError("YooKassa payment metadata contains invalid rm_account_id") from exc
+            raise PaymentGatewayError(
+                "YooKassa payment metadata contains invalid rm_account_id"
+            ) from exc
 
         try:
             flow_type = PaymentFlowType(raw_flow_type)
         except ValueError as exc:
-            raise PaymentGatewayError("YooKassa payment metadata contains invalid rm_flow_type") from exc
+            raise PaymentGatewayError(
+                "YooKassa payment metadata contains invalid rm_flow_type"
+            ) from exc
 
         return PaymentIntentSnapshot(
             provider=self.provider,
             flow_type=flow_type,
             account_id=account_id,
             status=_map_yookassa_status(response.status),
-            amount=_require_integer_amount(response.amount.value, currency=response.amount.currency),
+            amount=_require_integer_amount(
+                response.amount.value, currency=response.amount.currency
+            ),
             currency=response.amount.currency,
             provider_payment_id=response.id,
             external_reference=metadata.get("rm_external_reference"),
             confirmation_url=_extract_confirmation_url(response),
             expires_at=_parse_iso_datetime(getattr(response, "expires_at", None)),
-            raw_payload=_normalize_json_payload(response.json(), field_name="yookassa payment response"),
+            raw_payload=_normalize_json_payload(
+                response.json(), field_name="yookassa payment response"
+            ),
         )
 
-    async def fetch_payment_snapshot(self, provider_payment_id: str) -> PaymentIntentSnapshot:
-        response = await asyncio.to_thread(self._fetch_payment_sync, provider_payment_id)
+    async def fetch_payment_snapshot(
+        self, provider_payment_id: str
+    ) -> PaymentIntentSnapshot:
+        response = await asyncio.to_thread(
+            self._fetch_payment_sync, provider_payment_id
+        )
         return self._snapshot_from_payment_response(response)
 
     async def parse_webhook(
@@ -345,10 +393,14 @@ class YooKassaGateway:
         try:
             notification = WebhookNotification(payload)
         except Exception as exc:
-            raise PaymentGatewayError(f"Invalid YooKassa webhook payload: {exc}") from exc
+            raise PaymentGatewayError(
+                f"Invalid YooKassa webhook payload: {exc}"
+            ) from exc
 
         if notification.type != "notification":
-            raise PaymentGatewayError(f"Unsupported YooKassa webhook type: {notification.type!r}")
+            raise PaymentGatewayError(
+                f"Unsupported YooKassa webhook type: {notification.type!r}"
+            )
 
         event = notification.event
         payment = notification.object
@@ -365,15 +417,21 @@ class YooKassaGateway:
         try:
             account_id = UUID(account_id_raw)
         except ValueError as exc:
-            raise PaymentGatewayError(f"Invalid account_id in YooKassa metadata: {account_id_raw!r}") from exc
+            raise PaymentGatewayError(
+                f"Invalid account_id in YooKassa metadata: {account_id_raw!r}"
+            ) from exc
 
         try:
             flow_type = PaymentFlowType(flow_type_raw)
         except ValueError as exc:
-            raise PaymentGatewayError(f"Unsupported flow_type in YooKassa metadata: {flow_type_raw!r}") from exc
+            raise PaymentGatewayError(
+                f"Unsupported flow_type in YooKassa metadata: {flow_type_raw!r}"
+            ) from exc
 
         provider_event_id = f"{event}:{verified_payment.id}"
-        external_reference = metadata.get("rm_external_reference") or metadata.get("external_reference")
+        external_reference = metadata.get("rm_external_reference") or metadata.get(
+            "external_reference"
+        )
         currency = verified_payment.amount.currency
 
         return PaymentWebhookEvent(
@@ -381,7 +439,9 @@ class YooKassaGateway:
             provider_event_id=provider_event_id,
             provider_payment_id=verified_payment.id,
             status=_map_yookassa_status(verified_payment.status),
-            amount=_require_integer_amount(verified_payment.amount.value, currency=currency),
+            amount=_require_integer_amount(
+                verified_payment.amount.value, currency=currency
+            ),
             currency=currency,
             flow_type=flow_type,
             account_id=account_id,
@@ -418,7 +478,9 @@ def _build_telegram_stars_invoice_payload(
     return f"rmstars:{FLOW_CODE_MAP[flow_type]}:{account_id}:{payment_reference}"
 
 
-def _parse_telegram_stars_invoice_payload(invoice_payload: str) -> tuple[PaymentFlowType, UUID]:
+def _parse_telegram_stars_invoice_payload(
+    invoice_payload: str,
+) -> tuple[PaymentFlowType, UUID]:
     parts = invoice_payload.split(":")
     if len(parts) != 4 or parts[0] != "rmstars":
         raise PaymentGatewayError("Invalid Telegram Stars invoice payload")
@@ -429,12 +491,16 @@ def _parse_telegram_stars_invoice_payload(invoice_payload: str) -> tuple[Payment
     try:
         flow_type = FLOW_CODE_REVERSE_MAP[flow_code]
     except KeyError as exc:
-        raise PaymentGatewayError(f"Unsupported Telegram Stars flow code: {flow_code!r}") from exc
+        raise PaymentGatewayError(
+            f"Unsupported Telegram Stars flow code: {flow_code!r}"
+        ) from exc
 
     try:
         account_id = UUID(account_id_raw)
     except ValueError as exc:
-        raise PaymentGatewayError(f"Invalid account_id in Telegram Stars payload: {account_id_raw!r}") from exc
+        raise PaymentGatewayError(
+            f"Invalid account_id in Telegram Stars payload: {account_id_raw!r}"
+        ) from exc
 
     return flow_type, account_id
 
@@ -453,9 +519,13 @@ class TelegramStarsGateway:
 
     def _assert_configured(self) -> None:
         if not self._bot_token:
-            raise PaymentGatewayConfigurationError(_payment_error("stars_bot_token_required"))
+            raise _payment_exception(
+                PaymentGatewayConfigurationError, "stars_bot_token_required"
+            )
         if not settings.api_token:
-            raise PaymentGatewayConfigurationError(_payment_error("stars_callback_not_configured"))
+            raise _payment_exception(
+                PaymentGatewayConfigurationError, "stars_callback_not_configured"
+            )
 
     async def _call_bot_api(self, method: str, payload: dict[str, object]) -> dict:
         self._assert_configured()
@@ -465,7 +535,9 @@ class TelegramStarsGateway:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(url, json=payload)
         except httpx.HTTPError as exc:
-            raise PaymentGatewayError(f"Telegram Bot API transport error: {exc}") from exc
+            raise PaymentGatewayError(
+                f"Telegram Bot API transport error: {exc}"
+            ) from exc
 
         try:
             body = response.json()
@@ -473,12 +545,17 @@ class TelegramStarsGateway:
             raise PaymentGatewayError("Telegram Bot API returned invalid JSON") from exc
 
         if response.status_code >= 400 or not body.get("ok", False):
-            description = body.get("description") or f"Telegram Bot API error {response.status_code}"
+            description = (
+                body.get("description")
+                or f"Telegram Bot API error {response.status_code}"
+            )
             raise PaymentGatewayError(str(description))
 
         result = body.get("result")
         if not isinstance(result, (dict, str)):
-            raise PaymentGatewayError(f"Unexpected Telegram Bot API response for {method}: {result!r}")
+            raise PaymentGatewayError(
+                f"Unexpected Telegram Bot API response for {method}: {result!r}"
+            )
         return {"result": result}
 
     async def create_payment_intent(
@@ -486,11 +563,17 @@ class TelegramStarsGateway:
         command: CreatePaymentIntentCommand,
     ) -> PaymentIntentSnapshot:
         if command.flow_type != PaymentFlowType.DIRECT_PLAN_PURCHASE:
-            raise PaymentGatewayError("Telegram Stars supports only direct_plan_purchase")
+            raise PaymentGatewayError(
+                "Telegram Stars supports only direct_plan_purchase"
+            )
         if command.currency != "XTR":
-            raise PaymentGatewayError(f"Telegram Stars gateway expects XTR currency, got {command.currency!r}")
+            raise PaymentGatewayError(
+                f"Telegram Stars gateway expects XTR currency, got {command.currency!r}"
+            )
         if not command.plan_code:
-            raise PaymentGatewayError("plan_code is required for Telegram Stars purchase")
+            raise PaymentGatewayError(
+                "plan_code is required for Telegram Stars purchase"
+            )
 
         payment_reference = command.idempotency_key or uuid4().hex
         invoice_payload = _build_telegram_stars_invoice_payload(
@@ -506,7 +589,9 @@ class TelegramStarsGateway:
         result = await self._call_bot_api(
             "createInvoiceLink",
             {
-                "title": translate("api.payments.invoice_title", plan_name=str(plan_name or "")),
+                "title": translate(
+                    "api.payments.invoice_title", plan_name=str(plan_name or "")
+                ),
                 "description": description,
                 "payload": invoice_payload,
                 "currency": "XTR",
@@ -550,7 +635,9 @@ class TelegramStarsGateway:
         try:
             payload = json.loads(raw_body)
         except json.JSONDecodeError as exc:
-            raise PaymentGatewayError("Invalid Telegram Stars webhook JSON payload") from exc
+            raise PaymentGatewayError(
+                "Invalid Telegram Stars webhook JSON payload"
+            ) from exc
 
         if payload.get("event_type") != "successful_payment":
             raise PaymentGatewayError("Unsupported Telegram Stars webhook type")
@@ -560,9 +647,16 @@ class TelegramStarsGateway:
         currency = payload.get("currency")
         total_amount = payload.get("total_amount")
         if not isinstance(invoice_payload, str) or not invoice_payload:
-            raise PaymentGatewayError("Telegram Stars webhook is missing invoice_payload")
-        if not isinstance(telegram_payment_charge_id, str) or not telegram_payment_charge_id:
-            raise PaymentGatewayError("Telegram Stars webhook is missing telegram_payment_charge_id")
+            raise PaymentGatewayError(
+                "Telegram Stars webhook is missing invoice_payload"
+            )
+        if (
+            not isinstance(telegram_payment_charge_id, str)
+            or not telegram_payment_charge_id
+        ):
+            raise PaymentGatewayError(
+                "Telegram Stars webhook is missing telegram_payment_charge_id"
+            )
         if not isinstance(currency, str) or not currency:
             raise PaymentGatewayError("Telegram Stars webhook is missing currency")
 
@@ -600,7 +694,11 @@ SUCCESS_EFFECT_FLOWS = {
 
 
 class PaymentServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class PaymentConflictError(PaymentServiceError):
@@ -608,7 +706,7 @@ class PaymentConflictError(PaymentServiceError):
 
 
 class PaymentNotFoundError(PaymentServiceError):
-    pass
+    default_code = "payment_not_found"
 
 
 @dataclass(slots=True)
@@ -665,7 +763,9 @@ async def _append_payment_account_event(
         event_type=event_type,
         outcome=outcome,
         source=source,
-        payload={key: value for key, value in event_payload.items() if value is not None},
+        payload={
+            key: value for key, value in event_payload.items() if value is not None
+        },
     )
 
 
@@ -772,7 +872,9 @@ async def list_account_payments(
         .limit(limit)
     )
     items = list(result.scalars().all())
-    total = await session.scalar(select(func.count()).select_from(Payment).where(*filters))
+    total = await session.scalar(
+        select(func.count()).select_from(Payment).where(*filters)
+    )
     return items, int(total or 0)
 
 
@@ -810,7 +912,9 @@ async def _get_subscription_grant_by_payment_id(
     payment_id: int,
     for_update: bool = False,
 ) -> SubscriptionGrant | None:
-    statement = select(SubscriptionGrant).where(SubscriptionGrant.payment_id == payment_id)
+    statement = select(SubscriptionGrant).where(
+        SubscriptionGrant.payment_id == payment_id
+    )
     if for_update:
         statement = statement.with_for_update()
     result = await session.execute(statement)
@@ -822,14 +926,18 @@ async def _load_account_for_update(
     *,
     account_id: UUID,
 ) -> Account:
-    result = await session.execute(select(Account).where(Account.id == account_id).with_for_update())
+    result = await session.execute(
+        select(Account).where(Account.id == account_id).with_for_update()
+    )
     account = result.scalar_one_or_none()
     if account is None:
         raise PaymentServiceError(_payment_error("account_not_found"))
     return account
 
 
-def _should_finalize_payment(*, flow_type: PaymentFlowType, status: PaymentStatus) -> bool:
+def _should_finalize_payment(
+    *, flow_type: PaymentFlowType, status: PaymentStatus
+) -> bool:
     if status not in FINAL_PAYMENT_STATUSES:
         return False
     if status == PaymentStatus.SUCCEEDED and flow_type in SUCCESS_EFFECT_FLOWS:
@@ -844,9 +952,13 @@ def _extract_plan_duration_days(payment: Payment) -> int:
         try:
             value = int(raw_value)
         except (TypeError, ValueError) as exc:
-            raise PaymentConflictError("payment metadata contains invalid rm_plan_duration_days") from exc
+            raise PaymentConflictError(
+                "payment metadata contains invalid rm_plan_duration_days"
+            ) from exc
         if value <= 0:
-            raise PaymentConflictError("payment metadata contains non-positive rm_plan_duration_days")
+            raise PaymentConflictError(
+                "payment metadata contains non-positive rm_plan_duration_days"
+            )
         return value
 
     if payment.plan_code:
@@ -886,7 +998,11 @@ def _apply_payment_intent_snapshot(
     payment.raw_payload = snapshot.raw_payload
     payment.request_metadata = dict(command.metadata)
     payment.finalized_at = (
-        _utcnow() if _should_finalize_payment(flow_type=snapshot.flow_type, status=snapshot.status) else None
+        _utcnow()
+        if _should_finalize_payment(
+            flow_type=snapshot.flow_type, status=snapshot.status
+        )
+        else None
     )
 
 
@@ -902,7 +1018,10 @@ def _apply_payment_event(payment: Payment, event: PaymentWebhookEvent) -> None:
 
     payment.status = event.status
     payment.raw_payload = event.raw_payload
-    if _should_finalize_payment(flow_type=payment.flow_type, status=event.status) and payment.finalized_at is None:
+    if (
+        _should_finalize_payment(flow_type=payment.flow_type, status=event.status)
+        and payment.finalized_at is None
+    ):
         payment.finalized_at = _utcnow()
 
 
@@ -915,13 +1034,13 @@ def _validate_existing_idempotent_payment(
     plan_code: str | None = None,
 ) -> None:
     if payment.account_id != account.id:
-        raise PaymentConflictError(_payment_error("idempotency_account_conflict"))
+        raise _payment_exception(PaymentConflictError, "idempotency_account_conflict")
     if payment.flow_type != flow_type:
-        raise PaymentConflictError(_payment_error("idempotency_flow_conflict"))
+        raise _payment_exception(PaymentConflictError, "idempotency_flow_conflict")
     if payment.amount != amount:
-        raise PaymentConflictError(_payment_error("idempotency_amount_conflict"))
+        raise _payment_exception(PaymentConflictError, "idempotency_amount_conflict")
     if payment.plan_code != plan_code:
-        raise PaymentConflictError(_payment_error("idempotency_plan_conflict"))
+        raise _payment_exception(PaymentConflictError, "idempotency_plan_conflict")
 
 
 def _is_stale_pending_payment(payment: Payment, *, now: datetime) -> bool:
@@ -946,7 +1065,9 @@ def _should_reconcile_pending_yookassa_payment(
         return False
     if payment.finalized_at is not None:
         return False
-    if created_at is not None and created_at > now - timedelta(seconds=max(1, min_age_seconds)):
+    if created_at is not None and created_at > now - timedelta(
+        seconds=max(1, min_age_seconds)
+    ):
         return False
 
     if payment.status == PaymentStatus.SUCCEEDED:
@@ -980,13 +1101,17 @@ async def expire_stale_payments(
 
     summary = PaymentMaintenanceResult()
     for payment_id in payment_ids:
-        payment = await _get_payment_by_id(session, payment_id=payment_id, for_update=True)
+        payment = await _get_payment_by_id(
+            session, payment_id=payment_id, for_update=True
+        )
         if payment is None or not _is_stale_pending_payment(payment, now=now):
             continue
 
         payment.status = PaymentStatus.EXPIRED
         payment.finalized_at = _utcnow()
-        await notify_payment_failed(session, payment=payment, status=PaymentStatus.EXPIRED)
+        await notify_payment_failed(
+            session, payment=payment, status=PaymentStatus.EXPIRED
+        )
         await _append_payment_account_event(
             session,
             payment=payment,
@@ -1027,7 +1152,8 @@ async def reconcile_pending_yookassa_payments(
         .where(
             Payment.provider == PaymentProvider.YOOKASSA,
             Payment.finalized_at.is_(None),
-            Payment.created_at <= created_before - timedelta(seconds=reconcile_min_age_seconds),
+            Payment.created_at
+            <= created_before - timedelta(seconds=reconcile_min_age_seconds),
             or_(
                 Payment.status.in_(tuple(STALE_PENDING_PAYMENT_STATUSES)),
                 and_(
@@ -1044,7 +1170,9 @@ async def reconcile_pending_yookassa_payments(
     gateway = get_yookassa_gateway()
     summary = PaymentMaintenanceResult()
     for payment_id in payment_ids:
-        payment = await _get_payment_by_id(session, payment_id=payment_id, for_update=True)
+        payment = await _get_payment_by_id(
+            session, payment_id=payment_id, for_update=True
+        )
         if payment is None or not _should_reconcile_pending_yookassa_payment(
             payment,
             now=now,
@@ -1110,7 +1238,9 @@ async def reconcile_pending_yookassa_payments(
 
         if snapshot.status in FINAL_FAILED_PAYMENT_STATUSES:
             payment.finalized_at = _utcnow()
-            await notify_payment_failed(session, payment=payment, status=snapshot.status)
+            await notify_payment_failed(
+                session, payment=payment, status=snapshot.status
+            )
             await _append_payment_account_event(
                 session,
                 payment=payment,
@@ -1216,7 +1346,9 @@ async def create_payment(
             actor_account_id=account.id,
             payload={
                 "confirmation_url": payment.confirmation_url,
-                "expires_at": None if payment.expires_at is None else payment.expires_at.isoformat(),
+                "expires_at": None
+                if payment.expires_at is None
+                else payment.expires_at.isoformat(),
             },
         )
 
@@ -1305,9 +1437,16 @@ async def create_yookassa_plan_purchase_payment(
                 reference_id=str(existing_payment.id),
             )
             if existing_redemption is not None:
-                existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
-                if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
-                    raise PaymentConflictError(_payment_error("idempotency_promo_conflict"))
+                existing_promo_code = await session.get(
+                    PromoCode, existing_redemption.promo_code_id
+                )
+                if (
+                    existing_promo_code is None
+                    or existing_promo_code.code != normalize_promo_code(promo_code)
+                ):
+                    raise _payment_exception(
+                        PaymentConflictError, "idempotency_promo_conflict"
+                    )
                 return _payment_to_snapshot(existing_payment)
 
     quote = None
@@ -1315,7 +1454,7 @@ async def create_yookassa_plan_purchase_payment(
     duration_days = plan.duration_days
     if promo_code is not None:
         if not idempotency_key:
-            raise PaymentConflictError(_payment_error("promo_idempotency_required"))
+            raise _payment_exception(PaymentConflictError, "promo_idempotency_required")
         quote = await quote_plan_promo(
             session,
             account=account,
@@ -1326,7 +1465,9 @@ async def create_yookassa_plan_purchase_payment(
         )
         amount = quote.final_amount
         duration_days = quote.final_duration_days
-    plan_description = description or translate("api.payments.descriptions.plan", plan_name=plan.name)
+    plan_description = description or translate(
+        "api.payments.descriptions.plan", plan_name=plan.name
+    )
     snapshot = await create_payment(
         session,
         gateway=get_yookassa_gateway(),
@@ -1364,7 +1505,7 @@ async def create_yookassa_plan_purchase_payment(
             provider_payment_id=snapshot.provider_payment_id,
         )
         if payment is None or payment.id is None:
-            raise PaymentGatewayError(_payment_error("promo_payment_not_found"))
+            raise _payment_exception(PaymentGatewayError, "promo_payment_not_found")
         await stage_promo_redemption(
             session,
             account_id=account.id,
@@ -1387,11 +1528,14 @@ async def create_telegram_stars_plan_purchase_payment(
     source: str = "api",
 ) -> PaymentIntentSnapshot:
     if account.telegram_id is None:
-        raise PaymentConflictError(_payment_error("stars_telegram_required"))
+        raise _payment_exception(PaymentConflictError, "stars_telegram_required")
 
     plan = get_subscription_plan(plan_code)
     if plan.price_stars is None:
-        raise PaymentGatewayConfigurationError(translate("api.plans.errors.stars_price_not_configured"))
+        raise PaymentGatewayConfigurationError(
+            translate("api.plans.errors.stars_price_not_configured"),
+            code="stars_price_not_configured",
+        )
 
     if promo_code is not None and idempotency_key:
         existing_payment = await _get_payment_by_idempotency_key(
@@ -1406,9 +1550,16 @@ async def create_telegram_stars_plan_purchase_payment(
                 reference_id=str(existing_payment.id),
             )
             if existing_redemption is not None:
-                existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
-                if existing_promo_code is None or existing_promo_code.code != normalize_promo_code(promo_code):
-                    raise PaymentConflictError(_payment_error("idempotency_promo_conflict"))
+                existing_promo_code = await session.get(
+                    PromoCode, existing_redemption.promo_code_id
+                )
+                if (
+                    existing_promo_code is None
+                    or existing_promo_code.code != normalize_promo_code(promo_code)
+                ):
+                    raise _payment_exception(
+                        PaymentConflictError, "idempotency_promo_conflict"
+                    )
                 return _payment_to_snapshot(existing_payment)
 
     quote = None
@@ -1416,7 +1567,7 @@ async def create_telegram_stars_plan_purchase_payment(
     duration_days = plan.duration_days
     if promo_code is not None:
         if not idempotency_key:
-            raise PaymentConflictError(_payment_error("promo_idempotency_required"))
+            raise _payment_exception(PaymentConflictError, "promo_idempotency_required")
         quote = await quote_plan_promo(
             session,
             account=account,
@@ -1468,7 +1619,7 @@ async def create_telegram_stars_plan_purchase_payment(
             provider_payment_id=snapshot.provider_payment_id,
         )
         if payment is None or payment.id is None:
-            raise PaymentGatewayError(_payment_error("promo_payment_not_found"))
+            raise _payment_exception(PaymentGatewayError, "promo_payment_not_found")
         await stage_promo_redemption(
             session,
             account_id=account.id,
@@ -1496,7 +1647,9 @@ async def validate_telegram_stars_pre_checkout(
     if payment is None:
         return False, translate("api.payments.pre_checkout_errors.payment_not_found")
     if payment.status in FINAL_PAYMENT_STATUSES:
-        return False, translate("api.payments.pre_checkout_errors.payment_already_processed")
+        return False, translate(
+            "api.payments.pre_checkout_errors.payment_already_processed"
+        )
     if payment.currency != currency:
         return False, translate("api.payments.pre_checkout_errors.currency_mismatch")
     if payment.amount != total_amount:
@@ -1508,9 +1661,13 @@ async def validate_telegram_stars_pre_checkout(
     if account.status == AccountStatus.BLOCKED:
         return False, translate("api.payments.pre_checkout_errors.account_blocked")
     if account.telegram_id != telegram_id:
-        return False, translate("api.payments.pre_checkout_errors.telegram_account_mismatch")
+        return False, translate(
+            "api.payments.pre_checkout_errors.telegram_account_mismatch"
+        )
     if payment.flow_type != PaymentFlowType.DIRECT_PLAN_PURCHASE:
-        return False, translate("api.payments.pre_checkout_errors.unsupported_flow_type")
+        return False, translate(
+            "api.payments.pre_checkout_errors.unsupported_flow_type"
+        )
 
     return True, None
 
@@ -1522,13 +1679,19 @@ async def _validate_telegram_stars_actor(
 ) -> None:
     raw_telegram_id = (event.raw_payload or {}).get("telegram_id")
     if not isinstance(raw_telegram_id, int):
-        raise PaymentConflictError("Telegram Stars webhook does not contain telegram_id")
+        raise PaymentConflictError(
+            "Telegram Stars webhook does not contain telegram_id"
+        )
 
     account = await session.get(Account, event.account_id)
     if account is None:
-        raise PaymentConflictError(_payment_error("telegram_stars_account_not_found"))
+        raise _payment_exception(
+            PaymentConflictError, "telegram_stars_account_not_found"
+        )
     if account.telegram_id != raw_telegram_id:
-        raise PaymentConflictError(_payment_error("telegram_stars_account_mismatch"))
+        raise _payment_exception(
+            PaymentConflictError, "telegram_stars_account_mismatch"
+        )
 
 
 async def _stage_plan_purchase_grant(
@@ -1537,7 +1700,9 @@ async def _stage_plan_purchase_grant(
     payment: Payment,
 ) -> None:
     if payment.id is None:
-        raise PaymentServiceError("payment must be flushed before staging subscription grant")
+        raise PaymentServiceError(
+            "payment must be flushed before staging subscription grant"
+        )
     if payment.plan_code is None:
         raise PaymentConflictError("direct plan payment does not contain plan_code")
 
@@ -1645,7 +1810,9 @@ async def _finalize_direct_plan_purchase(
         for_update=True,
     )
     if grant is None:
-        raise PaymentServiceError(f"Subscription grant not found for payment {payment.id}")
+        raise PaymentServiceError(
+            f"Subscription grant not found for payment {payment.id}"
+        )
 
     account = await _load_account_for_update(session, account_id=payment.account_id)
     try:
@@ -1731,7 +1898,9 @@ async def process_payment_webhook(
                 raw_payload=event.raw_payload,
                 finalized_at=(
                     _utcnow()
-                    if _should_finalize_payment(flow_type=event.flow_type, status=event.status)
+                    if _should_finalize_payment(
+                        flow_type=event.flow_type, status=event.status
+                    )
                     else None
                 ),
             )
@@ -1756,7 +1925,10 @@ async def process_payment_webhook(
         )
         session.add(payment_event)
 
-        if event.status == PaymentStatus.SUCCEEDED and payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE:
+        if (
+            event.status == PaymentStatus.SUCCEEDED
+            and payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE
+        ):
             await _stage_plan_purchase_grant(session, payment=payment)
         elif event.status in FINAL_FAILED_PAYMENT_STATUSES:
             await notify_payment_failed(session, payment=payment, status=event.status)
@@ -1791,13 +1963,17 @@ async def process_payment_webhook(
         provider_payment_id=event.provider_payment_id,
     )
     if payment is None:
-        raise PaymentServiceError(f"Payment not found for event {event.provider_event_id}")
+        raise PaymentServiceError(
+            f"Payment not found for event {event.provider_event_id}"
+        )
 
     ledger_applied = False
     subscription_applied = False
     if payment.status == PaymentStatus.SUCCEEDED and payment.finalized_at is None:
         if payment.flow_type == PaymentFlowType.WALLET_TOPUP:
-            ledger_applied = await _finalize_wallet_topup_payment(session, payment_id=payment.id)
+            ledger_applied = await _finalize_wallet_topup_payment(
+                session, payment_id=payment.id
+            )
         elif payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE:
             subscription_applied = await _finalize_direct_plan_purchase(
                 session,
@@ -1811,7 +1987,9 @@ async def process_payment_webhook(
             provider_payment_id=event.provider_payment_id,
         )
         if payment is None:
-            raise PaymentServiceError(f"Payment not found for duplicate event {event.provider_event_id}")
+            raise PaymentServiceError(
+                f"Payment not found for duplicate event {event.provider_event_id}"
+            )
 
     return PaymentWebhookProcessResult(
         payment_id=payment.id,

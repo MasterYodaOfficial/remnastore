@@ -18,7 +18,7 @@ class AccountIdentityConflictError(Exception):
 
 
 class AccountBlockedError(Exception):
-    pass
+    code = "account_blocked"
 
 
 SUPPORTED_SUPABASE_IDENTITY_PROVIDERS = {
@@ -45,7 +45,9 @@ async def get_account_by_id(session: AsyncSession, account_id) -> Account | None
 async def get_account_by_telegram_id(
     session: AsyncSession, *, telegram_id: int
 ) -> Account | None:
-    result = await session.execute(select(Account).where(Account.telegram_id == telegram_id))
+    result = await session.execute(
+        select(Account).where(Account.telegram_id == telegram_id)
+    )
     return result.scalar_one_or_none()
 
 
@@ -190,7 +192,11 @@ async def _upsert_supabase_account_once(
             )
 
     # ЭТАП 2: Поиск по email (НОВОЕ)
-    if resolved_account is None and supabase_user.email and supabase_user.email_confirmed_at:
+    if (
+        resolved_account is None
+        and supabase_user.email
+        and supabase_user.email_confirmed_at
+    ):
         result = await session.execute(
             select(Account).where(Account.email == supabase_user.email)
         )
@@ -222,11 +228,17 @@ async def _upsert_supabase_account_once(
         resolved_account.last_seen_at = now
         _ensure_referral_code(resolved_account)
 
-    identity_map = {identity.provider: identity for identity in supabase_user.identities}
+    identity_map = {
+        identity.provider: identity for identity in supabase_user.identities
+    }
 
     for provider, provider_uid in identity_links:
         auth_account = existing_links.get((provider, provider_uid))
-        identity = None if provider == AuthProvider.SUPABASE else identity_map.get(provider.value)
+        identity = (
+            None
+            if provider == AuthProvider.SUPABASE
+            else identity_map.get(provider.value)
+        )
         link_display_name = _identity_display_name(supabase_user, identity)
 
         if auth_account is None:

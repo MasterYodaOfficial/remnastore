@@ -20,6 +20,24 @@
 - `admin` на первом релизе остается только на `ru` без обязательного полноценного i18n-слоя.
 - Для `admin` допустимы захардкоженные русские тексты, но они должны оставаться осмысленными, единообразными и без сырых технических деталей для оператора.
 
+## Короткий глоссарий терминов
+
+Чтобы план читался без лишнего англоязычного сленга, ниже фиксируем короткие переводы.
+
+- `release note` — релизная заметка, краткое описание того, что вошло в выпуск
+- `release candidate` — кандидат в релиз, текущая сборка или состояние `dev`, которое собираемся выпускать
+- `branch protection` — защита ветки от прямых push и merge без правил
+- `required checks` / `blocking checks` — обязательные проверки, без которых PR нельзя слить
+- `dry-run PR` — тестовый PR, который открываем для проверки процесса, а не для немедленного merge
+- `self-review` — самопроверка собственного PR перед merge
+- `smoke` / `smoke test` — быстрая ручная проверка критичных сценариев перед релизом
+- `baseline` — подтвержденный базовый минимум команд и проверок, который уже стабильно работает
+- `quality gate` — набор обязательных проверок качества перед merge
+- `rollout` — поэтапное внедрение изменения, а не мгновенное включение для всего проекта
+- `fallback` — запасной путь или резервный сценарий, если основной ломается
+- `dependency triage` — разбор проблемных зависимостей и решение, что обновлять сейчас, а что вести отдельной задачей
+- `upgrade plan` / `replace plan` — план обновления или замены проблемной библиотеки
+
 ## Переходный режим до жестких quality gate
 
 Пока проект активно меняется, важнее не потерять прогресс и не сломать себе темп разработки.
@@ -48,11 +66,17 @@
 - Фаза 5: `В работе`
 - Фаза 6: `В работе`
 
+Текущий рабочий фокус:
+
+- Фаза 0 — release governance, защита `main`, правила `dev -> main`
+- Фаза 2 — выравнивание runtime-контракта локали и `stable error code -> translation key`
+- Фаза 6 — release hardening, manual checks и выпуск без ручной импровизации
+
 Текущий следующий шаг:
 
 1. Завершить и отдельно проверить branch protection / запрет прямого push в GitHub UI, чтобы Phase 0 можно было считать реально закрытой.
-2. Решить, когда и как вводить `ruff format --check`: сейчас он затронет большой пласт активных файлов и не подходит как мгновенный blocking gate.
-3. Выбрать следующий repo-local приоритет после runbooks: dependency triage, Playwright/component tests или rollout декомпозиции крупных модулей.
+2. Добить внешние manual checks (`ручные внешние проверки`): отдельную ревизию логов, backup/restore, ручной regression smoke и финальную проверку `dev -> main`.
+3. Держать `stable error code -> translation key` contract в follow-up режиме для внутренних и не критичных для релиза сценариев, но не возвращать `web/admin` critical flow к сырому `detail`.
 
 ## Что видно по репозиторию сейчас
 
@@ -62,7 +86,8 @@
 - Проверено 2026-03-20: `scripts/test.sh all` проходит локально (`api`: `164` tests, `bot`: `25` tests).
 - `web` и `admin` уже собираются локально через `npm run build`, имеют явные `typecheck`, `test` и `lint` контракты.
 - В `pyproject.toml` уже добавлен `ruff`, и `uv run --group dev ruff check apps/api apps/bot common scripts` проходит локально; при этом `prettier`, `playwright`, `mypy`, `pre-commit` по-прежнему не обнаружены.
-- `uv run --group dev ruff format --check apps/api apps/bot common scripts` пока не проходит: для этого нужен отдельный rollout форматирования, а не мгновенный blocking gate.
+- Для Python formatter rollout уже закрыт на полном текущем scope: `uv run --group dev ruff format --check apps/api apps/bot common scripts` проходит локально и встроен в `python-quality`.
+- Dependency-risk по фронтенду уже существенно снижен: после локального `npm overrides` для `valibot` в `apps/web` оба фронтенда проходят `npm audit` без уязвимостей (`web`: `0`, `admin`: `0`), а `web-quality` остается зеленым на `lint`, `test`, `test:e2e`, `typecheck` и `build`; при этом `npm ci` отдельно показал, что текущая Telegram SDK chain уже upstream-deprecated и рекомендует миграцию на `@tma.js/*`.
 - Локализация уже сдвинулась дальше, чем было на старте плана:
   - `bot` использует `translate()` и общий каталог `packages/locales`
   - `web` активно использует [`apps/web/src/lib/i18n.ts`](../apps/web/src/lib/i18n.ts) в [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) и продуктовых компонентах
@@ -70,10 +95,11 @@
   - в backend появился каталог [`packages/locales/ru/api.json`](../packages/locales/ru/api.json) для backend-facing ошибок и уведомлений
   - `admin` по-прежнему не имеет собственного i18n-слоя, и для `v1` это допустимо
 - В кодовой базе все еще есть крупные монолиты, которые повышают стоимость доработок и риск регрессий:
-  - [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) `8986` строк
-  - [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) `5125` строк
+  - [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) `8873` строки
+  - [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) `4997` строк
   - [`apps/bot/bot/services/menu_renderer.py`](../apps/bot/bot/services/menu_renderer.py) `1092` строки
   - [`apps/api/app/services/account_linking.py`](../apps/api/app/services/account_linking.py) `1119` строк
+- Для `web` и `admin` уже есть DOM-oriented test contour на `Vitest + React Testing Library` для ключевых UI-компонентов и отдельный browser/flow слой на `Playwright`; дальше вопрос уже не в наличии browser smoke, а в том, какие из них считать достаточными для релиза.
 - Общий стандарт кодовой документации уже появился в [`docs/code-documentation.md`](./code-documentation.md), а release/smoke/rollback checklist-артефакты и incident runbook-и теперь оформлены отдельными документами.
 
 ## Что считаем готовностью к merge в `main`
@@ -121,7 +147,7 @@
 - [x] В репозитории добавлены `.github/workflows/ci.yml` и `.github/pull_request_template.md`, фиксирующие базовый процесс проверки и PR.
 - [ ] Branch protection и запрет прямого push живут вне репозитория; ruleset `protect-main` уже активен для `main`, bypass list пустой, required checks (`python-quality`, `web-quality`, `admin-quality`) уже выбраны, dry-run PR `dev -> main` подтвердил блокировку merge при падающем CI, но отдельной ручной проверки прямого push в `main` еще не было.
 - [x] В репозитории зафиксированы release, smoke и rollback checklists для `dev -> main`.
-- [ ] Формат release note и tagging ritual еще не закреплены как обязательный repo-процесс.
+- [x] Формат release note и tagging ritual закреплены repo-local документами: `docs/release-process.md`, `docs/releases/TEMPLATE.md`, `docs/releases/README.md`.
 
 Цель: перестать относиться к `dev` как к единственной рабочей ветке без формализованного выхода в `main`.
 
@@ -165,8 +191,8 @@
 - [x] Для `web` и `admin` добавлены `lint` контракты на ESLint; `npm run lint` проходит локально в обоих приложениях.
 - [x] CI-подобный порядок команд подтвержден локально: `uv sync --frozen --group dev`, `npm ci` в `apps/web` и `apps/admin`, затем `lint`, `test`, `typecheck` и `build`.
 - [x] Для `web` и `admin` добавлены минимальные `test` контракты на `Vitest`; `npm run test` проходит локально в обоих приложениях.
-- [x] Для `python-quality` в GitHub Actions добавлен явный тестовый `DATABASE_URL`; Python-контур больше не зависит от локального `.env` и проходит в чистой копии репозитория.
-- [ ] `ruff format --check` пока не готов к роли blocking gate: форматирование затронет большой пласт уже активных файлов.
+- [x] Для `python-quality` в GitHub Actions добавлен явный тестовый `DATABASE_URL`, а bot-тесты выровнены так, чтобы не зависеть от внешнего `WEBAPP_URL`; Python-контур проходит в чистой копии репозитория c очищенным env.
+- [x] `ruff format --check apps/api apps/bot common scripts` теперь уже включён в blocking `python-quality` как полный formatter gate для Python-части репозитория.
 - [x] Branch protection и обязательность CI на PR в `main` подтверждены dry-run PR: merge блокируется, пока required checks не зелёные.
 
 Цель: сначала сделать проверяемый baseline, а уже потом наращивать требования.
@@ -174,7 +200,7 @@
 Сделать:
 
 - привязать `ci.yml` к branch protection для PR в `main`
-- определить rollout-план для `ruff format`: либо массовая нормализация отдельным коммитом, либо поэтапное выравнивание по каталогам
+- продолжить rollout `ruff format`: после `common` и `scripts` выбрать следующий каталог для поэтапного выравнивания без массового шумного diff
 - держать единые `npm` scripts (`lint`, `test`, `typecheck`, `build`) синхронизированными между `web` и `admin`
 - не мигрировать тестовый стек на `pytest` только ради моды; сначала стабилизировать текущий `unittest`-контур
 - держать CI-команды воспроизводимыми локально без GitHub Actions-магии
@@ -204,8 +230,10 @@
 - [x] `bot` использует единый каталог переводов и `translate()`.
 - [x] `web` использует `t(...)` в основном приложении и продуктовых компонентах.
 - [x] В backend появился централизованный каталог `packages/locales/ru/api.json` для пользовательских ошибок и уведомлений.
+- [x] Для критичных user-facing flow (`web`: `telegram auth`, `trial`, `promo`, `payments`, `notifications mark-read`, `withdrawals`, `referrals`, `account linking`; `admin`: `login`, `session auth`, `withdrawal status change`, `account status change`, `balance adjustment`, `subscription grants`, `promocodes`, `broadcasts`) backend уже отдает `error_code` / `error_params`, а `web/admin` использует code-first разбор с fallback на `detail`.
 - [ ] Единый `LocaleProvider` или явный верхнеуровневый слой locale-state в `web` не оформлен.
-- [ ] Маппинг `stable error code -> translation key` не доведен до системного контракта: часть endpoint-ов все еще отдает `detail=str(exc)`.
+- [x] Критичный repo-local `admin`-хвост по `subscription grants`, `promocodes`, `broadcasts` и `admin request validation` закрыт: operator-facing transport больше не опирается на сырые `FastAPI/Pydantic` field error payloads.
+- [ ] Полный universal rollout `stable error code -> translation key` на все internal/non-web сценарии и второстепенные backend ветки остается follow-up hardening-задачей, но уже не blocker для выхода `dev -> main`.
 - [ ] Источники locale (`accounts.locale`, `language_code`, browser/session`) не выровнены и не зафиксированы как единый runtime-контракт.
 - [ ] Операторские тексты `admin` не проходили отдельную инвентаризацию на единообразие и отсутствие внутренних деталей.
 
@@ -239,8 +267,9 @@
 Проверено 2026-03-20:
 
 - [x] Из [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) вынесен первый набор pure helper-функций в [`apps/admin/src/lib/admin-helpers.ts`](../apps/admin/src/lib/admin-helpers.ts) и покрыт тестами.
-- [ ] [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) остается монолитом на `8986` строк.
-- [ ] [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) остается монолитом на `5125` строк.
+- [x] Из [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) вынесены первые reusable UI-компоненты [`DashboardCard`](../apps/admin/src/components/DashboardCard.tsx) и [`DetailFact`](../apps/admin/src/components/DetailFact.tsx), и они покрыты `React Testing Library` / компонентными тестами.
+- [ ] [`apps/admin/src/App.tsx`](../apps/admin/src/App.tsx) остается монолитом на `8873` строки.
+- [ ] [`apps/web/src/app/App.tsx`](../apps/web/src/app/App.tsx) остается монолитом на `4997` строк.
 - [ ] [`apps/bot/bot/services/menu_renderer.py`](../apps/bot/bot/services/menu_renderer.py) и [`apps/api/app/services/account_linking.py`](../apps/api/app/services/account_linking.py) по-прежнему требуют предметной декомпозиции.
 - [ ] В репозитории не зафиксирован пошаговый план разрезания самых рискованных модулей на поддерживаемые части.
 
@@ -279,9 +308,13 @@
 - [x] В репозитории добавлен минимальный CI workflow, который гоняет `ruff check`, Python tests, `web` lint/test/typecheck/build и `admin` lint/test/typecheck/build.
 - [x] Для `web` и `admin` появился минимальный frontend test contour на `Vitest` для pure utility/runtime logic.
 - [x] В репозитории добавлен `Vitest` для `web` и `admin`.
-- [ ] В репозитории пока нет `Playwright`.
+- [x] Для `web` и `admin` добавлен первый DOM/component test contour на `Vitest + React Testing Library` для ключевых UI-компонентов (`Header`, `PromoRedeemCard`, `DashboardCard`, `DetailFact`).
+- [x] После добавления component tests (`компонентных тестов`) `web` и `admin` повторно проходят локальный frontend contour целиком: `lint`, `test`, `typecheck`, `build`.
+- [x] В репозитории добавлен `Playwright` для `admin`, и локальный browser smoke (`браузерный smoke-тест`) `login -> dashboard -> accounts -> logout` проходит через моки API командой `npm run test:e2e`.
+- [x] В репозитории добавлен `Playwright` для `web`, и локальный mobile browser smoke (`браузерный smoke-тест`) покрывает `browser auth flow` (`браузерный сценарий входа`), `home -> notifications -> mark all read`, `promo deep link -> settings`, `wallet topup redirect flow` (`сценарий пополнения с редиректом`), `withdrawal request flow` (`сценарий запроса на вывод`), browser-side `account linking flow` (`браузерную часть сценария привязки аккаунта`) и `cross-surface account linking sanity check` (`сквозную sanity-проверку привязки браузер <-> Telegram`) через `localStorage + fetch` mocks.
+- [x] В `ci.yml` `Playwright` browser smoke для `web` и `admin` встроены прямо в `web-quality` и `admin-quality`, поэтому существующие required checks (`blocking checks` / обязательные проверки) теперь автоматически включают и browser flow слой без новых job names в GitHub ruleset; при падении CI загружает `Playwright` artifacts (`артефакты падения`) для разборов.
 - [x] Blocking quality checks на PR в `main` подтверждены dry-run PR с required checks `python-quality`, `web-quality` и `admin-quality`.
-- [ ] Для `web` и `admin` пока нет компонентных и flow-тестов, которые проверяют UI-сценарии через DOM/browser.
+- [ ] Browser flow слой уже есть у `admin` и `web`; `browser auth`, browser-side `account linking`, `topup`, `withdrawal request` и первая `cross-surface account linking sanity check` (`сквозная sanity-проверка привязки аккаунта`) уже покрыты через моки и входят в blocking checks, но более широкие cross-surface проверки между браузером и Telegram ещё не подняты.
 - [ ] Не зафиксированы и не автоматизированы пороги покрытия, которые должны блокировать merge.
 
 Цель: сделать регрессии заметными до merge, а не после.
@@ -292,11 +325,9 @@
 - довести покрытие backend хотя бы до честного baseline с постепенным повышением порога
 - добавить тесты для `withdrawals`, `admin auth`, `admin actions`, `notifications`, `promo/referral edge cases`, если там еще остаются белые пятна
 - для `web` и `admin` ввести компонентные и flow-тесты на `Vitest + React Testing Library`
-- добавить минимум один browser smoke suite на `Playwright` для:
-  - browser auth
-  - account linking
-  - wallet topup redirect flow
-  - withdrawal request flow
+- расширить первые browser smoke suites на `Playwright` с текущих `admin auth` и `web browser-auth/notifications/settings/topup/withdrawals/account-linking/cross-surface-linking` сценариев до:
+  - next cross-surface payment/linking sanity checks
+- решить следующий rollout для `Playwright`: какие именно cross-surface сценарии должны стать следующими blocking flows после базовой привязки аккаунта
 - выделить набор блокирующих бизнес-сценариев и гонять их на каждом PR в `main`
 
 Стратегия порогов:
@@ -320,7 +351,7 @@
 - [x] Уже есть базовые документы по env, security, architecture, launch scope и frontend contract.
 - [x] Release checklist, smoke checklist и rollback checklist зафиксированы в отдельных документах.
 - [x] Incident runbook-и по платежам, webhook, Mini App, bot и withdrawals выделены в явный набор документов в `docs/runbooks/`.
-- [ ] Нет отдельной ревизии, что [`apps/web/FRONTEND_CONTRACT.md`](../apps/web/FRONTEND_CONTRACT.md) полностью синхронизирован с текущим UI.
+- [x] [`apps/web/FRONTEND_CONTRACT.md`](../apps/web/FRONTEND_CONTRACT.md) синхронизирован с текущим UI, `Playwright` browser smoke и новым backend `error_code/error_params` contract для критичных `web` flow.
 
 Цель: код и docs должны объяснять систему, а не требовать устных знаний.
 
@@ -329,7 +360,7 @@
 - ввести краткий стандарт docstring для публичных Python-service функций, endpoint-ов и нестандартных security/payment мест
 - не документировать очевидное, но обязательно описывать side effects, идемпотентность, внешние интеграции и доменные инварианты
 - добавить короткие `README` в сложные каталоги, если без них вход слишком дорогой
-- синхронизировать `apps/web/FRONTEND_CONTRACT.md` с фактическим состоянием UI
+- держать `apps/web/FRONTEND_CONTRACT.md` синхронизированным с текущим UI, `Playwright` smoke и runtime API-contract
 - держать release checklist, smoke checklist и rollback checklist синхронизированными с реальным процессом
 - держать runbooks по инцидентам синхронизированными с текущим operational flow и лог-контуром
 
@@ -346,11 +377,11 @@
 
 - [x] В репозитории уже есть [`docs/security-checklist.md`](./security-checklist.md) и [`docs/production-env.md`](./production-env.md).
 - [x] В репозитории оформлены [`docs/release-checklist.md`](./release-checklist.md), [`docs/smoke-checklist.md`](./smoke-checklist.md) и [`docs/rollback-checklist.md`](./rollback-checklist.md).
-- [ ] `npm ci` сигнализирует о dependency-risk: на 2026-03-20 `apps/web` тянет `6` уязвимостей (`1` moderate, `5` high), `apps/admin` — `1` moderate; нужна отдельная triage-ревизия.
+- [x] Dependency-risk по фронтенду снижен до текущего baseline: `vite` обновлен до `6.4.1` в `apps/web` и `apps/admin`, для `apps/web` добавлен `npm override` на `valibot@1.3.1`, и `npm audit` в обоих фронтендах сейчас показывает `0 vulnerabilities`; при этом override нужно держать под наблюдением, а миграцию с deprecated `@telegram-apps/*` на `@tma.js/*` вести как отдельный maintenance-track, а не как blocker текущего readiness.
 - [ ] Не зафиксирован результат отдельной ревизии логов на утечки токенов, `initData` и платежных секретов.
 - [ ] Не подтвержден backup/restore сценарий БД.
 - [ ] Не подтверждено фактическое выполнение ручного regression smoke перед релизом по browser, Mini App, bot и admin; пока есть только checklist.
-- [ ] Не описан финальный release candidate ritual для `dev -> main` с тегом и коротким release note.
+- [x] Финальный release candidate ritual для `dev -> main` с тегом и коротким release note описан в `docs/release-process.md` и связан с `docs/release-checklist.md`.
 
 Цель: перед merge в `main` закрыть то, что влияет уже не на красоту кода, а на коммерческую надежность.
 

@@ -39,7 +39,9 @@ def create_dispatcher() -> Dispatcher:
 async def on_startup(bot: Bot) -> None:
     if settings.bot_use_webhook:
         if not settings.bot_webhook_base_url:
-            raise RuntimeError("BOT_WEBHOOK_BASE_URL is required when BOT_USE_WEBHOOK=true")
+            raise RuntimeError(
+                "BOT_WEBHOOK_BASE_URL is required when BOT_USE_WEBHOOK=true"
+            )
         await ensure_webhook(bot)
     await bot.set_my_commands(
         [

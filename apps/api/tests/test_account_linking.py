@@ -168,16 +168,22 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -296,7 +302,9 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["expires_in_seconds"], 3600)
-        self.assertEqual(body["link_url"], f"https://t.me/test_bot?start={body['link_token']}")
+        self.assertEqual(
+            body["link_url"], f"https://t.me/test_bot?start={body['link_token']}"
+        )
 
         token = await self._get_link_token(body["link_token"])
         self.assertIsNotNone(token)
@@ -345,6 +353,7 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             reused_response.json()["detail"],
             translate("api.linking.errors.token_already_used"),
         )
+        self.assertEqual(reused_response.json()["error_code"], "token_already_used")
 
     async def test_browser_to_telegram_merges_existing_telegram_account(self) -> None:
         browser_account = await self._create_account(
@@ -365,7 +374,9 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             provider=AuthProvider.SUPABASE,
             provider_uid="telegram-existing",
         )
-        pending_withdrawal = await self._create_withdrawal(account_id=telegram_account.id, amount=5)
+        pending_withdrawal = await self._create_withdrawal(
+            account_id=telegram_account.id, amount=5
+        )
 
         self._current_account_id = browser_account.id
         token_response = await self.client.post("/api/v1/accounts/link-telegram")
@@ -408,7 +419,9 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         assert moved_withdrawal is not None
         self.assertEqual(moved_withdrawal.account_id, browser_account.id)
 
-    async def test_merge_accounts_moves_business_records_and_resolves_duplicates(self) -> None:
+    async def test_merge_accounts_moves_business_records_and_resolves_duplicates(
+        self,
+    ) -> None:
         now = datetime(2026, 3, 15, 12, 0)
         browser_account = await self._create_account(
             email="browser@example.com",
@@ -428,7 +441,9 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             provider=AuthProvider.SUPABASE,
             provider_uid="telegram-existing",
         )
-        pending_withdrawal = await self._create_withdrawal(account_id=telegram_account.id, amount=5)
+        pending_withdrawal = await self._create_withdrawal(
+            account_id=telegram_account.id, amount=5
+        )
 
         async with self._session_factory() as session:
             payment = Payment(
@@ -490,7 +505,14 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
                 priority=NotificationPriority.SUCCESS,
                 dedupe_key="payment-merge-dup",
             )
-            session.add_all([payment_event, subscription_grant, target_notification, source_notification])
+            session.add_all(
+                [
+                    payment_event,
+                    subscription_grant,
+                    target_notification,
+                    source_notification,
+                ]
+            )
             await session.flush()
 
             target_notification_delivery = NotificationDelivery(
@@ -604,20 +626,26 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             self.assertIsNone(await session.get(Account, telegram_account.id))
 
-            moved_payment = await session.scalar(select(Payment).where(Payment.provider_payment_id == "merge-pay-src-1"))
+            moved_payment = await session.scalar(
+                select(Payment).where(Payment.provider_payment_id == "merge-pay-src-1")
+            )
             self.assertIsNotNone(moved_payment)
             assert moved_payment is not None
             self.assertEqual(moved_payment.account_id, browser_account.id)
 
             moved_event = await session.scalar(
-                select(PaymentEvent).where(PaymentEvent.provider_event_id == "merge-evt-src-1")
+                select(PaymentEvent).where(
+                    PaymentEvent.provider_event_id == "merge-evt-src-1"
+                )
             )
             self.assertIsNotNone(moved_event)
             assert moved_event is not None
             self.assertEqual(moved_event.account_id, browser_account.id)
 
             moved_grant = await session.scalar(
-                select(SubscriptionGrant).where(SubscriptionGrant.reference_id == "merge-pay-src-1")
+                select(SubscriptionGrant).where(
+                    SubscriptionGrant.reference_id == "merge-pay-src-1"
+                )
             )
             self.assertIsNotNone(moved_grant)
             assert moved_grant is not None
@@ -635,15 +663,25 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
                         .where(Notification.account_id == browser_account.id)
                         .order_by(Notification.id.asc())
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(notifications), 2)
             self.assertEqual(
-                sum(1 for notification in notifications if notification.dedupe_key == "payment-merge-dup"),
+                sum(
+                    1
+                    for notification in notifications
+                    if notification.dedupe_key == "payment-merge-dup"
+                ),
                 1,
             )
             self.assertEqual(
-                sum(1 for notification in notifications if notification.dedupe_key is None),
+                sum(
+                    1
+                    for notification in notifications
+                    if notification.dedupe_key is None
+                ),
                 1,
             )
 
@@ -654,7 +692,9 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
                         .where(BroadcastDelivery.account_id == browser_account.id)
                         .order_by(BroadcastDelivery.id.asc())
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             self.assertEqual(len(deliveries), 1)
             self.assertEqual(deliveries[0].status, BroadcastDeliveryStatus.DELIVERED)
@@ -670,7 +710,9 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             assert moved_referral_intent is not None
             self.assertEqual(moved_referral_intent.account_id, browser_account.id)
 
-            admin_logs = list((await session.execute(select(AdminActionLog))).scalars().all())
+            admin_logs = list(
+                (await session.execute(select(AdminActionLog))).scalars().all()
+            )
             self.assertEqual(len(admin_logs), 1)
             self.assertEqual(admin_logs[0].payload, {"origin": "merge-test"})
             self.assertEqual(admin_logs[0].target_account_id, browser_account.id)
@@ -820,6 +862,7 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             reused_response.json()["detail"],
             translate("api.linking.errors.token_already_used"),
         )
+        self.assertEqual(reused_response.json()["error_code"], "token_already_used")
 
     async def test_expired_link_token_is_rejected(self) -> None:
         browser_account = await self._create_account(email="browser@example.com")

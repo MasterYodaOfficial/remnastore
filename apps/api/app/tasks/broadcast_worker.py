@@ -38,7 +38,9 @@ async def _run_scheduler_once() -> None:
             )
             await session.commit()
         if result.started_runs > 0:
-            logger.info("started scheduled broadcasts: started_runs=%s", result.started_runs)
+            logger.info(
+                "started scheduled broadcasts: started_runs=%s", result.started_runs
+            )
     finally:
         await cache.release_lock(SCHEDULER_LOCK_KEY, lock_token)
 

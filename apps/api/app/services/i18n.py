@@ -44,7 +44,9 @@ def _candidate_locales_dirs() -> list[Path]:
     for parent in here.parents:
         candidates.append(parent / "packages" / "locales")
 
-    candidates.extend([Path.cwd() / "packages" / "locales", Path("/app/packages/locales")])
+    candidates.extend(
+        [Path.cwd() / "packages" / "locales", Path("/app/packages/locales")]
+    )
 
     unique_candidates: list[Path] = []
     seen: set[Path] = set()
@@ -115,4 +117,3 @@ def translate(key: str, *, locale: str | None = None, **params: Any) -> str:
         return value
 
     return value.format_map(_SafeFormatDict(params))
-

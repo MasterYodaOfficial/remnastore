@@ -29,8 +29,12 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
         PaymentStatus.PENDING,
         PaymentStatus.REQUIRES_ACTION,
     )
-    successful_payment_timestamp = func.coalesce(Payment.finalized_at, Payment.created_at)
-    paid_withdrawal_timestamp = func.coalesce(Withdrawal.processed_at, Withdrawal.created_at)
+    successful_payment_timestamp = func.coalesce(
+        Payment.finalized_at, Payment.created_at
+    )
+    paid_withdrawal_timestamp = func.coalesce(
+        Withdrawal.processed_at, Withdrawal.created_at
+    )
 
     total_accounts = await _read_int_stat(
         session,
@@ -38,7 +42,9 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
     )
     active_subscriptions = await _read_int_stat(
         session,
-        select(func.count()).select_from(Account).where(Account.subscription_status == "active"),
+        select(func.count())
+        .select_from(Account)
+        .where(Account.subscription_status == "active"),
     )
     pending_withdrawals = await _read_int_stat(
         session,
@@ -57,11 +63,15 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
     )
     blocked_accounts = await _read_int_stat(
         session,
-        select(func.count()).select_from(Account).where(Account.status == AccountStatus.BLOCKED),
+        select(func.count())
+        .select_from(Account)
+        .where(Account.status == AccountStatus.BLOCKED),
     )
     new_accounts_last_7d = await _read_int_stat(
         session,
-        select(func.count()).select_from(Account).where(Account.created_at >= seven_days_ago),
+        select(func.count())
+        .select_from(Account)
+        .where(Account.created_at >= seven_days_ago),
     )
     total_wallet_balance = await _read_int_stat(
         session,

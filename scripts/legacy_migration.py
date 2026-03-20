@@ -17,7 +17,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 API_APP_ROOT = REPO_ROOT / "apps" / "api"
 DEFAULT_LEGACY_DB = REPO_ROOT / "old_db" / "db_2.sqlite3"
-DEFAULT_PLANS_JSON = REPO_ROOT / "apps" / "api" / "app" / "config" / "subscription-plans.json"
+DEFAULT_PLANS_JSON = (
+    REPO_ROOT / "apps" / "api" / "app" / "config" / "subscription-plans.json"
+)
 TERMINAL_PAYMENT_STATUSES = {"succeeded", "canceled"}
 ACTIVE_SUBSCRIPTION_STATUS = "ACTIVE"
 INACTIVE_SUBSCRIPTION_STATUSES = {"DISABLED", "EXPIRED"}
@@ -261,7 +263,11 @@ class MigrationAccountPlan:
 
     @property
     def target_subscription_expires_at(self) -> datetime | None:
-        return None if self.canonical_subscription is None else self.canonical_subscription.end_date
+        return (
+            None
+            if self.canonical_subscription is None
+            else self.canonical_subscription.end_date
+        )
 
     @property
     def target_hwid_device_limit(self) -> int | None:
@@ -287,17 +293,31 @@ class MigrationAccountPlan:
             "referral_balance": self.referral_balance,
             "referral_code": self.imported_referral_code,
             "active_subscription_ids": [item.id for item in self.active_subscriptions],
-            "canonical_subscription_id": None if self.canonical_subscription is None else self.canonical_subscription.id,
-            "target_remnawave_uuid": None if self.target_remnawave_uuid is None else str(self.target_remnawave_uuid),
-            "target_subscription_expires_at": _serialize_datetime(self.target_subscription_expires_at),
+            "canonical_subscription_id": None
+            if self.canonical_subscription is None
+            else self.canonical_subscription.id,
+            "target_remnawave_uuid": None
+            if self.target_remnawave_uuid is None
+            else str(self.target_remnawave_uuid),
+            "target_subscription_expires_at": _serialize_datetime(
+                self.target_subscription_expires_at
+            ),
             "target_hwid_device_limit": self.target_hwid_device_limit,
             "imported_payments_count": len(self.terminal_payments),
             "imported_payment_statuses": dict(
-                sorted(Counter(item.target_payment_status for item in self.payment_grant_plans).items())
+                sorted(
+                    Counter(
+                        item.target_payment_status for item in self.payment_grant_plans
+                    ).items()
+                )
             ),
             "skipped_pending_payments": self.pending_payments_count,
-            "importable_grants_count": sum(1 for item in self.payment_grant_plans if item.grant_importable),
-            "payment_plans": [item.to_report_dict() for item in self.payment_grant_plans],
+            "importable_grants_count": sum(
+                1 for item in self.payment_grant_plans if item.grant_importable
+            ),
+            "payment_plans": [
+                item.to_report_dict() for item in self.payment_grant_plans
+            ],
         }
 
 
@@ -400,7 +420,9 @@ def _load_legacy_users(connection: sqlite3.Connection) -> dict[int, LegacyUser]:
             username=_normalize_text(row["username"]),
             created_at=_parse_datetime(row["created_at"]),
             balance=int(row["balance"] or 0),
-            inviter_id=int(row["inviter_id"]) if row["inviter_id"] is not None else None,
+            inviter_id=int(row["inviter_id"])
+            if row["inviter_id"] is not None
+            else None,
             referral_code=_normalize_text(row["referral_code"]),
             language_code=_normalize_text(row["language_code"]),
             is_active=bool(row["is_active"]),
@@ -439,7 +461,9 @@ def _load_legacy_subscriptions(
                 status=_normalize_text(row["status"]) or "",
                 remnawave_uuid=_parse_uuid(row["remnawave_uuid"]),
                 subscription_url=_normalize_text(row["subscription_url"]),
-                tariff_id=int(row["tariff_id"]) if row["tariff_id"] is not None else None,
+                tariff_id=int(row["tariff_id"])
+                if row["tariff_id"] is not None
+                else None,
                 hwid_device_limit=int(row["hwidDeviceLimit"])
                 if _normalize_text(row["hwidDeviceLimit"]) is not None
                 else None,
@@ -450,7 +474,9 @@ def _load_legacy_subscriptions(
     return subscriptions_by_user
 
 
-def _load_legacy_payments(connection: sqlite3.Connection) -> dict[int, list[LegacyPayment]]:
+def _load_legacy_payments(
+    connection: sqlite3.Connection,
+) -> dict[int, list[LegacyPayment]]:
     payments_by_user: dict[int, list[LegacyPayment]] = defaultdict(list)
     for row in connection.execute(
         """
@@ -478,18 +504,30 @@ def _load_legacy_payments(connection: sqlite3.Connection) -> dict[int, list[Lega
                 status=_normalize_text(row["status"]) or "",
                 method=_normalize_text(row["method"]) or "",
                 external_payment_id=_normalize_text(row["external_payment_id"]),
-                subscription_id=int(row["subscription_id"]) if row["subscription_id"] is not None else None,
-                tariff_id=int(row["tariff_id"]) if row["tariff_id"] is not None else None,
+                subscription_id=int(row["subscription_id"])
+                if row["subscription_id"] is not None
+                else None,
+                tariff_id=int(row["tariff_id"])
+                if row["tariff_id"] is not None
+                else None,
                 created_at=_parse_datetime(row["created_at"]),
             )
         )
     return payments_by_user
 
 
-def _subscription_sort_key(subscription: LegacySubscription) -> tuple[float, float, int]:
-    end_ts = subscription.end_date.timestamp() if subscription.end_date is not None else float("-inf")
+def _subscription_sort_key(
+    subscription: LegacySubscription,
+) -> tuple[float, float, int]:
+    end_ts = (
+        subscription.end_date.timestamp()
+        if subscription.end_date is not None
+        else float("-inf")
+    )
     updated_ts = (
-        subscription.updated_at.timestamp() if subscription.updated_at is not None else float("-inf")
+        subscription.updated_at.timestamp()
+        if subscription.updated_at is not None
+        else float("-inf")
     )
     return (end_ts, updated_ts, subscription.id)
 
@@ -512,8 +550,16 @@ def _build_payment_grant_plans(
             "yookassa": "yookassa",
             "tg_stars": "telegram_stars",
         }.get(payment.method, payment.method)
-        tariff = legacy_tariffs.get(payment.tariff_id) if payment.tariff_id is not None else None
-        current_plan = None if tariff is None else current_plans_by_duration.get(tariff.duration_days)
+        tariff = (
+            legacy_tariffs.get(payment.tariff_id)
+            if payment.tariff_id is not None
+            else None
+        )
+        current_plan = (
+            None
+            if tariff is None
+            else current_plans_by_duration.get(tariff.duration_days)
+        )
 
         grant_importable = (
             payment.status == "succeeded"
@@ -584,9 +630,15 @@ def build_migration_plan(
     removable_legacy_remnawave_uuids: set[uuid.UUID] = set()
 
     counters["legacy_users_total"] = len(users)
-    counters["legacy_subscriptions_total"] = sum(len(items) for items in subscriptions_by_user.values())
-    counters["legacy_payments_total"] = sum(len(items) for items in payments_by_user.values())
-    counters["referral_links_total"] = sum(1 for item in users.values() if item.inviter_id is not None)
+    counters["legacy_subscriptions_total"] = sum(
+        len(items) for items in subscriptions_by_user.values()
+    )
+    counters["legacy_payments_total"] = sum(
+        len(items) for items in payments_by_user.values()
+    )
+    counters["referral_links_total"] = sum(
+        1 for item in users.values() if item.inviter_id is not None
+    )
 
     for telegram_id, legacy_user in sorted(users.items()):
         all_subscriptions = subscriptions_by_user.get(telegram_id, [])
@@ -596,12 +648,15 @@ def build_migration_plan(
             if subscription.status == ACTIVE_SUBSCRIPTION_STATUS
         ]
         canonical_subscription = (
-            max(active_subscriptions, key=_subscription_sort_key) if active_subscriptions else None
+            max(active_subscriptions, key=_subscription_sort_key)
+            if active_subscriptions
+            else None
         )
         removable_subscriptions = [
             subscription
             for subscription in all_subscriptions
-            if canonical_subscription is None or subscription.id != canonical_subscription.id
+            if canonical_subscription is None
+            or subscription.id != canonical_subscription.id
         ]
         terminal_payments = [
             payment
@@ -642,10 +697,16 @@ def build_migration_plan(
                 sample_multi_subscription_accounts.append(
                     {
                         "telegram_id": telegram_id,
-                        "legacy_subscription_ids": [item.id for item in active_subscriptions],
-                        "canonical_subscription_id": None if canonical_subscription is None else canonical_subscription.id,
+                        "legacy_subscription_ids": [
+                            item.id for item in active_subscriptions
+                        ],
+                        "canonical_subscription_id": None
+                        if canonical_subscription is None
+                        else canonical_subscription.id,
                         "target_subscription_expires_at": _serialize_datetime(
-                            None if canonical_subscription is None else canonical_subscription.end_date
+                            None
+                            if canonical_subscription is None
+                            else canonical_subscription.end_date
                         ),
                         "target_hwid_device_limit": None
                         if canonical_subscription is None
@@ -692,7 +753,8 @@ def build_migration_plan(
             terminal_payments=terminal_payments,
             pending_payments_count=len(pending_payments),
             payment_grant_plans=payment_grant_plans,
-            imported_referral_code=legacy_user.referral_code or _generated_referral_code(telegram_id),
+            imported_referral_code=legacy_user.referral_code
+            or _generated_referral_code(telegram_id),
         )
         account_plans.append(plan)
         plans_by_telegram_id[telegram_id] = plan
@@ -721,14 +783,19 @@ def build_migration_plan(
 
     summary = {
         "legacy_users_total": counters["legacy_users_total"],
-        "users_imported": counters["users_imported"] + counters["users_imported_telegram_bot_blocked"],
+        "users_imported": counters["users_imported"]
+        + counters["users_imported_telegram_bot_blocked"],
         "users_imported_active": counters["users_imported"],
-        "users_imported_telegram_bot_blocked": counters["users_imported_telegram_bot_blocked"],
+        "users_imported_telegram_bot_blocked": counters[
+            "users_imported_telegram_bot_blocked"
+        ],
         "users_skipped_blocked_bot": counters["users_skipped_blocked_bot"],
         "telegram_bot_blocked_users_with_active_subscription": counters[
             "telegram_bot_blocked_users_with_active_subscription"
         ],
-        "users_with_referral_balance_import": counters["users_with_referral_balance_import"],
+        "users_with_referral_balance_import": counters[
+            "users_with_referral_balance_import"
+        ],
         "referral_balance_import_sum": counters["referral_balance_import_sum"],
         "referral_links_total": counters["referral_links_total"],
         "referral_links_importable": counters["referral_links_importable"],
@@ -797,7 +864,9 @@ def _print_report(report: dict[str, Any]) -> None:
     ):
         print(f"- {key}: {summary[key]}")
     print(f"- payments_imported_by_status: {summary['payments_imported_by_status']}")
-    print(f"- payments_imported_by_provider: {summary['payments_imported_by_provider']}")
+    print(
+        f"- payments_imported_by_provider: {summary['payments_imported_by_provider']}"
+    )
     print()
     print("Plan mapping")
     for item in report["plan_mapping"]:
@@ -863,7 +932,9 @@ def _print_manual_review_items(items: list[RemnawaveManualReviewItem]) -> None:
         )
 
 
-def _print_sync_summary(summary: dict[str, Any], manual_review_items: list[RemnawaveManualReviewItem]) -> None:
+def _print_sync_summary(
+    summary: dict[str, Any], manual_review_items: list[RemnawaveManualReviewItem]
+) -> None:
     print()
     print("Remnawave sync summary")
     for key in (
@@ -901,7 +972,9 @@ async def _open_target_session_factory(database_url: str):
     return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -> dict[str, Any]:
+async def apply_db_import(
+    migration_plan: MigrationPlan, *, database_url: str
+) -> dict[str, Any]:
     from sqlalchemy import select
 
     from app.db.models import (
@@ -924,16 +997,24 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
             existing_accounts = {
                 account.telegram_id: account
                 for account in (
-                    await session.execute(select(Account).where(Account.telegram_id.is_not(None)))
-                ).scalars().all()
+                    await session.execute(
+                        select(Account).where(Account.telegram_id.is_not(None))
+                    )
+                )
+                .scalars()
+                .all()
                 if account.telegram_id is not None
             }
 
-            imported_plans = [plan for plan in migration_plan.account_plans if plan.import_user]
+            imported_plans = [
+                plan for plan in migration_plan.account_plans if plan.import_user
+            ]
             for plan in imported_plans:
                 account = existing_accounts.get(plan.telegram_id)
                 if account is None:
-                    account = Account(id=plan.account_uuid, telegram_id=plan.telegram_id)
+                    account = Account(
+                        id=plan.account_uuid, telegram_id=plan.telegram_id
+                    )
                     session.add(account)
                     existing_accounts[plan.telegram_id] = account
                     summary["accounts_created"] += 1
@@ -946,9 +1027,15 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                 account.status = AccountStatus.ACTIVE
                 account.referral_code = plan.imported_referral_code
                 account.referral_earnings = plan.referral_balance
-                account.created_at = plan.legacy_user.created_at or account.created_at or datetime.now(UTC)
+                account.created_at = (
+                    plan.legacy_user.created_at
+                    or account.created_at
+                    or datetime.now(UTC)
+                )
                 if plan.telegram_bot_blocked:
-                    account.telegram_bot_blocked_at = account.telegram_bot_blocked_at or datetime.now(UTC)
+                    account.telegram_bot_blocked_at = (
+                        account.telegram_bot_blocked_at or datetime.now(UTC)
+                    )
                     summary["accounts_marked_telegram_bot_blocked"] += 1
                 else:
                     account.telegram_bot_blocked_at = None
@@ -962,12 +1049,18 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                     account.subscription_is_trial = False
                 else:
                     account.remnawave_user_uuid = plan.target_remnawave_uuid
-                    account.subscription_url = plan.canonical_subscription.subscription_url
+                    account.subscription_url = (
+                        plan.canonical_subscription.subscription_url
+                    )
                     account.subscription_status = _desired_subscription_status(
                         expires_at=plan.target_subscription_expires_at
                     )
-                    account.subscription_expires_at = plan.target_subscription_expires_at
-                    account.subscription_last_synced_at = plan.canonical_subscription.updated_at
+                    account.subscription_expires_at = (
+                        plan.target_subscription_expires_at
+                    )
+                    account.subscription_last_synced_at = (
+                        plan.canonical_subscription.updated_at
+                    )
                     account.subscription_is_trial = False
 
             await session.flush()
@@ -975,7 +1068,10 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
             imported_accounts = {
                 telegram_id: account
                 for telegram_id, account in existing_accounts.items()
-                if any(plan.telegram_id == telegram_id and plan.import_user for plan in imported_plans)
+                if any(
+                    plan.telegram_id == telegram_id and plan.import_user
+                    for plan in imported_plans
+                )
             }
 
             for account in imported_accounts.values():
@@ -984,7 +1080,9 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
 
             existing_attributions = {
                 attribution.referred_account_id: attribution
-                for attribution in (await session.execute(select(ReferralAttribution))).scalars().all()
+                for attribution in (await session.execute(select(ReferralAttribution)))
+                .scalars()
+                .all()
             }
             referral_counts: Counter[uuid.UUID] = Counter()
             for plan in imported_plans:
@@ -1001,17 +1099,24 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                     attribution = ReferralAttribution(
                         referrer_account_id=referrer.id,
                         referred_account_id=account.id,
-                        referral_code=referrer.referral_code or referrer.username or "legacy",
-                        created_at=_as_utc_naive(plan.legacy_user.created_at) or _as_utc_naive(datetime.now(UTC)),
+                        referral_code=referrer.referral_code
+                        or referrer.username
+                        or "legacy",
+                        created_at=_as_utc_naive(plan.legacy_user.created_at)
+                        or _as_utc_naive(datetime.now(UTC)),
                     )
                     session.add(attribution)
                     existing_attributions[account.id] = attribution
                     summary["referral_attributions_created"] += 1
                 else:
                     attribution.referrer_account_id = referrer.id
-                    attribution.referral_code = referrer.referral_code or referrer.username or "legacy"
+                    attribution.referral_code = (
+                        referrer.referral_code or referrer.username or "legacy"
+                    )
                     if plan.legacy_user.created_at is not None:
-                        attribution.created_at = _as_utc_naive(plan.legacy_user.created_at)
+                        attribution.created_at = _as_utc_naive(
+                            plan.legacy_user.created_at
+                        )
                     summary["referral_attributions_updated"] += 1
 
             for account in imported_accounts.values():
@@ -1025,13 +1130,21 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
             }
             existing_grants = {
                 (grant.reference_type, grant.reference_id): grant
-                for grant in (await session.execute(select(SubscriptionGrant))).scalars().all()
+                for grant in (await session.execute(select(SubscriptionGrant)))
+                .scalars()
+                .all()
             }
             existing_ledger_idempotency_keys = {
                 key
                 for key in (
-                    await session.execute(select(LedgerEntry.idempotency_key).where(LedgerEntry.idempotency_key.is_not(None)))
-                ).scalars().all()
+                    await session.execute(
+                        select(LedgerEntry.idempotency_key).where(
+                            LedgerEntry.idempotency_key.is_not(None)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
                 if key is not None
             }
 
@@ -1046,9 +1159,14 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
 
             for plan in imported_plans:
                 account = imported_accounts[plan.telegram_id]
-                for legacy_payment, grant_plan in zip(plan.terminal_payments, plan.payment_grant_plans):
+                for legacy_payment, grant_plan in zip(
+                    plan.terminal_payments, plan.payment_grant_plans
+                ):
                     provider = provider_map[grant_plan.provider_code]
-                    provider_payment_id = legacy_payment.external_payment_id or f"legacy-payment-{legacy_payment.id}"
+                    provider_payment_id = (
+                        legacy_payment.external_payment_id
+                        or f"legacy-payment-{legacy_payment.id}"
+                    )
                     payment_key = (provider.value, provider_payment_id)
                     payment = existing_payments.get(payment_key)
 
@@ -1078,8 +1196,10 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                                 "migration_source": LEGACY_SOURCE,
                                 "legacy_payment_id": legacy_payment.id,
                             },
-                            created_at=_as_utc_naive(legacy_payment.created_at) or _as_utc_naive(datetime.now(UTC)),
-                            updated_at=_as_utc_naive(legacy_payment.created_at) or _as_utc_naive(datetime.now(UTC)),
+                            created_at=_as_utc_naive(legacy_payment.created_at)
+                            or _as_utc_naive(datetime.now(UTC)),
+                            updated_at=_as_utc_naive(legacy_payment.created_at)
+                            or _as_utc_naive(datetime.now(UTC)),
                         )
                         session.add(payment)
                         existing_payments[payment_key] = payment
@@ -1090,7 +1210,9 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                         payment.amount = legacy_payment.amount
                         payment.currency = legacy_payment.currency
                         payment.plan_code = grant_plan.plan_code
-                        payment.description = f"Legacy import payment #{legacy_payment.id}"
+                        payment.description = (
+                            f"Legacy import payment #{legacy_payment.id}"
+                        )
                         payment.finalized_at = legacy_payment.created_at
                         payment.raw_payload = {
                             "source": LEGACY_SOURCE,
@@ -1123,10 +1245,15 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                             amount=legacy_payment.amount,
                             currency=legacy_payment.currency,
                             duration_days=grant_plan.duration_days or 30,
-                            base_expires_at=grant_plan.base_expires_at or legacy_payment.created_at or datetime.now(UTC),
-                            target_expires_at=grant_plan.target_expires_at or legacy_payment.created_at or datetime.now(UTC),
+                            base_expires_at=grant_plan.base_expires_at
+                            or legacy_payment.created_at
+                            or datetime.now(UTC),
+                            target_expires_at=grant_plan.target_expires_at
+                            or legacy_payment.created_at
+                            or datetime.now(UTC),
                             applied_at=legacy_payment.created_at or datetime.now(UTC),
-                            created_at=_as_utc_naive(legacy_payment.created_at) or _as_utc_naive(datetime.now(UTC)),
+                            created_at=_as_utc_naive(legacy_payment.created_at)
+                            or _as_utc_naive(datetime.now(UTC)),
                         )
                         session.add(grant)
                         existing_grants[grant_key] = grant
@@ -1137,7 +1264,9 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
                         grant.plan_code = grant_plan.plan_code or grant.plan_code
                         grant.amount = legacy_payment.amount
                         grant.currency = legacy_payment.currency
-                        grant.duration_days = grant_plan.duration_days or grant.duration_days
+                        grant.duration_days = (
+                            grant_plan.duration_days or grant.duration_days
+                        )
                         if grant_plan.base_expires_at is not None:
                             grant.base_expires_at = grant_plan.base_expires_at
                         if grant_plan.target_expires_at is not None:
@@ -1176,19 +1305,27 @@ async def apply_db_import(migration_plan: MigrationPlan, *, database_url: str) -
     return {
         "accounts_created": summary["accounts_created"],
         "accounts_updated": summary["accounts_updated"],
-        "accounts_marked_telegram_bot_blocked": summary["accounts_marked_telegram_bot_blocked"],
+        "accounts_marked_telegram_bot_blocked": summary[
+            "accounts_marked_telegram_bot_blocked"
+        ],
         "referral_attributions_created": summary["referral_attributions_created"],
         "referral_attributions_updated": summary["referral_attributions_updated"],
         "payments_created": summary["payments_created"],
         "payments_updated": summary["payments_updated"],
         "subscription_grants_created": summary["subscription_grants_created"],
         "subscription_grants_updated": summary["subscription_grants_updated"],
-        "ledger_referral_balance_entries_created": summary["ledger_referral_balance_entries_created"],
-        "ledger_referral_balance_entries_reused": summary["ledger_referral_balance_entries_reused"],
+        "ledger_referral_balance_entries_created": summary[
+            "ledger_referral_balance_entries_created"
+        ],
+        "ledger_referral_balance_entries_reused": summary[
+            "ledger_referral_balance_entries_reused"
+        ],
     }
 
 
-async def sync_remnawave_state(migration_plan: MigrationPlan, *, database_url: str) -> tuple[dict[str, Any], list[RemnawaveManualReviewItem]]:
+async def sync_remnawave_state(
+    migration_plan: MigrationPlan, *, database_url: str
+) -> tuple[dict[str, Any], list[RemnawaveManualReviewItem]]:
     from sqlalchemy import select
 
     from app.db.models import Account
@@ -1204,8 +1341,12 @@ async def sync_remnawave_state(migration_plan: MigrationPlan, *, database_url: s
             accounts_by_telegram_id = {
                 account.telegram_id: account
                 for account in (
-                    await session.execute(select(Account).where(Account.telegram_id.is_not(None)))
-                ).scalars().all()
+                    await session.execute(
+                        select(Account).where(Account.telegram_id.is_not(None))
+                    )
+                )
+                .scalars()
+                .all()
                 if account.telegram_id is not None
             }
 
@@ -1225,14 +1366,22 @@ async def sync_remnawave_state(migration_plan: MigrationPlan, *, database_url: s
                         "Run --apply-db first."
                     )
 
-                desired_uuid = account.remnawave_user_uuid or plan.target_remnawave_uuid or account.id
+                desired_uuid = (
+                    account.remnawave_user_uuid
+                    or plan.target_remnawave_uuid
+                    or account.id
+                )
                 desired_uuid_set.add(desired_uuid)
                 remote_user = await gateway.upsert_user(
                     user_uuid=desired_uuid,
-                    expire_at=account.subscription_expires_at or plan.target_subscription_expires_at or datetime.now(UTC),
+                    expire_at=account.subscription_expires_at
+                    or plan.target_subscription_expires_at
+                    or datetime.now(UTC),
                     email=account.email,
                     telegram_id=account.telegram_id,
-                    status=_desired_subscription_status(expires_at=account.subscription_expires_at),
+                    status=_desired_subscription_status(
+                        expires_at=account.subscription_expires_at
+                    ),
                     is_trial=bool(account.subscription_is_trial),
                     hwid_device_limit=plan.target_hwid_device_limit,
                 )
@@ -1262,7 +1411,9 @@ async def sync_remnawave_state(migration_plan: MigrationPlan, *, database_url: s
         await engine.dispose()
 
     desired_uuid_strs = {str(item) for item in desired_uuid_set}
-    known_legacy_uuid_strs = {str(item) for item in migration_plan.all_legacy_remnawave_uuids}
+    known_legacy_uuid_strs = {
+        str(item) for item in migration_plan.all_legacy_remnawave_uuids
+    }
     manual_review_items = [
         RemnawaveManualReviewItem(
             uuid=str(user.uuid),
@@ -1317,7 +1468,9 @@ async def report_remnawave_state(
 
     remote_inventory = await gateway.get_all_users()
     remote_uuid_set = {str(user.uuid) for user in remote_inventory}
-    known_legacy_uuid_strs = {str(item) for item in migration_plan.all_legacy_remnawave_uuids}
+    known_legacy_uuid_strs = {
+        str(item) for item in migration_plan.all_legacy_remnawave_uuids
+    }
     manual_review_items = [
         RemnawaveManualReviewItem(
             uuid=str(user.uuid),
@@ -1337,7 +1490,9 @@ async def report_remnawave_state(
     summary = {
         "desired_active_accounts": len(desired_plans),
         "legacy_cleanup_candidates": len(cleanup_candidates),
-        "legacy_cleanup_present_in_panel": sum(1 for item in cleanup_candidates if item in remote_uuid_set),
+        "legacy_cleanup_present_in_panel": sum(
+            1 for item in cleanup_candidates if item in remote_uuid_set
+        ),
         "manual_review_candidates": len(manual_review_items),
     }
     return summary, manual_review_items
@@ -1383,7 +1538,9 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
 
         database_url = settings.database_url
     if (args.apply_db or args.sync_remnawave) and not database_url:
-        raise SystemExit("Target database URL is required for --apply-db or --sync-remnawave")
+        raise SystemExit(
+            "Target database URL is required for --apply-db or --sync-remnawave"
+        )
 
     if args.apply_db:
         db_summary = await apply_db_import(migration_plan, database_url=database_url)
@@ -1391,7 +1548,10 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
         _print_apply_db_summary(db_summary)
 
     if args.report_remnawave:
-        remnawave_report_summary, remnawave_manual_review = await report_remnawave_state(
+        (
+            remnawave_report_summary,
+            remnawave_manual_review,
+        ) = await report_remnawave_state(
             migration_plan,
         )
         report["remnawave_report_summary"] = remnawave_report_summary
@@ -1409,7 +1569,9 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
             }
             for item in remnawave_manual_review
         ]
-        _print_remnawave_report_summary(remnawave_report_summary, remnawave_manual_review)
+        _print_remnawave_report_summary(
+            remnawave_report_summary, remnawave_manual_review
+        )
 
     if args.sync_remnawave:
         sync_summary, manual_review_items = await sync_remnawave_state(

@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error
 from app.core.config import settings
 from app.core.security import decode_access_token, TokenError
 from app.db.models import Account, AccountStatus, Admin
@@ -19,9 +20,18 @@ from app.services.accounts import (
 )
 from app.services.admin_auth import get_admin_by_id
 from app.services.cache import get_cache
+from app.services.i18n import translate
 
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _admin_api_error(status_code: int, key: str, error_code: str):
+    return api_error(
+        status_code,
+        translate(key),
+        error_code=error_code,
+    )
 
 
 def verify_internal_api_token(authorization: str | None) -> None:
@@ -50,7 +60,9 @@ async def get_current_account(
     session: AsyncSession = Depends(get_session),
 ) -> Account:
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="missing credentials"
+        )
 
     token = credentials.credentials
     cache = get_cache()
@@ -85,7 +97,9 @@ async def get_current_account(
         account = await get_account_by_id(session, cached_account_id)
         if account is not None:
             if account.status == AccountStatus.BLOCKED:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="account blocked")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="account blocked"
+                )
             return account
 
         await cache.delete(
@@ -114,10 +128,14 @@ async def get_current_account(
     try:
         account = await upsert_supabase_account(session, supabase_user=supabase_user)
     except AccountIdentityConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
     if account.status == AccountStatus.BLOCKED:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="account blocked")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="account blocked"
+        )
 
     await cache.set_str(
         cache.auth_token_account_key(token),
@@ -133,25 +151,51 @@ async def get_current_admin(
     session: AsyncSession = Depends(get_session),
 ) -> Admin:
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing credentials")
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.missing_credentials",
+            "admin_missing_credentials",
+        )
 
     try:
-        claims = decode_access_token(credentials.credentials, secret=settings.jwt_secret)
+        claims = decode_access_token(
+            credentials.credentials, secret=settings.jwt_secret
+        )
     except TokenError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token") from exc
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.invalid_token",
+            "admin_invalid_token",
+        ) from exc
 
     if claims.get("scope") != "admin":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid admin token")
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.invalid_scope",
+            "admin_invalid_scope",
+        )
 
     admin_id = claims.get("sub")
     if not admin_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token missing subject")
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.token_missing_subject",
+            "admin_token_missing_subject",
+        )
 
     admin = await get_admin_by_id(session, admin_id)
     if admin is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="admin not found")
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.not_found",
+            "admin_not_found",
+        )
     if not admin.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin disabled")
+        raise _admin_api_error(
+            status.HTTP_403_FORBIDDEN,
+            "api.admin.errors.disabled",
+            "admin_disabled",
+        )
     return admin
 
 
@@ -159,5 +203,9 @@ async def require_superuser_admin(
     current_admin: Admin = Depends(get_current_admin),
 ) -> Admin:
     if not current_admin.is_superuser:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="superuser required")
+        raise _admin_api_error(
+            status.HTTP_403_FORBIDDEN,
+            "api.admin.errors.superuser_required",
+            "admin_superuser_required",
+        )
     return current_admin

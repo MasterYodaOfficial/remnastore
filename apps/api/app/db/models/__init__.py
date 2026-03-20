@@ -42,9 +42,17 @@ from app.db.models.promo import (
     PromoRedemptionContext,
     PromoRedemptionStatus,
 )
-from app.db.models.referral import ReferralAttribution, ReferralReward, TelegramReferralIntent
+from app.db.models.referral import (
+    ReferralAttribution,
+    ReferralReward,
+    TelegramReferralIntent,
+)
 from app.db.models.subscription_grant import SubscriptionGrant
-from app.db.models.withdrawal import Withdrawal, WithdrawalDestinationType, WithdrawalStatus
+from app.db.models.withdrawal import (
+    Withdrawal,
+    WithdrawalDestinationType,
+    WithdrawalStatus,
+)
 
 __all__ = [
     "AccountEventLog",

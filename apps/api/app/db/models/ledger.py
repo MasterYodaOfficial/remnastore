@@ -2,7 +2,16 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, Enum, Index, String, Text, Uuid, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Enum,
+    Index,
+    String,
+    Text,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base

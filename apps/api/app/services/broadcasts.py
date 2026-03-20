@@ -47,7 +47,11 @@ from app.services.notifications import (
 
 
 class BroadcastServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class BroadcastNotFoundError(BroadcastServiceError):
@@ -55,15 +59,23 @@ class BroadcastNotFoundError(BroadcastServiceError):
 
 
 class BroadcastConflictError(BroadcastServiceError):
-    pass
+    default_code = "admin_broadcast_conflict"
 
 
 class BroadcastValidationError(BroadcastServiceError):
-    pass
+    default_code = "admin_broadcast_validation_failed"
 
 
 class BroadcastAudiencePresetNotFoundError(BroadcastServiceError):
     pass
+
+
+def _broadcast_conflict(detail: str, *, code: str) -> BroadcastConflictError:
+    return BroadcastConflictError(detail, code=code)
+
+
+def _broadcast_validation(detail: str, *, code: str) -> BroadcastValidationError:
+    return BroadcastValidationError(detail, code=code)
 
 
 @dataclass(slots=True)
@@ -249,7 +261,9 @@ class _TelegramHtmlSubsetValidator(HTMLParser):
                 )
                 continue
             if tag == "a" and attribute_name == "href":
-                if attribute_value is None or not _is_allowed_button_url(attribute_value):
+                if attribute_value is None or not _is_allowed_button_url(
+                    attribute_value
+                ):
                     self.errors.append("anchor href must be a valid http/https/tg URL")
         self._stack.append(tag)
 
@@ -301,7 +315,9 @@ def _normalize_broadcast_audience_preset_description(value: str | None) -> str |
 
 def _is_allowed_button_url(value: str) -> bool:
     parsed = urlparse(value)
-    return parsed.scheme in {"http", "https", "tg"} and bool(parsed.netloc or parsed.path)
+    return parsed.scheme in {"http", "https", "tg"} and bool(
+        parsed.netloc or parsed.path
+    )
 
 
 def _normalize_test_target_emails(emails: list[str]) -> list[str]:
@@ -412,9 +428,13 @@ def _normalize_manual_account_ids(value: object) -> tuple[uuid.UUID, ...]:
     seen: set[uuid.UUID] = set()
     for item in value:
         try:
-            normalized_value = item if isinstance(item, uuid.UUID) else uuid.UUID(str(item).strip())
+            normalized_value = (
+                item if isinstance(item, uuid.UUID) else uuid.UUID(str(item).strip())
+            )
         except (TypeError, ValueError, AttributeError) as exc:
-            raise BroadcastValidationError("manual_account_ids must contain valid UUIDs") from exc
+            raise BroadcastValidationError(
+                "manual_account_ids must contain valid UUIDs"
+            ) from exc
         if normalized_value in seen:
             continue
         seen.add(normalized_value)
@@ -455,7 +475,9 @@ def _normalize_manual_telegram_ids(value: object) -> tuple[int, ...]:
         try:
             normalized_value = int(item)
         except (TypeError, ValueError) as exc:
-            raise BroadcastValidationError("manual_telegram_ids must contain integers") from exc
+            raise BroadcastValidationError(
+                "manual_telegram_ids must contain integers"
+            ) from exc
         if normalized_value in seen:
             continue
         seen.add(normalized_value)
@@ -498,11 +520,17 @@ def normalize_broadcast_audience_config(
         try:
             segment = BroadcastAudienceSegment(str(raw_segment))
         except ValueError as exc:
-            raise BroadcastValidationError(f"unsupported audience segment: {raw_segment}") from exc
+            raise BroadcastValidationError(
+                f"unsupported audience segment: {raw_segment}"
+            ) from exc
     exclude_blocked = bool(raw_audience.get("exclude_blocked", True))
-    manual_account_ids = _normalize_manual_account_ids(raw_audience.get("manual_account_ids"))
+    manual_account_ids = _normalize_manual_account_ids(
+        raw_audience.get("manual_account_ids")
+    )
     manual_emails = _normalize_manual_emails(raw_audience.get("manual_emails"))
-    manual_telegram_ids = _normalize_manual_telegram_ids(raw_audience.get("manual_telegram_ids"))
+    manual_telegram_ids = _normalize_manual_telegram_ids(
+        raw_audience.get("manual_telegram_ids")
+    )
     last_seen_older_than_days = None
     include_never_seen = bool(raw_audience.get("include_never_seen", False))
 
@@ -597,7 +625,9 @@ def normalize_broadcast_audience_config(
             )
 
     if (cooldown_days is None) != (cooldown_key is None):
-        raise BroadcastValidationError("cooldown_days and cooldown_key must be provided together")
+        raise BroadcastValidationError(
+            "cooldown_days and cooldown_key must be provided together"
+        )
     if (telegram_quiet_hours_start is None) != (telegram_quiet_hours_end is None):
         raise BroadcastValidationError(
             "telegram_quiet_hours_start and telegram_quiet_hours_end must be provided together"
@@ -638,7 +668,8 @@ def validate_broadcast_runtime_constraints(broadcast: Broadcast) -> None:
     if (
         broadcast.content_type == BroadcastContentType.PHOTO
         and BroadcastChannel.TELEGRAM.value in channels
-        and len(build_broadcast_telegram_html(broadcast)) > TELEGRAM_PHOTO_CAPTION_MAX_LENGTH
+        and len(build_broadcast_telegram_html(broadcast))
+        > TELEGRAM_PHOTO_CAPTION_MAX_LENGTH
     ):
         raise BroadcastValidationError(
             "photo broadcast caption is too long for Telegram; shorten title/body_html"
@@ -653,7 +684,8 @@ def build_broadcast_telegram_reply_markup(
 
     return {
         "inline_keyboard": [
-            [{"text": str(button["text"]), "url": str(button["url"])}] for button in buttons
+            [{"text": str(button["text"]), "url": str(button["url"])}]
+            for button in buttons
         ]
     }
 
@@ -682,7 +714,10 @@ async def _resolve_accounts_by_emails(
     for account, auth_email in result.all():
         if account.email:
             lowered_account_email = account.email.strip().lower()
-            if lowered_account_email in emails and lowered_account_email not in resolved:
+            if (
+                lowered_account_email in emails
+                and lowered_account_email not in resolved
+            ):
                 resolved[lowered_account_email] = account
         if auth_email:
             lowered_auth_email = auth_email.strip().lower()
@@ -753,6 +788,7 @@ async def _send_broadcast_to_telegram(
 
     return message_ids
 
+
 def validate_telegram_html_subset(value: str) -> str:
     normalized = _normalize_required_text(value, field_name="body_html")
     validator = _TelegramHtmlSubsetValidator()
@@ -769,10 +805,14 @@ def normalize_broadcast_buttons(buttons: list[dict[str, str]]) -> list[dict[str,
         raise BroadcastValidationError("buttons must contain at most 3 items")
 
     for button in buttons:
-        text = _normalize_required_text(button.get("text", ""), field_name="button text")
+        text = _normalize_required_text(
+            button.get("text", ""), field_name="button text"
+        )
         url = _normalize_required_text(button.get("url", ""), field_name="button url")
         if not _is_allowed_button_url(url):
-            raise BroadcastValidationError("button url must use http, https or tg scheme")
+            raise BroadcastValidationError(
+                "button url must use http, https or tg scheme"
+            )
         normalized_buttons.append({"text": text, "url": url})
     return normalized_buttons
 
@@ -800,7 +840,9 @@ def build_broadcast_audience_payload(
         "exclude_blocked": audience.exclude_blocked,
     }
     if audience.manual_account_ids:
-        payload["manual_account_ids"] = [str(item) for item in audience.manual_account_ids]
+        payload["manual_account_ids"] = [
+            str(item) for item in audience.manual_account_ids
+        ]
     if audience.manual_emails:
         payload["manual_emails"] = list(audience.manual_emails)
     if audience.manual_telegram_ids:
@@ -810,13 +852,21 @@ def build_broadcast_audience_payload(
     if audience.include_never_seen:
         payload["include_never_seen"] = audience.include_never_seen
     if audience.pending_payment_older_than_minutes is not None:
-        payload["pending_payment_older_than_minutes"] = audience.pending_payment_older_than_minutes
+        payload["pending_payment_older_than_minutes"] = (
+            audience.pending_payment_older_than_minutes
+        )
     if audience.pending_payment_within_last_days is not None:
-        payload["pending_payment_within_last_days"] = audience.pending_payment_within_last_days
+        payload["pending_payment_within_last_days"] = (
+            audience.pending_payment_within_last_days
+        )
     if audience.failed_payment_within_last_days is not None:
-        payload["failed_payment_within_last_days"] = audience.failed_payment_within_last_days
+        payload["failed_payment_within_last_days"] = (
+            audience.failed_payment_within_last_days
+        )
     if audience.subscription_expired_from_days is not None:
-        payload["subscription_expired_from_days"] = audience.subscription_expired_from_days
+        payload["subscription_expired_from_days"] = (
+            audience.subscription_expired_from_days
+        )
     if audience.subscription_expired_to_days is not None:
         payload["subscription_expired_to_days"] = audience.subscription_expired_to_days
     if audience.cooldown_days is not None:
@@ -874,7 +924,9 @@ async def _load_direct_plan_preview_payments(
             Payment.account_id.in_(account_ids),
             Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
         )
-        .order_by(Payment.account_id.asc(), Payment.created_at.desc(), Payment.id.desc())
+        .order_by(
+            Payment.account_id.asc(), Payment.created_at.desc(), Payment.id.desc()
+        )
     )
 
     latest_by_account: dict[uuid.UUID, Payment] = {}
@@ -896,8 +948,7 @@ async def _load_auth_emails_for_accounts(
         return {}
 
     result = await session.execute(
-        select(AuthAccount.account_id, AuthAccount.email)
-        .where(
+        select(AuthAccount.account_id, AuthAccount.email).where(
             AuthAccount.account_id.in_(account_ids),
             AuthAccount.email.is_not(None),
         )
@@ -917,7 +968,9 @@ async def _resolve_manual_list_accounts(
     session: AsyncSession,
     *,
     audience: BroadcastAudienceConfig,
-) -> tuple[dict[uuid.UUID, Account], dict[uuid.UUID, set[str]], list[str], list[str], list[int]]:
+) -> tuple[
+    dict[uuid.UUID, Account], dict[uuid.UUID, set[str]], list[str], list[str], list[int]
+]:
     accounts_by_id: dict[uuid.UUID, Account] = {}
     matched_by_account: dict[uuid.UUID, set[str]] = {}
 
@@ -931,7 +984,9 @@ async def _resolve_manual_list_accounts(
         }
         for account in resolved_account_ids.values():
             accounts_by_id[account.id] = account
-            matched_by_account.setdefault(account.id, set()).add(f"account_id:{account.id}")
+            matched_by_account.setdefault(account.id, set()).add(
+                f"account_id:{account.id}"
+            )
         unresolved_account_ids = [
             str(account_id)
             for account_id in audience.manual_account_ids
@@ -959,7 +1014,9 @@ async def _resolve_manual_list_accounts(
         )
         for telegram_id, account in resolved_by_telegram_id.items():
             accounts_by_id[account.id] = account
-            matched_by_account.setdefault(account.id, set()).add(f"telegram_id:{telegram_id}")
+            matched_by_account.setdefault(account.id, set()).add(
+                f"telegram_id:{telegram_id}"
+            )
         unresolved_telegram_ids = [
             telegram_id
             for telegram_id in audience.manual_telegram_ids
@@ -995,11 +1052,9 @@ async def _build_manual_list_preview_diagnostics(
         audience=audience,
     )
     final_account_ids = set(
-        (
-            await session.execute(
-                _build_base_audience_query(audience=audience)
-            )
-        ).scalars().all()
+        (await session.execute(_build_base_audience_query(audience=audience)))
+        .scalars()
+        .all()
     )
 
     excluded_accounts: list[BroadcastAudienceManualListExcludedAccount] = []
@@ -1069,15 +1124,23 @@ def _build_broadcast_audience_match_reasons(
         matched_emails: list[str] = []
         if account.email is not None:
             normalized_account_email = account.email.strip().lower()
-            if normalized_account_email and normalized_account_email in audience.manual_emails:
+            if (
+                normalized_account_email
+                and normalized_account_email in audience.manual_emails
+            ):
                 matched_emails.append(normalized_account_email)
         if auth_emails:
             matched_emails.extend(
-                email for email in sorted(auth_emails) if email in audience.manual_emails
+                email
+                for email in sorted(auth_emails)
+                if email in audience.manual_emails
             )
         if matched_emails:
             reasons.append(f"Совпал email: {', '.join(dict.fromkeys(matched_emails))}.")
-        if account.telegram_id is not None and int(account.telegram_id) in audience.manual_telegram_ids:
+        if (
+            account.telegram_id is not None
+            and int(account.telegram_id) in audience.manual_telegram_ids
+        ):
             reasons.append(f"Совпал telegram_id: {account.telegram_id}.")
         return reasons
     if audience.segment == BroadcastAudienceSegment.INACTIVE_ACCOUNTS:
@@ -1097,7 +1160,9 @@ def _build_broadcast_audience_match_reasons(
                 f"Последняя успешная оплата: {_format_preview_relative_age(latest_succeeded_direct_plan_payment.created_at, now=now)}."
             )
         if account.last_seen_at is not None:
-            reasons.append(f"Не заходил {_format_preview_relative_age(account.last_seen_at, now=now)}.")
+            reasons.append(
+                f"Не заходил {_format_preview_relative_age(account.last_seen_at, now=now)}."
+            )
         else:
             reasons.append("После регистрации еще ни разу не заходил.")
         reasons.append(f"Порог неактивности: {audience.last_seen_older_than_days} дн.")
@@ -1159,9 +1224,13 @@ def _build_broadcast_audience_delivery_preview(
 
     if BroadcastChannel.TELEGRAM.value in channels:
         if account.telegram_id is None:
-            delivery_notes.append("Telegram недоступен: аккаунт не привязан к Telegram.")
+            delivery_notes.append(
+                "Telegram недоступен: аккаунт не привязан к Telegram."
+            )
         elif account.telegram_bot_blocked_at is not None:
-            delivery_notes.append("Telegram недоступен: бот заблокирован пользователем.")
+            delivery_notes.append(
+                "Telegram недоступен: бот заблокирован пользователем."
+            )
         else:
             delivery_channels.append(BroadcastChannel.TELEGRAM)
             quiet_until = _resolve_telegram_quiet_hours_release_at(
@@ -1174,7 +1243,9 @@ def _build_broadcast_audience_delivery_preview(
                 )
 
     if not delivery_channels:
-        delivery_notes.append("По выбранным каналам у этого аккаунта не будет доставки.")
+        delivery_notes.append(
+            "По выбранным каналам у этого аккаунта не будет доставки."
+        )
 
     return delivery_channels, delivery_notes
 
@@ -1184,7 +1255,10 @@ def _resolve_telegram_quiet_hours_release_at(
     audience: BroadcastAudienceConfig,
     now_moscow: datetime,
 ) -> datetime | None:
-    if audience.telegram_quiet_hours_start is None or audience.telegram_quiet_hours_end is None:
+    if (
+        audience.telegram_quiet_hours_start is None
+        or audience.telegram_quiet_hours_end is None
+    ):
         return None
 
     start_time = _parse_hhmm_time(audience.telegram_quiet_hours_start)
@@ -1218,12 +1292,18 @@ def _build_manual_list_account_predicate(
     if audience.manual_account_ids:
         conditions.append(Account.id.in_(list(audience.manual_account_ids)))
     if audience.manual_emails:
-        conditions.append(func.lower(func.coalesce(Account.email, "")).in_(list(audience.manual_emails)))
+        conditions.append(
+            func.lower(func.coalesce(Account.email, "")).in_(
+                list(audience.manual_emails)
+            )
+        )
         conditions.append(
             exists(
                 select(AuthAccount.id).where(
                     AuthAccount.account_id == Account.id,
-                    func.lower(func.coalesce(AuthAccount.email, "")).in_(list(audience.manual_emails)),
+                    func.lower(func.coalesce(AuthAccount.email, "")).in_(
+                        list(audience.manual_emails)
+                    ),
                 )
             )
         )
@@ -1274,7 +1354,9 @@ def _build_base_audience_query(
     elif audience.segment == BroadcastAudienceSegment.MANUAL_LIST:
         query = query.where(_build_manual_list_account_predicate(audience=audience))
     elif audience.segment == BroadcastAudienceSegment.INACTIVE_ACCOUNTS:
-        query = query.where(_build_inactive_last_seen_predicate(audience=audience, now=now))
+        query = query.where(
+            _build_inactive_last_seen_predicate(audience=audience, now=now)
+        )
     elif audience.segment == BroadcastAudienceSegment.INACTIVE_PAID_USERS:
         query = query.where(
             _build_inactive_last_seen_predicate(audience=audience, now=now),
@@ -1293,23 +1375,30 @@ def _build_base_audience_query(
         )
         if audience.subscription_expired_from_days is not None:
             query = query.where(
-                Account.subscription_expires_at <= now - timedelta(days=audience.subscription_expired_from_days)
+                Account.subscription_expires_at
+                <= now - timedelta(days=audience.subscription_expired_from_days)
             )
         if audience.subscription_expired_to_days is not None:
             query = query.where(
-                Account.subscription_expires_at >= now - timedelta(days=audience.subscription_expired_to_days)
+                Account.subscription_expires_at
+                >= now - timedelta(days=audience.subscription_expired_to_days)
             )
     elif audience.segment == BroadcastAudienceSegment.ABANDONED_CHECKOUT:
         latest_pending_payment = aliased(Payment)
         query = query.where(
             exists(
                 select(latest_pending_payment.id).where(
-                    latest_pending_payment.id == _latest_direct_plan_payment_id_subquery(),
+                    latest_pending_payment.id
+                    == _latest_direct_plan_payment_id_subquery(),
                     latest_pending_payment.status.in_(DIRECT_PLAN_PENDING_STATUSES),
                     latest_pending_payment.created_at
-                    <= now - timedelta(minutes=audience.pending_payment_older_than_minutes or 0),
+                    <= now
+                    - timedelta(
+                        minutes=audience.pending_payment_older_than_minutes or 0
+                    ),
                     latest_pending_payment.created_at
-                    >= now - timedelta(days=audience.pending_payment_within_last_days or 0),
+                    >= now
+                    - timedelta(days=audience.pending_payment_within_last_days or 0),
                 )
             )
         )
@@ -1318,10 +1407,12 @@ def _build_base_audience_query(
         query = query.where(
             exists(
                 select(latest_failed_payment.id).where(
-                    latest_failed_payment.id == _latest_direct_plan_payment_id_subquery(),
+                    latest_failed_payment.id
+                    == _latest_direct_plan_payment_id_subquery(),
                     latest_failed_payment.status.in_(DIRECT_PLAN_FAILED_STATUSES),
                     latest_failed_payment.created_at
-                    >= now - timedelta(days=audience.failed_payment_within_last_days or 0),
+                    >= now
+                    - timedelta(days=audience.failed_payment_within_last_days or 0),
                 )
             )
         )
@@ -1368,7 +1459,8 @@ def _build_base_audience_query(
                     BroadcastDelivery.status == BroadcastDeliveryStatus.DELIVERED,
                     BroadcastDelivery.delivered_at.is_not(None),
                     BroadcastDelivery.delivered_at >= cooldown_cutoff,
-                    Broadcast.audience["cooldown_key"].as_string() == audience.cooldown_key,
+                    Broadcast.audience["cooldown_key"].as_string()
+                    == audience.cooldown_key,
                 )
             )
         )
@@ -1383,7 +1475,9 @@ async def estimate_broadcast_audience(
     channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
 ) -> BroadcastAudienceEstimate:
     audience_config = (
-        audience if isinstance(audience, BroadcastAudienceConfig) else normalize_broadcast_audience_config(audience=audience)
+        audience
+        if isinstance(audience, BroadcastAudienceConfig)
+        else normalize_broadcast_audience_config(audience=audience)
     )
     channel_values = normalize_broadcast_channels(channels)
     base_query = _build_base_audience_query(
@@ -1408,7 +1502,9 @@ async def estimate_broadcast_audience(
             or 0
         )
 
-    in_app_recipients = total_accounts if BroadcastChannel.IN_APP.value in channel_values else 0
+    in_app_recipients = (
+        total_accounts if BroadcastChannel.IN_APP.value in channel_values else 0
+    )
     return BroadcastAudienceEstimate(
         total_accounts=total_accounts,
         in_app_recipients=in_app_recipients,
@@ -1444,7 +1540,9 @@ async def preview_broadcast_audience(
     limit: int,
 ) -> BroadcastAudiencePreview:
     audience_config = (
-        audience if isinstance(audience, BroadcastAudienceConfig) else normalize_broadcast_audience_config(audience=audience)
+        audience
+        if isinstance(audience, BroadcastAudienceConfig)
+        else normalize_broadcast_audience_config(audience=audience)
     )
     normalized_channels = normalize_broadcast_channels(channels)
     base_query = _build_base_audience_query(
@@ -1463,7 +1561,10 @@ async def preview_broadcast_audience(
         audience=audience_config,
         limit=limit,
     )
-    latest_payments_by_account, latest_succeeded_payments_by_account = await _load_direct_plan_preview_payments(
+    (
+        latest_payments_by_account,
+        latest_succeeded_payments_by_account,
+    ) = await _load_direct_plan_preview_payments(
         session,
         account_ids=[account.id for account in accounts],
     )
@@ -1486,8 +1587,12 @@ async def preview_broadcast_audience(
                 match_reasons=_build_broadcast_audience_match_reasons(
                     account=account,
                     audience=audience_config,
-                    latest_direct_plan_payment=latest_payments_by_account.get(account.id),
-                    latest_succeeded_direct_plan_payment=latest_succeeded_payments_by_account.get(account.id),
+                    latest_direct_plan_payment=latest_payments_by_account.get(
+                        account.id
+                    ),
+                    latest_succeeded_direct_plan_payment=latest_succeeded_payments_by_account.get(
+                        account.id
+                    ),
                     auth_emails=auth_emails_by_account.get(account.id),
                     now=now,
                 ),
@@ -1570,7 +1675,10 @@ async def list_broadcasts(
         filters.append(Broadcast.status == status)
 
     total = int(
-        await session.scalar(select(func.count()).select_from(Broadcast).where(*filters)) or 0
+        await session.scalar(
+            select(func.count()).select_from(Broadcast).where(*filters)
+        )
+        or 0
     )
     result = await session.execute(
         select(Broadcast)
@@ -1589,11 +1697,14 @@ async def list_broadcast_audience_presets(
     offset: int,
 ) -> tuple[list[BroadcastAudiencePreset], int]:
     total = int(
-        await session.scalar(select(func.count()).select_from(BroadcastAudiencePreset)) or 0
+        await session.scalar(select(func.count()).select_from(BroadcastAudiencePreset))
+        or 0
     )
     result = await session.execute(
         select(BroadcastAudiencePreset)
-        .order_by(BroadcastAudiencePreset.updated_at.desc(), BroadcastAudiencePreset.id.desc())
+        .order_by(
+            BroadcastAudiencePreset.updated_at.desc(), BroadcastAudiencePreset.id.desc()
+        )
         .limit(limit)
         .offset(offset)
     )
@@ -1617,7 +1728,9 @@ async def create_broadcast_audience_preset(
     audience: dict[str, object] | None,
 ) -> BroadcastAudiencePreset:
     normalized_name = _normalize_broadcast_audience_preset_name(name)
-    normalized_description = _normalize_broadcast_audience_preset_description(description)
+    normalized_description = _normalize_broadcast_audience_preset_description(
+        description
+    )
     audience_config = normalize_broadcast_audience_config(audience=audience)
 
     preset = BroadcastAudiencePreset(
@@ -1656,10 +1769,14 @@ async def update_broadcast_audience_preset(
 ) -> BroadcastAudiencePreset:
     preset = await session.get(BroadcastAudiencePreset, preset_id)
     if preset is None:
-        raise BroadcastAudiencePresetNotFoundError(f"broadcast audience preset not found: {preset_id}")
+        raise BroadcastAudiencePresetNotFoundError(
+            f"broadcast audience preset not found: {preset_id}"
+        )
 
     normalized_name = _normalize_broadcast_audience_preset_name(name)
-    normalized_description = _normalize_broadcast_audience_preset_description(description)
+    normalized_description = _normalize_broadcast_audience_preset_description(
+        description
+    )
     audience_config = normalize_broadcast_audience_config(audience=audience)
 
     preset.name = normalized_name
@@ -1691,7 +1808,9 @@ async def delete_broadcast_audience_preset(
 ) -> None:
     preset = await session.get(BroadcastAudiencePreset, preset_id)
     if preset is None:
-        raise BroadcastAudiencePresetNotFoundError(f"broadcast audience preset not found: {preset_id}")
+        raise BroadcastAudiencePresetNotFoundError(
+            f"broadcast audience preset not found: {preset_id}"
+        )
 
     session.add(
         AdminActionLog(
@@ -1802,7 +1921,10 @@ async def update_broadcast_draft(
     if broadcast is None:
         raise BroadcastNotFoundError(f"broadcast not found: {broadcast_id}")
     if broadcast.status != BroadcastStatus.DRAFT:
-        raise BroadcastConflictError("only draft broadcasts can be edited")
+        raise _broadcast_conflict(
+            "only draft broadcasts can be edited",
+            code="broadcast_edit_requires_draft",
+        )
 
     normalized_name = _normalize_required_text(name, field_name="name")
     normalized_title = _normalize_required_text(title, field_name="title")
@@ -1865,7 +1987,10 @@ async def delete_broadcast_draft(
     if broadcast is None:
         raise BroadcastNotFoundError(f"broadcast not found: {broadcast_id}")
     if broadcast.status != BroadcastStatus.DRAFT:
-        raise BroadcastConflictError("only draft broadcasts can be deleted")
+        raise _broadcast_conflict(
+            "only draft broadcasts can be deleted",
+            code="broadcast_delete_requires_draft",
+        )
 
     session.add(
         AdminActionLog(
@@ -1913,11 +2038,17 @@ async def _create_runtime_run(
 ) -> BroadcastRun:
     validate_broadcast_runtime_constraints(broadcast)
     if broadcast.status not in {BroadcastStatus.DRAFT, BroadcastStatus.SCHEDULED}:
-        raise BroadcastConflictError("broadcast is not ready to launch")
+        raise _broadcast_conflict(
+            "broadcast is not ready to launch",
+            code="broadcast_not_ready",
+        )
 
     active_run = await _get_active_runtime_run(session, broadcast_id=broadcast.id)
     if active_run is not None:
-        raise BroadcastConflictError("broadcast already has an active run")
+        raise _broadcast_conflict(
+            "broadcast already has an active run",
+            code="broadcast_active_run_exists",
+        )
 
     audience_config = _get_broadcast_audience_config(broadcast)
     accounts = await _resolve_audience_accounts(
@@ -2001,7 +2132,10 @@ async def launch_broadcast_now(
     if broadcast is None:
         raise BroadcastNotFoundError(f"broadcast not found: {broadcast_id}")
     if broadcast.status != BroadcastStatus.DRAFT:
-        raise BroadcastConflictError("only draft broadcasts can be launched now")
+        raise _broadcast_conflict(
+            "only draft broadcasts can be launched now",
+            code="broadcast_launch_requires_draft",
+        )
 
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -2059,7 +2193,10 @@ async def schedule_broadcast_launch(
     if broadcast is None:
         raise BroadcastNotFoundError(f"broadcast not found: {broadcast_id}")
     if broadcast.status != BroadcastStatus.DRAFT:
-        raise BroadcastConflictError("only draft broadcasts can be scheduled")
+        raise _broadcast_conflict(
+            "only draft broadcasts can be scheduled",
+            code="broadcast_schedule_requires_draft",
+        )
 
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -2068,7 +2205,10 @@ async def schedule_broadcast_launch(
     normalized_comment = _normalize_optional_text(comment)
     normalized_scheduled_at = _normalize_scheduled_datetime(scheduled_at)
     if normalized_scheduled_at <= _now_moscow():
-        raise BroadcastValidationError("scheduled_at must be in the future")
+        raise _broadcast_validation(
+            "scheduled_at must be in the future",
+            code="broadcast_schedule_in_past",
+        )
 
     validate_broadcast_runtime_constraints(broadcast)
 
@@ -2122,7 +2262,10 @@ async def pause_broadcast(
     if broadcast is None:
         raise BroadcastNotFoundError(f"broadcast not found: {broadcast_id}")
     if broadcast.status not in {BroadcastStatus.SCHEDULED, BroadcastStatus.RUNNING}:
-        raise BroadcastConflictError("only scheduled or running broadcasts can be paused")
+        raise _broadcast_conflict(
+            "only scheduled or running broadcasts can be paused",
+            code="broadcast_pause_invalid_state",
+        )
 
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -2175,7 +2318,10 @@ async def resume_broadcast(
     if broadcast is None:
         raise BroadcastNotFoundError(f"broadcast not found: {broadcast_id}")
     if broadcast.status != BroadcastStatus.PAUSED:
-        raise BroadcastConflictError("only paused broadcasts can be resumed")
+        raise _broadcast_conflict(
+            "only paused broadcasts can be resumed",
+            code="broadcast_resume_invalid_state",
+        )
 
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -2203,7 +2349,10 @@ async def resume_broadcast(
     elif broadcast.scheduled_at is not None:
         broadcast.status = BroadcastStatus.SCHEDULED
     else:
-        raise BroadcastConflictError("paused broadcast cannot be resumed without an active run")
+        raise _broadcast_conflict(
+            "paused broadcast cannot be resumed without an active run",
+            code="broadcast_resume_missing_run",
+        )
     broadcast.updated_by_admin_id = admin_id
     await session.flush()
 
@@ -2236,7 +2385,10 @@ async def cancel_broadcast(
         BroadcastStatus.RUNNING,
         BroadcastStatus.PAUSED,
     }:
-        raise BroadcastConflictError("only scheduled, running or paused broadcasts can be cancelled")
+        raise _broadcast_conflict(
+            "only scheduled, running or paused broadcasts can be cancelled",
+            code="broadcast_cancel_invalid_state",
+        )
 
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -2438,9 +2590,7 @@ def _defer_broadcast_delivery_for_quiet_hours(
     delivery.status = BroadcastDeliveryStatus.PENDING
     delivery.next_retry_at = quiet_until
     delivery.error_code = "quiet_hours"
-    delivery.error_message = (
-        f"telegram delivery deferred until {quiet_until.astimezone(BROADCAST_TZ).strftime('%Y-%m-%d %H:%M %Z')}"
-    )
+    delivery.error_message = f"telegram delivery deferred until {quiet_until.astimezone(BROADCAST_TZ).strftime('%Y-%m-%d %H:%M %Z')}"
 
 
 async def process_pending_broadcast_deliveries(
@@ -2487,8 +2637,12 @@ async def process_pending_broadcast_deliveries(
                     body=build_broadcast_in_app_body(broadcast.body_html),
                     priority=NotificationPriority.INFO,
                     payload=build_broadcast_notification_payload(broadcast),
-                    action_label=(broadcast.buttons[0]["text"] if broadcast.buttons else None),
-                    action_url=(broadcast.buttons[0]["url"] if broadcast.buttons else None),
+                    action_label=(
+                        broadcast.buttons[0]["text"] if broadcast.buttons else None
+                    ),
+                    action_url=(
+                        broadcast.buttons[0]["url"] if broadcast.buttons else None
+                    ),
                     dedupe_key=f"broadcast:{broadcast.id}:run:{run.id}:account:{account.id}:in_app",
                     channels=(NotificationChannel.IN_APP,),
                     deliver_to_telegram=False,
@@ -2496,7 +2650,9 @@ async def process_pending_broadcast_deliveries(
                 if notification is None:
                     delivery.status = BroadcastDeliveryStatus.SKIPPED
                     delivery.error_code = "missing_account"
-                    delivery.error_message = "account missing while creating in-app notification"
+                    delivery.error_message = (
+                        "account missing while creating in-app notification"
+                    )
                     delivery.next_retry_at = None
                     result.skipped += 1
                 else:
@@ -2560,7 +2716,9 @@ async def process_pending_broadcast_deliveries(
             )
             await _mark_broadcast_delivery_delivered(
                 delivery=delivery,
-                provider_message_id=provider_message_ids[-1] if provider_message_ids else None,
+                provider_message_id=provider_message_ids[-1]
+                if provider_message_ids
+                else None,
             )
             result.delivered += 1
         except BroadcastValidationError as exc:
@@ -2644,7 +2802,10 @@ async def list_broadcast_runs(
         )
 
     total = int(
-        await session.scalar(select(func.count()).select_from(BroadcastRun).where(*filters)) or 0
+        await session.scalar(
+            select(func.count()).select_from(BroadcastRun).where(*filters)
+        )
+        or 0
     )
     result = await session.execute(
         select(BroadcastRun)
@@ -2742,7 +2903,9 @@ async def send_broadcast_test(
     normalized_emails = _normalize_test_target_emails(emails)
     normalized_telegram_ids = _normalize_test_target_telegram_ids(telegram_ids)
     if not normalized_emails and not normalized_telegram_ids:
-        raise BroadcastValidationError("at least one email or telegram_id target is required")
+        raise BroadcastValidationError(
+            "at least one email or telegram_id target is required"
+        )
 
     existing_log_result = await session.execute(
         select(AdminActionLog).where(
@@ -2752,9 +2915,14 @@ async def send_broadcast_test(
     )
     existing_log = existing_log_result.scalar_one_or_none()
     if existing_log is not None:
-        result_payload = (existing_log.payload or {}).get("result") if existing_log.payload else None
+        result_payload = (
+            (existing_log.payload or {}).get("result") if existing_log.payload else None
+        )
         if not isinstance(result_payload, dict):
-            raise BroadcastConflictError("broadcast test send idempotency payload is invalid")
+            raise _broadcast_conflict(
+                "broadcast test send idempotency payload is invalid",
+                code="broadcast_test_send_idempotency_invalid",
+            )
         return BroadcastTestSendResult(
             broadcast_id=int(result_payload["broadcast_id"]),
             audit_log_id=existing_log.id,
@@ -2765,7 +2933,9 @@ async def send_broadcast_test(
             skipped_targets=int(result_payload["skipped_targets"]),
             resolved_account_targets=int(result_payload["resolved_account_targets"]),
             direct_telegram_targets=int(result_payload["direct_telegram_targets"]),
-            in_app_notifications_created=int(result_payload["in_app_notifications_created"]),
+            in_app_notifications_created=int(
+                result_payload["in_app_notifications_created"]
+            ),
             telegram_targets_sent=int(result_payload["telegram_targets_sent"]),
             items=[
                 BroadcastTestSendTargetResult(
@@ -2773,15 +2943,24 @@ async def send_broadcast_test(
                     source=str(item["source"]),
                     resolution=str(item["resolution"]),
                     status=str(item["status"]),
-                    account_id=uuid.UUID(item["account_id"]) if item.get("account_id") else None,
-                    telegram_id=int(item["telegram_id"]) if item.get("telegram_id") is not None else None,
-                    channels_attempted=[str(channel) for channel in item.get("channels_attempted", [])],
+                    account_id=uuid.UUID(item["account_id"])
+                    if item.get("account_id")
+                    else None,
+                    telegram_id=int(item["telegram_id"])
+                    if item.get("telegram_id") is not None
+                    else None,
+                    channels_attempted=[
+                        str(channel) for channel in item.get("channels_attempted", [])
+                    ],
                     in_app_notification_id=(
                         int(item["in_app_notification_id"])
                         if item.get("in_app_notification_id") is not None
                         else None
                     ),
-                    telegram_message_ids=[str(message_id) for message_id in item.get("telegram_message_ids", [])],
+                    telegram_message_ids=[
+                        str(message_id)
+                        for message_id in item.get("telegram_message_ids", [])
+                    ],
                     detail=str(item["detail"]) if item.get("detail") else None,
                 )
                 for item in result_payload.get("items", [])
@@ -3047,7 +3226,10 @@ async def _send_broadcast_test_to_account(
                 TelegramNotificationConfigurationError,
                 TelegramNotificationDeliveryError,
             ) as exc:
-                if isinstance(exc, TelegramNotificationDeliveryError) and exc.mark_telegram_bot_blocked:
+                if (
+                    isinstance(exc, TelegramNotificationDeliveryError)
+                    and exc.mark_telegram_bot_blocked
+                ):
                     await mark_telegram_bot_blocked(session, account=account)
                 detail_parts.append(str(exc))
 

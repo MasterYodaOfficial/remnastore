@@ -30,23 +30,27 @@ PAID_REFERRAL_PURCHASE_SOURCES = ("wallet", "direct_payment")
 
 
 class ReferralServiceError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class ReferralCodeNotFoundError(ReferralServiceError):
-    pass
+    default_code = "code_not_found"
 
 
 class ReferralSelfAttributionError(ReferralServiceError):
-    pass
+    default_code = "self_referral"
 
 
 class ReferralAlreadyAttributedError(ReferralServiceError):
-    pass
+    default_code = "already_claimed"
 
 
 class ReferralAttributionWindowClosedError(ReferralServiceError):
-    pass
+    default_code = "window_closed"
 
 
 @dataclass(slots=True)
@@ -107,10 +111,14 @@ def get_effective_referral_reward_rate(account: Account) -> Decimal:
     return _to_decimal_rate(settings.default_referral_reward_rate)
 
 
-def calculate_referral_reward_amount(*, purchase_amount_rub: int, reward_rate: Decimal) -> int:
+def calculate_referral_reward_amount(
+    *, purchase_amount_rub: int, reward_rate: Decimal
+) -> int:
     if purchase_amount_rub <= 0 or reward_rate <= 0:
         return 0
-    reward_amount = (Decimal(purchase_amount_rub) * reward_rate / Decimal("100")).quantize(
+    reward_amount = (
+        Decimal(purchase_amount_rub) * reward_rate / Decimal("100")
+    ).quantize(
         Decimal("1"),
         rounding=ROUND_DOWN,
     )
@@ -129,7 +137,9 @@ def _display_name_for_referral(account: Account | None) -> str:
     )
 
 
-async def _load_account_for_update(session: AsyncSession, account_id: uuid.UUID) -> Account:
+async def _load_account_for_update(
+    session: AsyncSession, account_id: uuid.UUID
+) -> Account:
     result = await session.execute(
         select(Account).where(Account.id == account_id).with_for_update()
     )
@@ -216,9 +226,9 @@ async def _get_telegram_referral_intent_by_telegram_id(
     *,
     for_update: bool = False,
 ) -> TelegramReferralIntent | None:
-    statement: Select[tuple[TelegramReferralIntent]] = select(TelegramReferralIntent).where(
-        TelegramReferralIntent.telegram_id == telegram_id
-    )
+    statement: Select[tuple[TelegramReferralIntent]] = select(
+        TelegramReferralIntent
+    ).where(TelegramReferralIntent.telegram_id == telegram_id)
     if for_update:
         statement = statement.with_for_update()
     result = await session.execute(statement)
@@ -266,7 +276,9 @@ async def claim_referral_code(
     referral_code: str,
 ) -> ReferralClaimResult:
     normalized_referral_code = _normalize_referral_code(referral_code)
-    referrer_account = await _get_account_by_referral_code(session, normalized_referral_code)
+    referrer_account = await _get_account_by_referral_code(
+        session, normalized_referral_code
+    )
     if referrer_account is None:
         raise ReferralCodeNotFoundError(_referral_error("code_not_found"))
 
@@ -315,14 +327,18 @@ async def claim_referral_code(
     if await _has_completed_paid_purchase(session, referred_account.id):
         raise ReferralAttributionWindowClosedError(_referral_error("window_closed"))
 
-    locked_referrer_account = await _load_account_for_update(session, referrer_account.id)
+    locked_referrer_account = await _load_account_for_update(
+        session, referrer_account.id
+    )
     attribution = ReferralAttribution(
         referrer_account_id=locked_referrer_account.id,
         referred_account_id=referred_account.id,
         referral_code=normalized_referral_code,
     )
     referred_account.referred_by_account_id = locked_referrer_account.id
-    locked_referrer_account.referrals_count = int(locked_referrer_account.referrals_count) + 1
+    locked_referrer_account.referrals_count = (
+        int(locked_referrer_account.referrals_count) + 1
+    )
     session.add(attribution)
     await session.flush()
     await _append_referral_claim_events(
@@ -435,7 +451,9 @@ async def apply_telegram_referral_intent(
             referral_code=intent.referral_code,
             reason=intent.result_reason,
         )
-        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+        return TelegramReferralIntentResult(
+            applied=False, created=False, reason=intent.result_reason
+        )
     except ReferralSelfAttributionError:
         intent.status = "rejected"
         intent.result_reason = "self_referral"
@@ -462,7 +480,9 @@ async def apply_telegram_referral_intent(
             referral_code=intent.referral_code,
             reason=intent.result_reason,
         )
-        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+        return TelegramReferralIntentResult(
+            applied=False, created=False, reason=intent.result_reason
+        )
     except ReferralAlreadyAttributedError:
         intent.status = "rejected"
         intent.result_reason = "already_claimed"
@@ -489,7 +509,9 @@ async def apply_telegram_referral_intent(
             referral_code=intent.referral_code,
             reason=intent.result_reason,
         )
-        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+        return TelegramReferralIntentResult(
+            applied=False, created=False, reason=intent.result_reason
+        )
     except ReferralAttributionWindowClosedError:
         intent.status = "rejected"
         intent.result_reason = "window_closed"
@@ -516,7 +538,9 @@ async def apply_telegram_referral_intent(
             referral_code=intent.referral_code,
             reason=intent.result_reason,
         )
-        return TelegramReferralIntentResult(applied=False, created=False, reason=intent.result_reason)
+        return TelegramReferralIntentResult(
+            applied=False, created=False, reason=intent.result_reason
+        )
 
     intent.status = "applied" if claim_result.created else "noop"
     intent.result_reason = None if claim_result.created else "already_applied"
@@ -564,9 +588,13 @@ async def apply_first_referral_reward_for_grant(
         return None
 
     if grant.id is None:
-        raise ReferralServiceError("subscription grant must be flushed before referral reward")
+        raise ReferralServiceError(
+            "subscription grant must be flushed before referral reward"
+        )
 
-    existing_reward = await _get_referral_reward_by_grant_id(session, grant.id, for_update=True)
+    existing_reward = await _get_referral_reward_by_grant_id(
+        session, grant.id, for_update=True
+    )
     if existing_reward is not None:
         return existing_reward
 
@@ -586,7 +614,9 @@ async def apply_first_referral_reward_for_grant(
     if existing_referred_reward is not None:
         return existing_referred_reward
 
-    referrer_account = await _load_account_for_update(session, attribution.referrer_account_id)
+    referrer_account = await _load_account_for_update(
+        session, attribution.referrer_account_id
+    )
     plan = get_subscription_plan(grant.plan_code)
     reward_rate = get_effective_referral_reward_rate(referrer_account)
     purchase_amount_rub = int(plan.price_rub)
@@ -607,7 +637,9 @@ async def apply_first_referral_reward_for_grant(
         comment=f"Referral reward for first paid purchase of {grant.account_id}",
         idempotency_key=f"referral_reward:grant:{grant.id}",
     )
-    referrer_account.referral_earnings = int(referrer_account.referral_earnings) + reward_amount
+    referrer_account.referral_earnings = (
+        int(referrer_account.referral_earnings) + reward_amount
+    )
 
     reward = ReferralReward(
         attribution_id=attribution.id,
@@ -653,8 +685,13 @@ async def get_referral_summary(
     referred_account = aliased(Account)
     result = await session.execute(
         select(ReferralAttribution, referred_account, ReferralReward)
-        .outerjoin(referred_account, referred_account.id == ReferralAttribution.referred_account_id)
-        .outerjoin(ReferralReward, ReferralReward.attribution_id == ReferralAttribution.id)
+        .outerjoin(
+            referred_account,
+            referred_account.id == ReferralAttribution.referred_account_id,
+        )
+        .outerjoin(
+            ReferralReward, ReferralReward.attribution_id == ReferralAttribution.id
+        )
         .where(ReferralAttribution.referrer_account_id == account.id)
         .order_by(ReferralAttribution.created_at.desc())
     )
@@ -675,7 +712,9 @@ async def get_referral_summary(
         referral_code=account.referral_code or "",
         referrals_count=int(account.referrals_count),
         referral_earnings=int(account.referral_earnings),
-        available_for_withdraw=(await get_withdrawal_availability(session, account=account)).available_for_withdraw,
+        available_for_withdraw=(
+            await get_withdrawal_availability(session, account=account)
+        ).available_for_withdraw,
         effective_reward_rate=float(get_effective_referral_reward_rate(account)),
         items=items,
     )

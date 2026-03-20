@@ -104,6 +104,7 @@ class AccountResponse(BaseModel):
 
 class LinkTelegramResponse(BaseModel):
     """Response for generating Telegram linking URL."""
+
     link_url: str = Field(..., description="URL to open in Telegram to link account")
     link_token: str = Field(..., description="Token for reference")
     expires_in_seconds: int = Field(..., description="Link expiration time in seconds")
@@ -111,6 +112,7 @@ class LinkTelegramResponse(BaseModel):
 
 class LinkBrowserResponse(BaseModel):
     """Response for generating browser linking URL."""
+
     link_url: str = Field(..., description="URL to open in browser to link account")
     link_token: str = Field(..., description="Token for reference")
     expires_in_seconds: int = Field(..., description="Link expiration time in seconds")

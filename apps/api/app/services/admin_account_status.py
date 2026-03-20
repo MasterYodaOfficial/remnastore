@@ -17,11 +17,11 @@ class AdminAccountStatusServiceError(Exception):
 
 
 class AdminAccountStatusCommentRequiredError(AdminAccountStatusServiceError):
-    pass
+    code = "admin_account_status_comment_required"
 
 
 class AdminAccountStatusConflictError(AdminAccountStatusServiceError):
-    pass
+    code = "admin_account_status_conflict"
 
 
 @dataclass(slots=True)
@@ -46,7 +46,9 @@ def _normalize_required_comment(comment: str) -> str:
 
 
 async def _load_account_for_update(session: AsyncSession, account_id: UUID) -> Account:
-    result = await session.execute(select(Account).where(Account.id == account_id).with_for_update())
+    result = await session.execute(
+        select(Account).where(Account.id == account_id).with_for_update()
+    )
     account = result.scalar_one_or_none()
     if account is None:
         raise AdminAccountStatusServiceError(f"account not found: {account_id}")
@@ -90,25 +92,37 @@ def _validate_existing_audit_log(
     comment: str,
 ) -> AccountStatus:
     if audit_log.admin_id != admin_id:
-        raise AdminAccountStatusConflictError("idempotency key already belongs to another admin")
+        raise AdminAccountStatusConflictError(
+            "idempotency key already belongs to another admin"
+        )
     if audit_log.target_account_id != account_id:
-        raise AdminAccountStatusConflictError("idempotency key already belongs to another account")
+        raise AdminAccountStatusConflictError(
+            "idempotency key already belongs to another account"
+        )
     if (audit_log.comment or "") != comment:
-        raise AdminAccountStatusConflictError("idempotency key already used with another comment")
+        raise AdminAccountStatusConflictError(
+            "idempotency key already used with another comment"
+        )
 
     payload = audit_log.payload or {}
     payload_next_status = payload.get("next_status")
     if payload_next_status != target_status.value:
-        raise AdminAccountStatusConflictError("idempotency key already used for another target status")
+        raise AdminAccountStatusConflictError(
+            "idempotency key already used for another target status"
+        )
 
     payload_previous_status = payload.get("previous_status")
     if not isinstance(payload_previous_status, str):
-        raise AdminAccountStatusConflictError("existing admin audit log is missing previous_status")
+        raise AdminAccountStatusConflictError(
+            "existing admin audit log is missing previous_status"
+        )
 
     try:
         return AccountStatus(payload_previous_status)
     except ValueError as exc:
-        raise AdminAccountStatusConflictError("existing admin audit log contains invalid previous_status") from exc
+        raise AdminAccountStatusConflictError(
+            "existing admin audit log contains invalid previous_status"
+        ) from exc
 
 
 async def _load_existing_result(
@@ -138,7 +152,9 @@ async def _load_existing_result(
     )
     account = await _load_account_for_update(session, account_id)
     if account.status != target_status:
-        raise AdminAccountStatusConflictError("account status changed after this idempotent request")
+        raise AdminAccountStatusConflictError(
+            "account status changed after this idempotent request"
+        )
 
     return AdminAccountStatusChangeResult(
         account=account,

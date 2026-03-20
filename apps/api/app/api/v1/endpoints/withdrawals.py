@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error_from_exception
 from app.api.dependencies import get_current_account
 from app.db.models import Account
 from app.db.session import get_session
@@ -87,15 +88,19 @@ async def create_withdrawal(
             user_comment=payload.user_comment,
         )
     except WithdrawalDestinationRequiredError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_400_BAD_REQUEST, exc) from exc
     except WithdrawalInvalidCardError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_400_BAD_REQUEST, exc) from exc
     except WithdrawalAmountTooLowError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise api_error_from_exception(
+            status.HTTP_400_BAD_REQUEST,
+            exc,
+            error_params={"amount": get_minimum_withdrawal_amount_rub()},
+        ) from exc
     except WithdrawalInsufficientAvailableError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except WithdrawalAccountBlockedError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
 
     await session.commit()
     await session.refresh(withdrawal)

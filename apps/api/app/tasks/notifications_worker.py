@@ -74,7 +74,9 @@ async def run() -> None:
                 try:
                     await _run_telegram_delivery_once()
                 except TelegramNotificationConfigurationError:
-                    logger.warning("telegram notification delivery is disabled: bot token is not configured")
+                    logger.warning(
+                        "telegram notification delivery is disabled: bot token is not configured"
+                    )
                 except Exception:
                     logger.exception("telegram notification delivery iteration failed")
                 next_run_at = now + interval

@@ -66,6 +66,17 @@ import {
   Sun,
   Wallet,
 } from 'lucide-react';
+import {
+  getLinkingErrorMessage,
+  getPaymentErrorMessage,
+  getPromoErrorMessage,
+  getTrialErrorMessage,
+  getWithdrawalErrorMessage,
+  isReferralAlreadyHandledError,
+  isReferralCodeNotFoundError,
+  isReferralSelfError,
+  parseApiErrorPayload,
+} from './lib/api-errors';
 
 const BACKEND_API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(
   /\/+$/,
@@ -631,131 +642,6 @@ function getPaymentSheetSubtitle(selection: PaymentSelectionState | null): strin
   return undefined;
 }
 
-function getTrialErrorMessage(detail: string): string {
-  switch (detail) {
-    case 'account_blocked':
-      return t('web.app.errors.trial.accountBlocked');
-    case 'trial_already_used':
-      return t('web.app.errors.trial.alreadyUsed');
-    case 'subscription_exists':
-      return t('web.app.errors.trial.subscriptionExists');
-    case 'remnawave_identity_conflict':
-      return t('web.app.errors.trial.identityConflict');
-    case 'remnawave_not_configured':
-      return t('web.app.errors.trial.notConfigured');
-    case 'remnawave_unavailable':
-      return t('web.app.errors.trial.unavailable');
-    default:
-      return detail;
-  }
-}
-
-function getPaymentErrorMessage(detail: string): string {
-  switch (detail) {
-    case 'YooKassa credentials are not configured':
-      return t('web.app.errors.payment.yookassaNotConfigured');
-    case 'BOT_TOKEN is required for Telegram Stars':
-      return t('web.app.errors.payment.starsBotTokenRequired');
-    case 'API_TOKEN is required for Telegram Stars callbacks':
-      return t('web.app.errors.payment.starsCallbackNotConfigured');
-    case 'insufficient funds':
-      return t('web.app.errors.payment.insufficientFunds');
-    default:
-      {
-        const promoMessage = getPromoErrorMessage(detail);
-        if (promoMessage !== detail) {
-          return promoMessage;
-        }
-      }
-      if (detail.startsWith('Telegram Stars price is not configured for plan ')) {
-        return t('web.app.errors.payment.starsPriceNotConfigured');
-      }
-      return detail;
-  }
-}
-
-function getPromoErrorMessage(detail: string): string {
-  switch (detail) {
-    case 'promo code not found':
-      return t('web.app.errors.promo.notFound');
-    case 'promo code is disabled':
-      return t('web.app.errors.promo.disabled');
-    case 'promo campaign is not active':
-      return t('web.app.errors.promo.campaignInactive');
-    case 'promo campaign has not started yet':
-      return t('web.app.errors.promo.notStarted');
-    case 'promo campaign has already ended':
-      return t('web.app.errors.promo.alreadyEnded');
-    case 'blocked accounts cannot redeem promo codes':
-      return t('web.app.errors.promo.blocked');
-    case 'promo code can be used only for selected plans':
-      return t('web.app.errors.promo.selectedPlansOnly');
-    case 'promo code is not available for this plan':
-      return t('web.app.errors.promo.notForPlan');
-    case 'promo code is available only for the first paid purchase':
-      return t('web.app.errors.promo.firstPurchaseOnly');
-    case 'promo code requires an active subscription':
-      return t('web.app.errors.promo.requiresActiveSubscription');
-    case 'promo code requires no active subscription':
-      return t('web.app.errors.promo.requiresNoSubscription');
-    case 'promo campaign redemption limit reached':
-      return t('web.app.errors.promo.campaignLimitReached');
-    case 'promo code redemption limit reached for this account':
-      return t('web.app.errors.promo.accountLimitReached');
-    case 'promo code redemption limit reached':
-      return t('web.app.errors.promo.codeLimitReached');
-    case 'promo code currency does not match selected payment method':
-      return t('web.app.errors.promo.currencyMismatch');
-    case 'promo code does not improve the selected plan price':
-      return t('web.app.errors.promo.noPriceImprovement');
-    case 'promo code reduces payment amount to zero; use direct redemption instead':
-      return t('web.app.errors.promo.directRedeem');
-    case 'promo code cannot be used for plan purchase':
-      return t('web.app.errors.promo.otherScenario');
-    case 'promo code cannot be redeemed directly':
-      return t('web.app.errors.promo.useOnPurchase');
-    default:
-      return detail;
-  }
-}
-
-function getWithdrawalErrorMessage(detail: string): string {
-  switch (detail) {
-    case 'destination value is required':
-      return t('web.app.errors.withdrawal.destinationRequired');
-    case 'invalid bank card number':
-      return t('web.app.errors.withdrawal.invalidCard');
-    case 'blocked accounts cannot create withdrawals':
-      return t('web.app.errors.withdrawal.accountBlocked');
-    case 'insufficient referral funds for withdrawal':
-      return t('web.app.errors.withdrawal.insufficientFunds');
-    default:
-      if (detail.startsWith('minimum withdrawal amount is ')) {
-        return t('web.app.errors.withdrawal.minimumAmount', {
-          amount: detail.replace('minimum withdrawal amount is ', ''),
-        });
-      }
-      return detail;
-  }
-}
-
-function isReferralAlreadyHandledDetail(detail: string): boolean {
-  return (
-    detail === 'referral already claimed' ||
-    detail === t('web.app.referralDetail.alreadyClaimed') ||
-    detail === 'referral attribution is closed after the first paid purchase' ||
-    detail === t('web.app.referralDetail.windowClosed')
-  );
-}
-
-function isReferralSelfDetail(detail: string): boolean {
-  return detail === 'self referral is not allowed' || detail === t('web.app.referralDetail.selfReferral');
-}
-
-function isReferralCodeNotFoundDetail(detail: string): boolean {
-  return detail === 'referral code not found' || detail === t('web.app.referralDetail.notFound');
-}
-
 function mapBackendPlanToView(plan: BackendPlan): Plan {
   return {
     id: plan.code,
@@ -1277,11 +1163,11 @@ export default function App() {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
-      const detail =
-        errorData && typeof errorData.detail === 'string'
-          ? getPromoErrorMessage(errorData.detail)
-          : t('web.app.toasts.planPromoApplyFailed');
-      throw new Error(detail);
+      const { detail, errorCode } = parseApiErrorPayload(
+        errorData,
+        t('web.app.toasts.planPromoApplyFailed')
+      );
+      throw new Error(getPromoErrorMessage(errorCode, detail));
     }
 
     return (await response.json()) as BackendPromoPlanQuoteResponse;
@@ -1306,11 +1192,11 @@ export default function App() {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
-      const detail =
-        errorData && typeof errorData.detail === 'string'
-          ? getPromoErrorMessage(errorData.detail)
-          : t('web.app.toasts.settingsPromoActivateFailed');
-      throw new Error(detail);
+      const { detail, errorCode } = parseApiErrorPayload(
+        errorData,
+        t('web.app.toasts.settingsPromoActivateFailed')
+      );
+      throw new Error(getPromoErrorMessage(errorCode, detail));
     }
 
     return (await response.json()) as BackendPromoRedeemResponse;
@@ -2016,10 +1902,10 @@ export default function App() {
 
         if (!authResponse.ok) {
           const errorData = await authResponse.json().catch(() => null);
-          const detail =
-            errorData && typeof errorData.detail === 'string'
-              ? errorData.detail
-              : t('web.app.toasts.telegramSessionConfirmFailed');
+          const { detail } = parseApiErrorPayload(
+            errorData,
+            t('web.app.toasts.telegramSessionConfirmFailed')
+          );
           throw new Error(detail);
         }
 
@@ -2601,7 +2487,12 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(t('web.app.toasts.notificationReadFailed'));
+        const errorData = await response.json().catch(() => null);
+        const { detail } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.notificationReadFailed')
+        );
+        throw new Error(detail);
       }
     } catch (err) {
       console.error('Mark notification read error:', err);
@@ -2630,7 +2521,12 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(t('web.app.toasts.notificationsReadFailed'));
+        const errorData = await response.json().catch(() => null);
+        const { detail } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.notificationsReadFailed')
+        );
+        throw new Error(detail);
       }
     } catch (err) {
       console.error('Mark all notifications read error:', err);
@@ -2749,23 +2645,23 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const detail =
-          errorData && typeof errorData.detail === 'string'
-            ? errorData.detail
-            : t('web.app.toasts.referralPrepareFailed');
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.referralPrepareFailed')
+        );
 
-        if (isReferralAlreadyHandledDetail(detail)) {
+        if (isReferralAlreadyHandledError(errorCode, detail)) {
           clearPendingReferralCode();
           return false;
         }
 
-        if (isReferralSelfDetail(detail)) {
+        if (isReferralSelfError(errorCode, detail)) {
           clearPendingReferralCode();
           toast.error(t('web.app.toasts.referralSelfNotAllowed'));
           return false;
         }
 
-        if (isReferralCodeNotFoundDetail(detail)) {
+        if (isReferralCodeNotFoundError(errorCode, detail)) {
           clearPendingReferralCode();
           toast.error(t('web.app.toasts.referralInvalid'));
           return false;
@@ -3108,11 +3004,11 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const detail =
-          errorData && typeof errorData.detail === 'string'
-            ? getPaymentErrorMessage(errorData.detail)
-            : t('web.app.toasts.topupCreateRequestFailed');
-        throw new Error(detail);
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.topupCreateRequestFailed')
+        );
+        throw new Error(getPaymentErrorMessage(errorCode, detail));
       }
 
       const paymentIntent = (await response.json()) as BackendPaymentIntent;
@@ -3166,11 +3062,11 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const detail =
-          errorData && typeof errorData.detail === 'string'
-            ? getTrialErrorMessage(errorData.detail)
-            : t('web.app.toasts.trialActivateFailed');
-        throw new Error(detail);
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.trialActivateFailed')
+        );
+        throw new Error(getTrialErrorMessage(errorCode, detail));
       }
 
       const reloaded = await loadUserData(accessToken, user?.avatar);
@@ -3400,11 +3296,12 @@ export default function App() {
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => null);
-          const detail =
-            errorData && typeof errorData.detail === 'string'
-              ? getPaymentErrorMessage(errorData.detail)
-              : t('web.app.toasts.walletPurchaseFailed');
-          throw new Error(detail);
+          const { detail, errorCode } = parseApiErrorPayload(
+            errorData,
+            t('web.app.toasts.walletPurchaseFailed')
+          );
+          const message = getPaymentErrorMessage(errorCode, detail);
+          throw new Error(message);
         }
 
         const reloaded = await loadUserData(accessToken, user?.avatar);
@@ -3491,11 +3388,11 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const detail =
-          errorData && typeof errorData.detail === 'string'
-            ? getPaymentErrorMessage(errorData.detail)
-            : t('web.app.toasts.planCreateRequestFailed');
-        throw new Error(detail);
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.planCreateRequestFailed')
+        );
+        throw new Error(getPaymentErrorMessage(errorCode, detail));
       }
 
       const paymentIntent = (await response.json()) as BackendPaymentIntent;
@@ -3704,11 +3601,11 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const detail =
-          errorData && typeof errorData.detail === 'string'
-            ? errorData.detail
-            : t('web.app.toasts.withdrawCreateFailed');
-        throw new Error(getWithdrawalErrorMessage(detail));
+        const { detail, errorCode, errorParams } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.withdrawCreateFailed')
+        );
+        throw new Error(getWithdrawalErrorMessage(errorCode, detail, errorParams));
       }
 
       setIsWithdrawalModalOpen(false);
@@ -3753,8 +3650,12 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || t('web.app.toasts.linkCreateFailed'));
+        const errorData = await response.json().catch(() => null);
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.linkCreateFailed')
+        );
+        throw new Error(getLinkingErrorMessage(errorCode, detail));
       }
 
       const data = await response.json();
@@ -3782,8 +3683,12 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || t('web.app.toasts.linkCreateFailed'));
+        const errorData = await response.json().catch(() => null);
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.linkCreateFailed')
+        );
+        throw new Error(getLinkingErrorMessage(errorCode, detail));
       }
 
       const data = await response.json();
@@ -3817,8 +3722,12 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || t('web.app.toasts.linkBrowserCompleteFailed'));
+        const errorData = await response.json().catch(() => null);
+        const { detail, errorCode } = parseApiErrorPayload(
+          errorData,
+          t('web.app.toasts.linkBrowserCompleteFailed')
+        );
+        throw new Error(getLinkingErrorMessage(errorCode, detail));
       }
 
       clearBrowserLinkCallbackState();

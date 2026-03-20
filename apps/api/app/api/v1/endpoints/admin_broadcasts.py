@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error, api_error_from_exception
 from app.api.dependencies import get_current_admin, require_superuser_admin
 from app.db.models import (
     Admin,
@@ -34,6 +35,7 @@ from app.schemas.admin import (
     AdminBroadcastTestSendResponse,
     AdminBroadcastUpsertRequest,
 )
+from app.services.i18n import translate
 from app.services.broadcasts import (
     MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT,
     BroadcastAudiencePresetNotFoundError,
@@ -65,6 +67,64 @@ from app.services.broadcasts import (
 
 
 router = APIRouter()
+
+_ADMIN_BROADCAST_ERROR_TRANSLATIONS: dict[str, str] = {
+    "admin_broadcast_conflict": "api.admin.errors.broadcast_conflict",
+    "admin_broadcast_validation_failed": "api.admin.errors.broadcast_validation_failed",
+    "broadcast_edit_requires_draft": "api.admin.errors.broadcast_edit_requires_draft",
+    "broadcast_delete_requires_draft": "api.admin.errors.broadcast_delete_requires_draft",
+    "broadcast_launch_requires_draft": "api.admin.errors.broadcast_launch_requires_draft",
+    "broadcast_schedule_requires_draft": "api.admin.errors.broadcast_schedule_requires_draft",
+    "broadcast_schedule_in_past": "api.admin.errors.broadcast_schedule_in_past",
+    "broadcast_pause_invalid_state": "api.admin.errors.broadcast_pause_invalid_state",
+    "broadcast_resume_invalid_state": "api.admin.errors.broadcast_resume_invalid_state",
+    "broadcast_resume_missing_run": "api.admin.errors.broadcast_resume_missing_run",
+    "broadcast_cancel_invalid_state": "api.admin.errors.broadcast_cancel_invalid_state",
+    "broadcast_test_send_idempotency_invalid": "api.admin.errors.broadcast_test_send_idempotency_invalid",
+}
+
+
+def _admin_broadcast_not_found() -> None:
+    raise api_error(
+        status.HTTP_404_NOT_FOUND,
+        translate("api.admin.errors.broadcast_not_found"),
+        error_code="admin_broadcast_not_found",
+    )
+
+
+def _admin_broadcast_run_not_found() -> None:
+    raise api_error(
+        status.HTTP_404_NOT_FOUND,
+        translate("api.admin.errors.broadcast_run_not_found"),
+        error_code="admin_broadcast_run_not_found",
+    )
+
+
+def _admin_broadcast_audience_preset_not_found() -> None:
+    raise api_error(
+        status.HTTP_404_NOT_FOUND,
+        translate("api.admin.errors.broadcast_audience_preset_not_found"),
+        error_code="admin_broadcast_audience_preset_not_found",
+    )
+
+
+def _admin_broadcast_service_error(
+    status_code: int,
+    exc: Exception,
+):
+    error_code = getattr(exc, "code", None)
+    detail_key = (
+        _ADMIN_BROADCAST_ERROR_TRANSLATIONS.get(error_code)
+        if isinstance(error_code, str)
+        else None
+    )
+    if detail_key is not None:
+        exc.args = (translate(detail_key),)
+    return api_error_from_exception(
+        status_code,
+        exc,
+        error_code=error_code if isinstance(error_code, str) else None,
+    )
 
 
 def _build_run_response(item) -> AdminBroadcastRunResponse:
@@ -102,13 +162,21 @@ async def _build_broadcast_response(
     broadcast: Broadcast,
 ) -> AdminBroadcastResponse:
     latest_run = await get_latest_broadcast_run(session, broadcast_id=broadcast.id)
-    payload = AdminBroadcastResponse.model_validate(broadcast, from_attributes=True).model_dump()
-    payload["latest_run"] = _build_run_response(latest_run) if latest_run is not None else None
+    payload = AdminBroadcastResponse.model_validate(
+        broadcast, from_attributes=True
+    ).model_dump()
+    payload["latest_run"] = (
+        _build_run_response(latest_run) if latest_run is not None else None
+    )
     return AdminBroadcastResponse(**payload)
 
 
-def _build_broadcast_audience_preset_response(item) -> AdminBroadcastAudiencePresetResponse:
-    return AdminBroadcastAudiencePresetResponse.model_validate(item, from_attributes=True)
+def _build_broadcast_audience_preset_response(
+    item,
+) -> AdminBroadcastAudiencePresetResponse:
+    return AdminBroadcastAudiencePresetResponse.model_validate(
+        item, from_attributes=True
+    )
 
 
 @router.post("/estimate", response_model=AdminBroadcastEstimateResponse)
@@ -124,7 +192,9 @@ async def estimate_admin_broadcast(
             channels=payload.channels,
         )
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     return AdminBroadcastEstimateResponse(
         channels=payload.channels,
@@ -149,7 +219,9 @@ async def preview_admin_broadcast_audience(
             limit=payload.limit,
         )
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     return AdminBroadcastAudiencePreviewResponse(
         channels=payload.channels,
@@ -182,19 +254,27 @@ async def preview_admin_broadcast_audience(
                 "requested_telegram_ids": preview.manual_list_diagnostics.requested_telegram_ids,
                 "matched_accounts": preview.manual_list_diagnostics.matched_accounts,
                 "final_accounts": preview.manual_list_diagnostics.final_accounts,
-                "unresolved_account_ids_count": len(preview.manual_list_diagnostics.unresolved_account_ids),
+                "unresolved_account_ids_count": len(
+                    preview.manual_list_diagnostics.unresolved_account_ids
+                ),
                 "unresolved_account_ids_sample": preview.manual_list_diagnostics.unresolved_account_ids[
                     :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
                 ],
-                "unresolved_emails_count": len(preview.manual_list_diagnostics.unresolved_emails),
+                "unresolved_emails_count": len(
+                    preview.manual_list_diagnostics.unresolved_emails
+                ),
                 "unresolved_emails_sample": preview.manual_list_diagnostics.unresolved_emails[
                     :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
                 ],
-                "unresolved_telegram_ids_count": len(preview.manual_list_diagnostics.unresolved_telegram_ids),
+                "unresolved_telegram_ids_count": len(
+                    preview.manual_list_diagnostics.unresolved_telegram_ids
+                ),
                 "unresolved_telegram_ids_sample": preview.manual_list_diagnostics.unresolved_telegram_ids[
                     :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
                 ],
-                "excluded_accounts_count": len(preview.manual_list_diagnostics.excluded_accounts),
+                "excluded_accounts_count": len(
+                    preview.manual_list_diagnostics.excluded_accounts
+                ),
                 "excluded_blocked_count": sum(
                     1
                     for item in preview.manual_list_diagnostics.excluded_accounts
@@ -266,14 +346,18 @@ async def create_admin_broadcast_audience_preset(
             audience=payload.audience.model_dump(mode="python"),
         )
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     await session.refresh(preset)
     return _build_broadcast_audience_preset_response(preset)
 
 
-@router.put("/audiences/{preset_id}", response_model=AdminBroadcastAudiencePresetResponse)
+@router.put(
+    "/audiences/{preset_id}", response_model=AdminBroadcastAudiencePresetResponse
+)
 async def update_admin_broadcast_audience_preset(
     preset_id: int,
     payload: AdminBroadcastAudiencePresetUpsertRequest,
@@ -290,9 +374,16 @@ async def update_admin_broadcast_audience_preset(
             audience=payload.audience.model_dump(mode="python"),
         )
     except BroadcastAudiencePresetNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_audience_preset_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_audience_preset_not_found",
+        ) from exc
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     await session.refresh(preset)
@@ -312,7 +403,12 @@ async def delete_admin_broadcast_audience_preset(
             admin_id=current_admin.id,
         )
     except BroadcastAudiencePresetNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_audience_preset_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_audience_preset_not_found",
+        ) from exc
 
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -332,10 +428,7 @@ async def list_admin_broadcasts(
         offset=offset,
         status=status_filter,
     )
-    response_items = [
-        await _build_broadcast_response(session, item)
-        for item in items
-    ]
+    response_items = [await _build_broadcast_response(session, item) for item in items]
     return AdminBroadcastListResponse(
         items=response_items,
         total=total,
@@ -344,7 +437,9 @@ async def list_admin_broadcasts(
     )
 
 
-@router.post("", response_model=AdminBroadcastResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=AdminBroadcastResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_admin_broadcast(
     payload: AdminBroadcastUpsertRequest,
     session: AsyncSession = Depends(get_session),
@@ -364,7 +459,9 @@ async def create_admin_broadcast(
             audience=payload.audience.model_dump(mode="python"),
         )
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     await session.refresh(broadcast)
@@ -411,7 +508,7 @@ async def read_admin_broadcast_run(
 ) -> AdminBroadcastRunDetailResponse:
     run = await get_broadcast_run(session, run_id=run_id)
     if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="broadcast run not found")
+        _admin_broadcast_run_not_found()
 
     deliveries, total = await list_broadcast_run_deliveries(
         session,
@@ -460,7 +557,7 @@ async def read_admin_broadcast(
 ) -> AdminBroadcastResponse:
     broadcast = await get_broadcast(session, broadcast_id=broadcast_id)
     if broadcast is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="broadcast not found")
+        _admin_broadcast_not_found()
     return await _build_broadcast_response(session, broadcast)
 
 
@@ -477,9 +574,14 @@ async def delete_admin_broadcast(
             admin_id=current_admin.id,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
 
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -503,11 +605,18 @@ async def test_send_admin_broadcast(
             idempotency_key=payload.idempotency_key,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     return AdminBroadcastTestSendResponse(
@@ -556,11 +665,18 @@ async def send_now_admin_broadcast(
             idempotency_key=payload.idempotency_key,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     await session.refresh(broadcast)
@@ -584,11 +700,18 @@ async def schedule_admin_broadcast(
             idempotency_key=payload.idempotency_key,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     await session.refresh(broadcast)
@@ -611,9 +734,14 @@ async def pause_admin_broadcast(
             idempotency_key=payload.idempotency_key,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
 
     await session.commit()
     await session.refresh(broadcast)
@@ -636,9 +764,14 @@ async def resume_admin_broadcast(
             idempotency_key=payload.idempotency_key,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
 
     await session.commit()
     await session.refresh(broadcast)
@@ -661,9 +794,14 @@ async def cancel_admin_broadcast(
             idempotency_key=payload.idempotency_key,
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
 
     await session.commit()
     await session.refresh(broadcast)
@@ -692,11 +830,18 @@ async def update_admin_broadcast(
             audience=payload.audience.model_dump(mode="python"),
         )
     except BroadcastNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
     except BroadcastConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
     except BroadcastValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     await session.commit()
     await session.refresh(broadcast)

@@ -146,7 +146,9 @@ def _json_default(value: object) -> str:
 
 def _is_sensitive_field_name(field_name: str) -> bool:
     normalized = field_name.strip().lower()
-    return normalized in _SENSITIVE_FIELD_NAMES or normalized.endswith(_SENSITIVE_FIELD_SUFFIXES)
+    return normalized in _SENSITIVE_FIELD_NAMES or normalized.endswith(
+        _SENSITIVE_FIELD_SUFFIXES
+    )
 
 
 def redact_sensitive_text(value: str) -> str:
@@ -197,7 +199,11 @@ class ContextFilter(logging.Filter):
 class SensitiveDataFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         original_msg = record.msg
-        sanitized_msg = redact_sensitive_text(record.msg) if isinstance(record.msg, str) else record.msg
+        sanitized_msg = (
+            redact_sensitive_text(record.msg)
+            if isinstance(record.msg, str)
+            else record.msg
+        )
         sanitized_args = _sanitize_value(record.args)
 
         if isinstance(sanitized_msg, str) and sanitized_args:
@@ -206,7 +212,9 @@ class SensitiveDataFilter(logging.Filter):
             except Exception:
                 if isinstance(original_msg, str):
                     try:
-                        sanitized_msg = redact_sensitive_text(original_msg % sanitized_args)
+                        sanitized_msg = redact_sensitive_text(
+                            original_msg % sanitized_args
+                        )
                     except Exception:
                         sanitized_msg = redact_sensitive_text(original_msg)
                 sanitized_args = ()
@@ -215,7 +223,11 @@ class SensitiveDataFilter(logging.Filter):
         record.args = sanitized_args
 
         for key, value in list(record.__dict__.items()):
-            if key in _STANDARD_RECORD_FIELDS or key in _BUILTIN_CONTEXT_FIELDS or key.startswith("_"):
+            if (
+                key in _STANDARD_RECORD_FIELDS
+                or key in _BUILTIN_CONTEXT_FIELDS
+                or key.startswith("_")
+            ):
                 continue
             record.__dict__[key] = _sanitize_value(value, field_name=key)
 
@@ -246,7 +258,9 @@ class JsonFormatter(logging.Formatter):
         extras = {
             key: value
             for key, value in record.__dict__.items()
-            if key not in _STANDARD_RECORD_FIELDS and key not in _BUILTIN_CONTEXT_FIELDS and not key.startswith("_")
+            if key not in _STANDARD_RECORD_FIELDS
+            and key not in _BUILTIN_CONTEXT_FIELDS
+            and not key.startswith("_")
         }
         if extras:
             payload.update(
@@ -257,9 +271,13 @@ class JsonFormatter(logging.Formatter):
             )
 
         if record.exc_info:
-            payload["exception"] = redact_sensitive_text(self.formatException(record.exc_info))
+            payload["exception"] = redact_sensitive_text(
+                self.formatException(record.exc_info)
+            )
         if record.stack_info:
-            payload["stack_info"] = redact_sensitive_text(self.formatStack(record.stack_info))
+            payload["stack_info"] = redact_sensitive_text(
+                self.formatStack(record.stack_info)
+            )
 
         return json.dumps(payload, ensure_ascii=True, default=_json_default)
 

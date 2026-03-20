@@ -147,12 +147,16 @@ async def _apply_repairs(
         async with session_factory() as session:
             for candidate in candidates:
                 account = await session.scalar(
-                    select(Account).where(Account.id == candidate.account_id).with_for_update()
+                    select(Account)
+                    .where(Account.id == candidate.account_id)
+                    .with_for_update()
                 )
                 if account is None:
                     continue
 
-                remote_user = await gateway.get_user_by_uuid(candidate.remnawave_user_uuid)
+                remote_user = await gateway.get_user_by_uuid(
+                    candidate.remnawave_user_uuid
+                )
                 if remote_user is None:
                     account.subscription_is_trial = False
                     account.subscription_last_synced_at = datetime.now(UTC)
@@ -163,7 +167,8 @@ async def _apply_repairs(
                 if remote_user.tag == "TRIAL":
                     remote_user = await gateway.upsert_user(
                         user_uuid=candidate.remnawave_user_uuid,
-                        expire_at=account.subscription_expires_at or candidate.subscription_expires_at,
+                        expire_at=account.subscription_expires_at
+                        or candidate.subscription_expires_at,
                         email=account.email,
                         telegram_id=account.telegram_id,
                         status=account.subscription_status,

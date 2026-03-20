@@ -43,27 +43,32 @@ from app.services.ledger import transfer_balance_for_merge
 
 class LinkTokenExpiredError(Exception):
     """Raised when link token has expired."""
-    pass
+
+    code = "token_expired"
 
 
 class LinkTokenAlreadyConsumedError(Exception):
     """Raised when link token was already consumed."""
-    pass
+
+    code = "token_already_used"
 
 
 class LinkTokenNotFoundError(Exception):
     """Raised when link token doesn't exist."""
-    pass
+
+    code = "token_not_found"
 
 
 class LinkTokenTypeMismatchError(Exception):
     """Raised when link token type doesn't match the requested flow."""
-    pass
+
+    code = "token_type_invalid"
 
 
 class AccountMergeConflictError(Exception):
     """Raised when accounts cannot be merged safely."""
-    pass
+
+    code = "merge_conflict"
 
 
 def _linking_error(key: str) -> str:
@@ -102,14 +107,18 @@ def _normalize_optional_text(value: str | None) -> str | None:
 
 
 def _later_datetime(*values: datetime | None) -> datetime | None:
-    normalized_values = [_normalize_datetime(value) for value in values if value is not None]
+    normalized_values = [
+        _normalize_datetime(value) for value in values if value is not None
+    ]
     if not normalized_values:
         return None
     return max(normalized_values)
 
 
 def _earlier_datetime(*values: datetime | None) -> datetime | None:
-    normalized_values = [_normalize_datetime(value) for value in values if value is not None]
+    normalized_values = [
+        _normalize_datetime(value) for value in values if value is not None
+    ]
     if not normalized_values:
         return None
     return min(normalized_values)
@@ -128,7 +137,9 @@ def _account_has_remnawave_state(account: Account) -> bool:
     )
 
 
-def _subscription_status_rank(status: str | None, *, expires_at: datetime | None) -> int:
+def _subscription_status_rank(
+    status: str | None, *, expires_at: datetime | None
+) -> int:
     normalized_status = _normalize_optional_text(status)
     if normalized_status is not None:
         normalized_status = normalized_status.upper()
@@ -148,14 +159,18 @@ def _subscription_status_rank(status: str | None, *, expires_at: datetime | None
     return status_ranks["ACTIVE"]
 
 
-def _subscription_candidate_sort_key(candidate: SubscriptionSnapshotCandidate) -> tuple[int, float, int, int, int, int]:
+def _subscription_candidate_sort_key(
+    candidate: SubscriptionSnapshotCandidate,
+) -> tuple[int, float, int, int, int, int]:
     normalized_expires_at = _normalize_datetime(candidate.subscription_expires_at)
     normalized_url = _normalize_optional_text(candidate.subscription_url)
     normalized_status = _normalize_optional_text(candidate.subscription_status)
     normalized_synced_at = _normalize_datetime(candidate.subscription_last_synced_at)
     return (
         1 if normalized_expires_at is not None else 0,
-        normalized_expires_at.timestamp() if normalized_expires_at is not None else float("-inf"),
+        normalized_expires_at.timestamp()
+        if normalized_expires_at is not None
+        else float("-inf"),
         _subscription_status_rank(normalized_status, expires_at=normalized_expires_at),
         1 if normalized_url is not None else 0,
         int(candidate.subscription_is_trial),
@@ -163,7 +178,9 @@ def _subscription_candidate_sort_key(candidate: SubscriptionSnapshotCandidate) -
     )
 
 
-def _account_snapshot_candidate(account: Account, *, sort_bias: int) -> SubscriptionSnapshotCandidate | None:
+def _account_snapshot_candidate(
+    account: Account, *, sort_bias: int
+) -> SubscriptionSnapshotCandidate | None:
     if not _account_has_remnawave_state(account):
         return None
     return SubscriptionSnapshotCandidate(
@@ -171,7 +188,9 @@ def _account_snapshot_candidate(account: Account, *, sort_bias: int) -> Subscrip
         subscription_url=_normalize_optional_text(account.subscription_url),
         subscription_status=_normalize_optional_text(account.subscription_status),
         subscription_expires_at=_normalize_datetime(account.subscription_expires_at),
-        subscription_last_synced_at=_normalize_datetime(account.subscription_last_synced_at),
+        subscription_last_synced_at=_normalize_datetime(
+            account.subscription_last_synced_at
+        ),
         subscription_is_trial=bool(account.subscription_is_trial),
         sort_bias=sort_bias,
     )
@@ -203,8 +222,12 @@ def _select_preferred_subscription_candidate(
         _account_snapshot_candidate(target_account, sort_bias=20),
         _account_snapshot_candidate(source_account, sort_bias=10),
     ]
-    candidates.extend(_remote_snapshot_candidate(user, sort_bias=0) for user in remote_users)
-    resolved_candidates = [candidate for candidate in candidates if candidate is not None]
+    candidates.extend(
+        _remote_snapshot_candidate(user, sort_bias=0) for user in remote_users
+    )
+    resolved_candidates = [
+        candidate for candidate in candidates if candidate is not None
+    ]
     if not resolved_candidates:
         return None
     return max(resolved_candidates, key=_subscription_candidate_sort_key)
@@ -259,14 +282,14 @@ async def create_telegram_link_token(
 ) -> tuple[str, str]:
     """
     Create a link token for Telegram account linking from browser.
-    
+
     Returns:
         (link_token, telegram_link_url)
         Example URL: https://t.me/bot_username?start=link_ABC123
     """
     link_token = f"link_{secrets.token_urlsafe(16)}"
     expires_at = _utcnow() + timedelta(seconds=ttl_seconds)
-    
+
     token = AuthLinkToken(
         account_id=account_id,
         link_token=link_token,
@@ -275,7 +298,7 @@ async def create_telegram_link_token(
         link_type=LinkType.TELEGRAM_FROM_BROWSER,
         expires_at=expires_at,
     )
-    
+
     session.add(token)
     await session.flush()
     await append_account_event(
@@ -290,7 +313,7 @@ async def create_telegram_link_token(
             "expires_at": token.expires_at.isoformat(),
         },
     )
-    
+
     # Return token and URL template (bot username will be set in config)
     return link_token, f"https://t.me/{{bot_username}}?start={link_token}"
 
@@ -407,7 +430,11 @@ def _ensure_no_scalar_conflicts(target: Account, source: Account) -> None:
     conflict_fields = (
         ("telegram_id", target.telegram_id, source.telegram_id),
         ("email", target.email, source.email),
-        ("referred_by_account_id", target.referred_by_account_id, source.referred_by_account_id),
+        (
+            "referred_by_account_id",
+            target.referred_by_account_id,
+            source.referred_by_account_id,
+        ),
     )
     for field_name, target_value, source_value in conflict_fields:
         if source_value is None or target_value is None:
@@ -449,7 +476,9 @@ async def _move_auth_accounts(
 
 async def _clear_account_cache(*account_ids: uuid.UUID) -> None:
     cache = get_cache()
-    cache_keys = [cache.account_response_key(str(account_id)) for account_id in account_ids]
+    cache_keys = [
+        cache.account_response_key(str(account_id)) for account_id in account_ids
+    ]
     await cache.delete(*cache_keys)
 
 
@@ -515,7 +544,9 @@ async def _move_withdrawals(
     target_account_id: uuid.UUID,
 ) -> None:
     result = await session.execute(
-        select(Withdrawal).where(Withdrawal.account_id == source_account_id).with_for_update()
+        select(Withdrawal)
+        .where(Withdrawal.account_id == source_account_id)
+        .with_for_update()
     )
     for withdrawal in result.scalars().all():
         withdrawal.account_id = target_account_id
@@ -541,7 +572,9 @@ async def _move_payment_events(
     target_account_id: uuid.UUID,
 ) -> None:
     result = await session.execute(
-        select(PaymentEvent).where(PaymentEvent.account_id == source_account_id).with_for_update()
+        select(PaymentEvent)
+        .where(PaymentEvent.account_id == source_account_id)
+        .with_for_update()
     )
     for event in result.scalars().all():
         event.account_id = target_account_id
@@ -569,7 +602,9 @@ async def _move_notifications(
     target_account_id: uuid.UUID,
 ) -> None:
     target_notifications_result = await session.execute(
-        select(Notification).where(Notification.account_id == target_account_id).with_for_update()
+        select(Notification)
+        .where(Notification.account_id == target_account_id)
+        .with_for_update()
     )
     target_dedupe_keys = {
         notification.dedupe_key
@@ -578,11 +613,16 @@ async def _move_notifications(
     }
 
     source_notifications_result = await session.execute(
-        select(Notification).where(Notification.account_id == source_account_id).with_for_update()
+        select(Notification)
+        .where(Notification.account_id == source_account_id)
+        .with_for_update()
     )
     for notification in source_notifications_result.scalars().all():
         normalized_dedupe_key = _normalize_optional_text(notification.dedupe_key)
-        if normalized_dedupe_key is not None and normalized_dedupe_key in target_dedupe_keys:
+        if (
+            normalized_dedupe_key is not None
+            and normalized_dedupe_key in target_dedupe_keys
+        ):
             notification.dedupe_key = None
         notification.account_id = target_account_id
 
@@ -628,7 +668,9 @@ def _merge_broadcast_delivery_rows(
             target_delivery.delivered_at,
             source_delivery.delivered_at,
         )
-        target_delivery.error_code = target_delivery.error_code or source_delivery.error_code
+        target_delivery.error_code = (
+            target_delivery.error_code or source_delivery.error_code
+        )
         target_delivery.error_message = (
             target_delivery.error_message or source_delivery.error_message
         )
@@ -647,7 +689,9 @@ def _merge_broadcast_delivery_rows(
             target_delivery.next_retry_at,
             source_delivery.next_retry_at,
         )
-        target_delivery.error_code = target_delivery.error_code or source_delivery.error_code
+        target_delivery.error_code = (
+            target_delivery.error_code or source_delivery.error_code
+        )
         target_delivery.error_message = (
             target_delivery.error_message or source_delivery.error_message
         )
@@ -730,16 +774,18 @@ async def _collect_remnawave_users_for_merge(
     target_account: Account,
     source_account: Account,
 ):
-    should_reconcile_remnawave = (
-        _account_has_remnawave_state(target_account) or _account_has_remnawave_state(source_account)
-    )
+    should_reconcile_remnawave = _account_has_remnawave_state(
+        target_account
+    ) or _account_has_remnawave_state(source_account)
     if not should_reconcile_remnawave:
         return None, []
 
     try:
         gateway = get_remnawave_gateway()
     except RemnawaveConfigurationError as exc:
-        raise AccountMergeConflictError(_linking_error("remnawave_merge_failed")) from exc
+        raise AccountMergeConflictError(
+            _linking_error("remnawave_merge_failed")
+        ) from exc
 
     candidates: dict[uuid.UUID, RemnawaveUser] = {}
     uuids_to_probe: set[uuid.UUID] = set()
@@ -773,7 +819,9 @@ async def _collect_remnawave_users_for_merge(
             for remote_user in await gateway.get_users_by_telegram_id(telegram_id):
                 candidates[remote_user.uuid] = remote_user
     except RemnawaveRequestError as exc:
-        raise AccountMergeConflictError(_linking_error("remnawave_merge_failed")) from exc
+        raise AccountMergeConflictError(
+            _linking_error("remnawave_merge_failed")
+        ) from exc
 
     return gateway, list(candidates.values())
 
@@ -834,7 +882,8 @@ async def _reconcile_remnawave_users(
     )
     resolved_expires_at = (
         keep_user.expire_at
-        if preferred_candidate is None or preferred_candidate.subscription_expires_at is None
+        if preferred_candidate is None
+        or preferred_candidate.subscription_expires_at is None
         else preferred_candidate.subscription_expires_at
     )
     resolved_status = (
@@ -862,7 +911,9 @@ async def _reconcile_remnawave_users(
                 continue
             await gateway.delete_user(remote_user.uuid)
     except RemnawaveRequestError as exc:
-        raise AccountMergeConflictError(_linking_error("remnawave_merge_failed")) from exc
+        raise AccountMergeConflictError(
+            _linking_error("remnawave_merge_failed")
+        ) from exc
 
     return merged_user
 
@@ -875,7 +926,9 @@ async def merge_accounts(
     last_login_source: LoginSource,
 ) -> Account:
     """Merge source account into target account and return target."""
-    target_account = await _load_account_for_update(session, account_id=target_account_id)
+    target_account = await _load_account_for_update(
+        session, account_id=target_account_id
+    )
 
     if source_account_id == target_account_id:
         target_account.last_login_source = last_login_source
@@ -884,14 +937,18 @@ async def merge_accounts(
         await _clear_account_cache(target_account.id)
         return target_account
 
-    source_account = await _load_account_for_update(session, account_id=source_account_id)
+    source_account = await _load_account_for_update(
+        session, account_id=source_account_id
+    )
     _ensure_no_scalar_conflicts(target_account, source_account)
     remnawave_gateway, remote_users = await _collect_remnawave_users_for_merge(
         target_account=target_account,
         source_account=source_account,
     )
 
-    moved_telegram_id = source_account.telegram_id if target_account.telegram_id is None else None
+    moved_telegram_id = (
+        source_account.telegram_id if target_account.telegram_id is None else None
+    )
 
     # Flush source unique values away before target takes them to avoid transient unique violations.
     if moved_telegram_id is not None:
@@ -899,7 +956,9 @@ async def merge_accounts(
         await session.flush()
 
     target_account.email = target_account.email or source_account.email
-    target_account.display_name = target_account.display_name or source_account.display_name
+    target_account.display_name = (
+        target_account.display_name or source_account.display_name
+    )
     target_account.telegram_id = target_account.telegram_id or moved_telegram_id
     target_account.username = target_account.username or source_account.username
     target_account.first_name = target_account.first_name or source_account.first_name

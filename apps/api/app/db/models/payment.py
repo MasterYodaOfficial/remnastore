@@ -32,8 +32,12 @@ payment_enum_kwargs = dict(
 class Payment(Base):
     __tablename__ = "payments"
     __table_args__ = (
-        UniqueConstraint("provider", "provider_payment_id", name="uq_payments_provider_payment_id"),
-        UniqueConstraint("provider", "idempotency_key", name="uq_payments_provider_idempotency"),
+        UniqueConstraint(
+            "provider", "provider_payment_id", name="uq_payments_provider_payment_id"
+        ),
+        UniqueConstraint(
+            "provider", "idempotency_key", name="uq_payments_provider_idempotency"
+        ),
         Index("ix_payments_account_created", "account_id", "created_at"),
         Index("ix_payments_flow_status", "flow_type", "status"),
         Index("ix_payments_external_reference", "external_reference"),
@@ -67,7 +71,9 @@ class Payment(Base):
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload: Mapped[dict | None] = mapped_column(JSON())
     request_metadata: Mapped[dict | None] = mapped_column("metadata", JSON())
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
         onupdate=func.now(),
@@ -78,7 +84,9 @@ class Payment(Base):
 class PaymentEvent(Base):
     __tablename__ = "payment_events"
     __table_args__ = (
-        UniqueConstraint("provider", "provider_event_id", name="uq_payment_events_provider_event_id"),
+        UniqueConstraint(
+            "provider", "provider_event_id", name="uq_payment_events_provider_event_id"
+        ),
         Index("ix_payment_events_payment_created", "payment_id", "created_at"),
         Index("ix_payment_events_provider_payment", "provider", "provider_payment_id"),
     )
@@ -107,4 +115,6 @@ class PaymentEvent(Base):
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     raw_payload: Mapped[dict] = mapped_column(JSON(), nullable=False)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )

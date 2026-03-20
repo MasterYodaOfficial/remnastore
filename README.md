@@ -114,11 +114,21 @@ HTML-отчеты сохраняются в:
 ./scripts/dev.sh rebuild web admin
 ```
 
+### Python quality-команды
+
+```bash
+uv run --group dev ruff check apps/api apps/bot common scripts
+uv run --group dev ruff format --check apps/api apps/bot common scripts
+./scripts/test.sh all
+```
+
 ### Frontend quality-команды
 
 ```bash
 cd apps/web && npm run lint && npm run test && npm run typecheck && npm run build
+cd apps/web && npm run test:e2e
 cd apps/admin && npm run lint && npm run test && npm run typecheck && npm run build
+cd apps/admin && npm run test:e2e
 ```
 
 ### Полный сброс с чистой БД
@@ -138,7 +148,9 @@ docker builder prune -a -f
 - [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
 - [`docs/product-readiness-plan.md`](docs/product-readiness-plan.md) - план hardening и подготовки `dev -> main`
 - [`docs/production-env.md`](docs/production-env.md) - production-контракт по env-переменным
+- [`docs/release-process.md`](docs/release-process.md) - формальный ritual выпуска `dev -> main`
 - [`docs/release-checklist.md`](docs/release-checklist.md) - checklist выпуска `dev -> main`
+- [`docs/releases/README.md`](docs/releases/README.md) - место хранения release notes и шаблон `v0.x.y`
 - [`docs/smoke-checklist.md`](docs/smoke-checklist.md) - ручной smoke перед релизом
 - [`docs/rollback-checklist.md`](docs/rollback-checklist.md) - порядок rollback при неудачном релизе
 - [`docs/runbooks/README.md`](docs/runbooks/README.md) - incident runbooks по платежам, webhook, Mini App, bot и withdrawals

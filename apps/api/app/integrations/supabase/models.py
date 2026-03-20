@@ -32,7 +32,13 @@ class SupabaseUser(BaseModel):
 
     @property
     def display_name(self) -> str | None:
-        for key in ("full_name", "name", "display_name", "user_name", "preferred_username"):
+        for key in (
+            "full_name",
+            "name",
+            "display_name",
+            "user_name",
+            "preferred_username",
+        ):
             value = self.user_metadata.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()

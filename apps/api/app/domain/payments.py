@@ -71,7 +71,11 @@ class PaymentWebhookEvent:
 
 
 class PaymentGatewayError(Exception):
-    pass
+    default_code: str | None = None
+
+    def __init__(self, detail: str, *, code: str | None = None) -> None:
+        super().__init__(detail)
+        self.code = code or self.default_code
 
 
 class PaymentGatewaySignatureError(PaymentGatewayError):

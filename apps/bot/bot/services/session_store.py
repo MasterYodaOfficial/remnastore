@@ -71,7 +71,9 @@ class MenuSessionStore:
     async def save(self, session: MenuSession) -> None:
         raw_value = json.dumps(asdict(session), ensure_ascii=False)
         if _redis_client is not None:
-            await _redis_client.set(self._key(session.telegram_id), raw_value, ex=self._ttl_seconds)
+            await _redis_client.set(
+                self._key(session.telegram_id), raw_value, ex=self._ttl_seconds
+            )
             return
 
         _memory_sessions[session.telegram_id] = raw_value

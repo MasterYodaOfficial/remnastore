@@ -29,11 +29,17 @@ def _normalize_query(query: str) -> str:
     return normalized
 
 
-def _normalize_filter_values(values: list[str] | tuple[str, ...] | None) -> tuple[str, ...] | None:
+def _normalize_filter_values(
+    values: list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
     if not values:
         return None
     normalized_values = tuple(
-        dict.fromkeys(value.strip() for value in values if isinstance(value, str) and value.strip())
+        dict.fromkeys(
+            value.strip()
+            for value in values
+            if isinstance(value, str) and value.strip()
+        )
     )
     return normalized_values or None
 
@@ -71,7 +77,9 @@ def _build_account_identity_snapshot(
     }
 
 
-def _build_admin_identity_snapshot(admin: Admin | None, *, admin_id: uuid.UUID | None) -> dict[str, object | None] | None:
+def _build_admin_identity_snapshot(
+    admin: Admin | None, *, admin_id: uuid.UUID | None
+) -> dict[str, object | None] | None:
     if admin is None and admin_id is None:
         return None
     return {
@@ -90,7 +98,10 @@ async def _get_admin_referral_chain(
     referrer_account = aliased(Account)
     referrer_result = await session.execute(
         select(ReferralAttribution, referrer_account)
-        .outerjoin(referrer_account, referrer_account.id == ReferralAttribution.referrer_account_id)
+        .outerjoin(
+            referrer_account,
+            referrer_account.id == ReferralAttribution.referrer_account_id,
+        )
         .where(ReferralAttribution.referred_account_id == account.id)
         .order_by(ReferralAttribution.created_at.desc(), ReferralAttribution.id.desc())
         .limit(1)
@@ -111,8 +122,13 @@ async def _get_admin_referral_chain(
     referred_account = aliased(Account)
     referrals_result = await session.execute(
         select(ReferralAttribution, referred_account, ReferralReward)
-        .outerjoin(referred_account, referred_account.id == ReferralAttribution.referred_account_id)
-        .outerjoin(ReferralReward, ReferralReward.attribution_id == ReferralAttribution.id)
+        .outerjoin(
+            referred_account,
+            referred_account.id == ReferralAttribution.referred_account_id,
+        )
+        .outerjoin(
+            ReferralReward, ReferralReward.attribution_id == ReferralAttribution.id
+        )
         .where(ReferralAttribution.referrer_account_id == account.id)
         .order_by(ReferralAttribution.created_at.desc(), ReferralAttribution.id.desc())
     )
@@ -134,7 +150,9 @@ async def _get_admin_referral_chain(
                     referred,
                     account_id=attribution.referred_account_id,
                 ),
-                "subscription_status": None if referred is None else referred.subscription_status,
+                "subscription_status": None
+                if referred is None
+                else referred.subscription_status,
                 "subscription_expires_at": None
                 if referred is None
                 else referred.subscription_expires_at,
@@ -142,7 +160,9 @@ async def _get_admin_referral_chain(
                 "reward_status": reward_status,
                 "reward_amount": 0 if reward is None else int(reward.reward_amount),
                 "reward_rate": None if reward is None else float(reward.reward_rate),
-                "purchase_amount": None if reward is None else int(reward.purchase_amount_rub),
+                "purchase_amount": None
+                if reward is None
+                else int(reward.purchase_amount_rub),
                 "reward_created_at": None if reward is None else reward.created_at,
             }
         )
@@ -167,8 +187,8 @@ async def search_admin_accounts(
     lowered_query = normalized_query.lower()
     lowered_like = f"%{lowered_query}%"
 
-    auth_email_account_ids = (
-        select(AuthAccount.account_id).where(func.lower(func.coalesce(AuthAccount.email, "")).like(lowered_like))
+    auth_email_account_ids = select(AuthAccount.account_id).where(
+        func.lower(func.coalesce(AuthAccount.email, "")).like(lowered_like)
     )
 
     conditions = [
@@ -308,9 +328,15 @@ async def search_admin_account_event_logs(
                 "request_id": event.request_id,
                 "payload": event.payload,
                 "created_at": event.created_at,
-                "account": _build_account_identity_snapshot(account, account_id=event.account_id),
-                "actor_account": _build_account_identity_snapshot(actor, account_id=event.actor_account_id),
-                "actor_admin": _build_admin_identity_snapshot(admin, admin_id=event.actor_admin_id),
+                "account": _build_account_identity_snapshot(
+                    account, account_id=event.account_id
+                ),
+                "actor_account": _build_account_identity_snapshot(
+                    actor, account_id=event.actor_account_id
+                ),
+                "actor_admin": _build_admin_identity_snapshot(
+                    admin, admin_id=event.actor_admin_id
+                ),
             }
         )
 
@@ -360,12 +386,18 @@ async def get_admin_account_detail(
 
     ledger_entries_count = int(
         await session.scalar(
-            select(func.count()).select_from(LedgerEntry).where(LedgerEntry.account_id == account.id)
+            select(func.count())
+            .select_from(LedgerEntry)
+            .where(LedgerEntry.account_id == account.id)
         )
         or 0
     )
     payments_count = int(
-        await session.scalar(select(func.count()).select_from(Payment).where(Payment.account_id == account.id))
+        await session.scalar(
+            select(func.count())
+            .select_from(Payment)
+            .where(Payment.account_id == account.id)
+        )
         or 0
     )
     pending_payments_count = int(
@@ -388,7 +420,9 @@ async def get_admin_account_detail(
     )
     withdrawals_count = int(
         await session.scalar(
-            select(func.count()).select_from(Withdrawal).where(Withdrawal.account_id == account.id)
+            select(func.count())
+            .select_from(Withdrawal)
+            .where(Withdrawal.account_id == account.id)
         )
         or 0
     )
@@ -398,7 +432,9 @@ async def get_admin_account_detail(
             .select_from(Withdrawal)
             .where(
                 Withdrawal.account_id == account.id,
-                Withdrawal.status.in_((WithdrawalStatus.NEW, WithdrawalStatus.IN_PROGRESS)),
+                Withdrawal.status.in_(
+                    (WithdrawalStatus.NEW, WithdrawalStatus.IN_PROGRESS)
+                ),
             )
         )
         or 0

@@ -17,7 +17,9 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("bot.services.api.httpx.AsyncClient") as async_client:
             async_client.return_value.__aenter__.return_value = client
-            result = await ApiClient().is_telegram_account_fully_blocked(telegram_id=700004)
+            result = await ApiClient().is_telegram_account_fully_blocked(
+                telegram_id=700004
+            )
 
         self.assertTrue(result)
         client.get.assert_awaited_once()
@@ -28,7 +30,9 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("bot.services.api.httpx.AsyncClient") as async_client:
             async_client.return_value.__aenter__.return_value = client
-            result = await ApiClient().is_telegram_account_fully_blocked(telegram_id=700004)
+            result = await ApiClient().is_telegram_account_fully_blocked(
+                telegram_id=700004
+            )
 
         self.assertFalse(result)
 
@@ -41,18 +45,24 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("bot.services.api.httpx.AsyncClient") as async_client:
             async_client.return_value.__aenter__.return_value = client
-            result = await ApiClient().mark_telegram_account_reachable(telegram_id=700004)
+            result = await ApiClient().mark_telegram_account_reachable(
+                telegram_id=700004
+            )
 
         self.assertTrue(result)
         client.post.assert_awaited_once()
 
-    async def test_mark_telegram_account_reachable_returns_false_on_http_error(self) -> None:
+    async def test_mark_telegram_account_reachable_returns_false_on_http_error(
+        self,
+    ) -> None:
         client = AsyncMock()
         client.post.side_effect = httpx.HTTPError("boom")
 
         with patch("bot.services.api.httpx.AsyncClient") as async_client:
             async_client.return_value.__aenter__.return_value = client
-            result = await ApiClient().mark_telegram_account_reachable(telegram_id=700004)
+            result = await ApiClient().mark_telegram_account_reachable(
+                telegram_id=700004
+            )
 
         self.assertFalse(result)
 

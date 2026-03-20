@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error, api_error_from_exception
 from app.api.dependencies import get_current_admin
 from app.db.models import (
     Admin,
@@ -34,6 +35,7 @@ from app.schemas.admin import (
     AdminPromoRedemptionListResponse,
     AdminPromoRedemptionResponse,
 )
+from app.services.i18n import translate
 from app.services.admin_promocodes import (
     AdminPromoCampaignNotFoundError,
     AdminPromoConflictError,
@@ -54,6 +56,26 @@ from app.services.admin_promocodes import (
 
 router = APIRouter()
 
+_ADMIN_PROMO_ERROR_TRANSLATIONS: dict[str, str] = {
+    "admin_promo_validation_failed": "api.admin.errors.promo_validation_failed",
+}
+
+
+def _admin_promo_service_error(status_code: int, exc: Exception):
+    error_code = getattr(exc, "code", None)
+    detail_key = (
+        _ADMIN_PROMO_ERROR_TRANSLATIONS.get(error_code)
+        if isinstance(error_code, str)
+        else None
+    )
+    if detail_key is not None:
+        exc.args = (translate(detail_key),)
+    return api_error_from_exception(
+        status_code,
+        exc,
+        error_code=error_code if isinstance(error_code, str) else None,
+    )
+
 
 async def _count_campaign_codes(session: AsyncSession, campaign_id: int) -> int:
     return int(
@@ -67,7 +89,9 @@ async def _count_campaign_codes(session: AsyncSession, campaign_id: int) -> int:
 async def _count_campaign_redemptions(session: AsyncSession, campaign_id: int) -> int:
     return int(
         await session.scalar(
-            select(func.count(PromoRedemption.id)).where(PromoRedemption.campaign_id == campaign_id)
+            select(func.count(PromoRedemption.id)).where(
+                PromoRedemption.campaign_id == campaign_id
+            )
         )
         or 0
     )
@@ -76,7 +100,9 @@ async def _count_campaign_redemptions(session: AsyncSession, campaign_id: int) -
 async def _count_code_redemptions(session: AsyncSession, code_id: int) -> int:
     return int(
         await session.scalar(
-            select(func.count(PromoRedemption.id)).where(PromoRedemption.promo_code_id == code_id)
+            select(func.count(PromoRedemption.id)).where(
+                PromoRedemption.promo_code_id == code_id
+            )
         )
         or 0
     )
@@ -222,7 +248,9 @@ async def create_admin_promo_campaign(
             per_account_redemptions_limit=payload.per_account_redemptions_limit,
         )
     except AdminPromoValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_promo_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     return _build_campaign_response(campaign)
 
@@ -255,9 +283,16 @@ async def update_admin_promo_campaign(
             per_account_redemptions_limit=payload.per_account_redemptions_limit,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
     except AdminPromoValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_promo_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     return _build_campaign_response(
         campaign,
@@ -282,7 +317,12 @@ async def read_promo_codes(
             offset=offset,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
 
     return AdminPromoCodeListResponse(
         items=[
@@ -320,11 +360,23 @@ async def create_admin_promo_code(
             is_active=payload.is_active,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
     except AdminPromoValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_promo_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
     except AdminPromoConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_code_conflict"),)
+        raise api_error_from_exception(
+            status.HTTP_409_CONFLICT,
+            exc,
+            error_code="admin_promo_code_conflict",
+        ) from exc
 
     return _build_code_response(promo_code)
 
@@ -353,11 +405,23 @@ async def batch_create_admin_promo_codes(
             is_active=payload.is_active,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
     except AdminPromoValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_promo_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
     except AdminPromoConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_batch_conflict"),)
+        raise api_error_from_exception(
+            status.HTTP_409_CONFLICT,
+            exc,
+            error_code="admin_promo_batch_conflict",
+        ) from exc
 
     return AdminPromoCodeBatchCreateResponse(
         items=[_build_code_response(promo_code) for promo_code in promo_codes],
@@ -388,11 +452,23 @@ async def import_admin_promo_codes(
             skip_duplicates=payload.skip_duplicates,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
     except AdminPromoValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_promo_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
     except AdminPromoConflictError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_import_conflict"),)
+        raise api_error_from_exception(
+            status.HTTP_409_CONFLICT,
+            exc,
+            error_code="admin_promo_import_conflict",
+        ) from exc
 
     return AdminPromoCodeImportResponse(
         items=[_build_code_response(promo_code) for promo_code in promo_codes],
@@ -417,7 +493,12 @@ async def export_admin_promo_codes(
             campaign_id=campaign_id,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
 
     return AdminPromoCodeExportResponse(
         items=[
@@ -449,11 +530,23 @@ async def update_admin_promo_code(
             is_active=payload.is_active,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
     except AdminPromoCodeNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_code_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_code_not_found",
+        ) from exc
     except AdminPromoValidationError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise _admin_promo_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
 
     return _build_code_response(
         promo_code,
@@ -482,9 +575,10 @@ async def read_promo_redemptions(
         try:
             parsed_account_id = UUID(account_id)
         except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="invalid account_id",
+            raise api_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                translate("api.admin.errors.promo_invalid_account_id"),
+                error_code="admin_promo_invalid_account_id",
             ) from exc
     try:
         rows, total = await list_promo_redemptions(
@@ -494,12 +588,19 @@ async def read_promo_redemptions(
             offset=offset,
             status=status_filter,
             promo_code_id=promo_code_id,
-            redemption_context=redemption_context.value if redemption_context is not None else None,
+            redemption_context=redemption_context.value
+            if redemption_context is not None
+            else None,
             code_query=code_query,
             account_id=parsed_account_id,
         )
     except AdminPromoCampaignNotFoundError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        exc.args = (translate("api.admin.errors.promo_campaign_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_promo_campaign_not_found",
+        ) from exc
 
     return AdminPromoRedemptionListResponse(
         items=[

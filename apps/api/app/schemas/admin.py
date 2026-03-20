@@ -25,7 +25,10 @@ from app.db.models.promo import (
 )
 from app.db.models.withdrawal import WithdrawalDestinationType, WithdrawalStatus
 from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
-from app.services.broadcasts import BroadcastValidationError, validate_telegram_html_subset
+from app.services.broadcasts import (
+    BroadcastValidationError,
+    validate_telegram_html_subset,
+)
 
 
 class AdminResponse(BaseModel):
@@ -389,7 +392,11 @@ class AdminPromoCampaignCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_window(self) -> "AdminPromoCampaignCreateRequest":
-        if self.starts_at is not None and self.ends_at is not None and self.ends_at <= self.starts_at:
+        if (
+            self.starts_at is not None
+            and self.ends_at is not None
+            and self.ends_at <= self.starts_at
+        ):
             raise ValueError("ends_at must be later than starts_at")
         return self
 
@@ -652,8 +659,12 @@ class AdminBroadcastAudienceRequest(BaseModel):
     subscription_expired_to_days: int | None = Field(default=None, ge=0)
     cooldown_days: int | None = Field(default=None, ge=1)
     cooldown_key: str | None = Field(default=None, min_length=1, max_length=64)
-    telegram_quiet_hours_start: str | None = Field(default=None, min_length=1, max_length=5)
-    telegram_quiet_hours_end: str | None = Field(default=None, min_length=1, max_length=5)
+    telegram_quiet_hours_start: str | None = Field(
+        default=None, min_length=1, max_length=5
+    )
+    telegram_quiet_hours_end: str | None = Field(
+        default=None, min_length=1, max_length=5
+    )
 
     @model_validator(mode="after")
     def validate_windows(self) -> "AdminBroadcastAudienceRequest":
@@ -667,7 +678,9 @@ class AdminBroadcastAudienceRequest(BaseModel):
             seen_emails.add(normalized)
             normalized_manual_emails.append(normalized)
         self.manual_emails = normalized_manual_emails
-        self.manual_telegram_ids = list(dict.fromkeys(int(item) for item in self.manual_telegram_ids))
+        self.manual_telegram_ids = list(
+            dict.fromkeys(int(item) for item in self.manual_telegram_ids)
+        )
 
         if (
             self.subscription_expired_from_days is not None
@@ -681,7 +694,9 @@ class AdminBroadcastAudienceRequest(BaseModel):
             raise ValueError("cooldown_days and cooldown_key must be provided together")
         if self.cooldown_key is not None:
             self.cooldown_key = self.cooldown_key.strip().lower()
-        if (self.telegram_quiet_hours_start is None) != (self.telegram_quiet_hours_end is None):
+        if (self.telegram_quiet_hours_start is None) != (
+            self.telegram_quiet_hours_end is None
+        ):
             raise ValueError(
                 "telegram_quiet_hours_start and telegram_quiet_hours_end must be provided together"
             )
@@ -701,9 +716,12 @@ class AdminBroadcastAudienceRequest(BaseModel):
             and not self.manual_emails
             and not self.manual_telegram_ids
         ):
-            raise ValueError("manual_list audience requires at least one account_id, email or telegram_id")
+            raise ValueError(
+                "manual_list audience requires at least one account_id, email or telegram_id"
+            )
         if (
-            self.segment in {
+            self.segment
+            in {
                 BroadcastAudienceSegment.INACTIVE_ACCOUNTS,
                 BroadcastAudienceSegment.INACTIVE_PAID_USERS,
             }
@@ -733,8 +751,12 @@ class AdminBroadcastAudienceResponse(BaseModel):
 
 
 class AdminBroadcastEstimateRequest(BaseModel):
-    channels: list[BroadcastChannel] = Field(default_factory=lambda: [BroadcastChannel.IN_APP])
-    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+    channels: list[BroadcastChannel] = Field(
+        default_factory=lambda: [BroadcastChannel.IN_APP]
+    )
+    audience: AdminBroadcastAudienceRequest = Field(
+        default_factory=AdminBroadcastAudienceRequest
+    )
 
     @field_validator("channels")
     @classmethod
@@ -758,8 +780,12 @@ class AdminBroadcastEstimateResponse(BaseModel):
 
 
 class AdminBroadcastAudiencePreviewRequest(BaseModel):
-    channels: list[BroadcastChannel] = Field(default_factory=lambda: [BroadcastChannel.IN_APP])
-    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+    channels: list[BroadcastChannel] = Field(
+        default_factory=lambda: [BroadcastChannel.IN_APP]
+    )
+    audience: AdminBroadcastAudienceRequest = Field(
+        default_factory=AdminBroadcastAudienceRequest
+    )
     limit: int = Field(default=10, ge=1, le=50)
 
     @field_validator("channels")
@@ -816,7 +842,9 @@ class AdminBroadcastAudienceManualListDiagnosticsResponse(BaseModel):
     excluded_accounts_count: int
     excluded_blocked_count: int
     excluded_cooldown_count: int
-    excluded_accounts_sample: list[AdminBroadcastAudienceManualListExcludedAccountResponse]
+    excluded_accounts_sample: list[
+        AdminBroadcastAudienceManualListExcludedAccountResponse
+    ]
 
 
 class AdminBroadcastAudiencePreviewResponse(BaseModel):
@@ -827,13 +855,17 @@ class AdminBroadcastAudiencePreviewResponse(BaseModel):
     limit: int
     has_more: bool
     items: list[AdminBroadcastAudiencePreviewItemResponse]
-    manual_list_diagnostics: AdminBroadcastAudienceManualListDiagnosticsResponse | None = None
+    manual_list_diagnostics: (
+        AdminBroadcastAudienceManualListDiagnosticsResponse | None
+    ) = None
 
 
 class AdminBroadcastAudiencePresetUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
-    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+    audience: AdminBroadcastAudienceRequest = Field(
+        default_factory=AdminBroadcastAudienceRequest
+    )
 
     @field_validator("name")
     @classmethod
@@ -1037,9 +1069,13 @@ class AdminBroadcastUpsertRequest(BaseModel):
     body_html: str = Field(..., min_length=1, max_length=4096)
     content_type: BroadcastContentType = BroadcastContentType.TEXT
     image_url: str | None = Field(default=None, max_length=1024)
-    channels: list[BroadcastChannel] = Field(default_factory=lambda: [BroadcastChannel.IN_APP])
+    channels: list[BroadcastChannel] = Field(
+        default_factory=lambda: [BroadcastChannel.IN_APP]
+    )
     buttons: list[AdminBroadcastButtonRequest] = Field(default_factory=list)
-    audience: AdminBroadcastAudienceRequest = Field(default_factory=AdminBroadcastAudienceRequest)
+    audience: AdminBroadcastAudienceRequest = Field(
+        default_factory=AdminBroadcastAudienceRequest
+    )
 
     @field_validator("name", "title")
     @classmethod
@@ -1078,7 +1114,9 @@ class AdminBroadcastUpsertRequest(BaseModel):
 
     @field_validator("buttons")
     @classmethod
-    def validate_buttons_count(cls, value: list[AdminBroadcastButtonRequest]) -> list[AdminBroadcastButtonRequest]:
+    def validate_buttons_count(
+        cls, value: list[AdminBroadcastButtonRequest]
+    ) -> list[AdminBroadcastButtonRequest]:
         if len(value) > 3:
             raise ValueError("buttons must contain at most 3 items")
         return value

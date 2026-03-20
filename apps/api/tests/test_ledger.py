@@ -65,16 +65,22 @@ class LedgerFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async def override_get_current_account():
             if self._current_account_id is None:
-                raise AssertionError("current account is not configured for test request")
+                raise AssertionError(
+                    "current account is not configured for test request"
+                )
 
             async with self._session_factory() as session:
                 account = await session.get(Account, self._current_account_id)
                 if account is None:
-                    raise AssertionError(f"account not found: {self._current_account_id}")
+                    raise AssertionError(
+                        f"account not found: {self._current_account_id}"
+                    )
                 return account
 
         self.app.dependency_overrides[get_session] = override_get_session
-        self.app.dependency_overrides[get_current_account] = override_get_current_account
+        self.app.dependency_overrides[get_current_account] = (
+            override_get_current_account
+        )
         self.client = AsyncClient(
             transport=ASGITransport(app=self.app),
             base_url="http://testserver",
@@ -229,8 +235,12 @@ class LedgerFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["items"][1]["entry_type"], "topup_manual")
 
     async def test_merge_accounts_moves_balance_through_ledger_entries(self) -> None:
-        source_account = await self._create_account(balance=12, referral_code="ref-source")
-        target_account = await self._create_account(balance=8, referral_code="ref-target")
+        source_account = await self._create_account(
+            balance=12, referral_code="ref-source"
+        )
+        target_account = await self._create_account(
+            balance=8, referral_code="ref-target"
+        )
 
         async with self._session_factory() as session:
             merged_account = await merge_accounts(

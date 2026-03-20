@@ -110,17 +110,29 @@ class Broadcast(Base):
         nullable=False,
         default=BroadcastStatus.DRAFT,
     )
-    estimated_total_accounts: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
-    estimated_in_app_recipients: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
-    estimated_telegram_recipients: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
-    created_by_admin_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
-    updated_by_admin_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    estimated_total_accounts: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0
+    )
+    estimated_in_app_recipients: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0
+    )
+    estimated_telegram_recipients: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0
+    )
+    created_by_admin_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False
+    )
+    updated_by_admin_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False
+    )
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     launched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text())
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
         onupdate=func.now(),
@@ -150,15 +162,27 @@ class BroadcastRun(Base):
         nullable=False,
         default=BroadcastRunStatus.RUNNING,
     )
-    triggered_by_admin_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
-    snapshot_total_accounts: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
-    snapshot_in_app_targets: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
-    snapshot_telegram_targets: Mapped[int] = mapped_column(Integer(), nullable=False, default=0)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    triggered_by_admin_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), nullable=False
+    )
+    snapshot_total_accounts: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0
+    )
+    snapshot_in_app_targets: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0
+    )
+    snapshot_telegram_targets: Mapped[int] = mapped_column(
+        Integer(), nullable=False, default=0
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text())
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
         onupdate=func.now(),
@@ -212,7 +236,9 @@ class BroadcastDelivery(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(Text())
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
         onupdate=func.now(),

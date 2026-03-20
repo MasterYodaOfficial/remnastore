@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.errors import api_error, api_error_from_exception
 from app.api.dependencies import get_current_account
 from app.db.models import Account
 from app.db.session import get_session
@@ -55,12 +56,13 @@ async def create_trial_subscription(
     try:
         return await activate_trial(session, account=current_account)
     except TrialEligibilityError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.reason) from exc
-    except RemnawaveSyncError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+        raise api_error(
+            exc.status_code,
+            exc.reason,
+            error_code=exc.reason,
         ) from exc
+    except RemnawaveSyncError as exc:
+        raise api_error_from_exception(status.HTTP_502_BAD_GATEWAY, exc) from exc
 
 
 @router.post("/sync", response_model=SubscriptionStateResponse)
@@ -71,10 +73,7 @@ async def sync_subscription(
     try:
         return await sync_current_subscription(session, account=current_account)
     except RemnawaveSyncError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_502_BAD_GATEWAY, exc) from exc
 
 
 @router.post("/wallet/plans/{plan_code}", response_model=SubscriptionStateResponse)
@@ -93,47 +92,22 @@ async def purchase_with_wallet(
             promo_code=payload.promo_code,
         )
     except SubscriptionPlanError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except PromoCodeNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
     except InsufficientFundsError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PurchaseConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except PromoConflictError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_409_CONFLICT, exc) from exc
     except SubscriptionPurchaseBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PromoBlockedError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_403_FORBIDDEN, exc) from exc
     except PromoValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+        raise api_error_from_exception(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
         ) from exc
     except RemnawaveSyncError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
+        raise api_error_from_exception(status.HTTP_502_BAD_GATEWAY, exc) from exc

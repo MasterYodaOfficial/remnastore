@@ -28,8 +28,14 @@ async def _post_api(path: str, payload: dict, *, timeout: float) -> httpx.Respon
 
 
 @router.pre_checkout_query()
-async def handle_pre_checkout_query(pre_checkout_query: PreCheckoutQuery, bot: Bot) -> None:
-    locale = pre_checkout_query.from_user.language_code if pre_checkout_query.from_user else None
+async def handle_pre_checkout_query(
+    pre_checkout_query: PreCheckoutQuery, bot: Bot
+) -> None:
+    locale = (
+        pre_checkout_query.from_user.language_code
+        if pre_checkout_query.from_user
+        else None
+    )
     if pre_checkout_query.currency != "XTR":
         await bot.answer_pre_checkout_query(
             pre_checkout_query.id,

@@ -21,7 +21,9 @@ class ApiClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def _post(self, path: str, payload: dict, *, authorized: bool = False) -> dict:
+    async def _post(
+        self, path: str, payload: dict, *, authorized: bool = False
+    ) -> dict:
         headers = build_api_headers() if authorized else {}
         async with httpx.AsyncClient(base_url=self._base_url, timeout=15.0) as client:
             resp = await client.post(path, json=payload, headers=headers)
@@ -82,13 +84,19 @@ class ApiClient:
         return True
 
     async def get_bot_dashboard(self, *, telegram_id: int) -> dict:
-        return await self._get(f"/api/v1/internal/bot/dashboard/{telegram_id}", authorized=True)
+        return await self._get(
+            f"/api/v1/internal/bot/dashboard/{telegram_id}", authorized=True
+        )
 
     async def get_bot_plans(self) -> dict:
         return await self._get("/api/v1/internal/bot/plans", authorized=True)
 
     async def activate_bot_trial(self, *, telegram_id: int) -> dict:
-        return await self._post(f"/api/v1/internal/bot/subscriptions/trial/{telegram_id}", {}, authorized=True)
+        return await self._post(
+            f"/api/v1/internal/bot/subscriptions/trial/{telegram_id}",
+            {},
+            authorized=True,
+        )
 
     async def create_bot_telegram_stars_payment(
         self,

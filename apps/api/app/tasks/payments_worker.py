@@ -9,7 +9,10 @@ from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.session import SessionLocal, engine
 from app.services.cache import get_cache
-from app.services.payments import expire_stale_payments, reconcile_pending_yookassa_payments
+from app.services.payments import (
+    expire_stale_payments,
+    reconcile_pending_yookassa_payments,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +56,9 @@ async def _run_reconcile_yookassa_once() -> None:
             result = await reconcile_pending_yookassa_payments(
                 session,
                 limit=max(1, int(settings.payment_jobs_batch_size)),
-                min_age_seconds=max(1, int(settings.payment_reconcile_yookassa_min_age_seconds)),
+                min_age_seconds=max(
+                    1, int(settings.payment_reconcile_yookassa_min_age_seconds)
+                ),
             )
         if result.processed > 0:
             logger.info(
@@ -73,7 +78,9 @@ async def run() -> None:
     await cache.ping()
 
     expire_interval = max(5, int(settings.payment_expire_stale_interval_seconds))
-    reconcile_interval = max(5, int(settings.payment_reconcile_yookassa_interval_seconds))
+    reconcile_interval = max(
+        5, int(settings.payment_reconcile_yookassa_interval_seconds)
+    )
     next_expire_run_at = 0.0
     next_reconcile_run_at = 0.0
 
@@ -98,7 +105,9 @@ async def run() -> None:
                 try:
                     await _run_reconcile_yookassa_once()
                 except Exception:
-                    logger.exception("reconcile_pending_yookassa_payments iteration failed")
+                    logger.exception(
+                        "reconcile_pending_yookassa_payments iteration failed"
+                    )
                 next_reconcile_run_at = now + reconcile_interval
 
             await asyncio.sleep(1.0)
