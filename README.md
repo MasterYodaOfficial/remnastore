@@ -13,7 +13,7 @@ apps/
   bot/    Telegram-бот и webhook-сервер
   web/    Браузерное приложение и Telegram Mini App
 ops/
-  docker/ Локальный Docker-стек
+  docker/ Production-oriented Docker-стек
 scripts/  Вспомогательные скрипты
 packages/ Общие пакеты
 ```
@@ -79,39 +79,40 @@ HTML-отчеты сохраняются в:
 - `.coverage_html/api`
 - `.coverage_html/bot`
 
-### 2. Поднять dev-стек
+### 2. Поднять Docker-стек
 
 ```bash
-./scripts/dev.sh
+./scripts/stack.sh up --build
 ```
 
 Сервисы:
 - Web: `http://localhost:5173`
+- Admin: `http://localhost:5174`
 - API: `http://localhost:8000`
 - Bot webhook server: `http://localhost:8080`
 - Postgres: `localhost:5432`
 - Redis: `localhost:6379`
 
 Что важно:
-- `api`, `bot`, `worker`, `notifications-worker`, `web`, `admin` теперь запускаются через dev overlay `ops/docker/compose.dev.yml`
-- исходники для dev примонтированы в контейнеры, поэтому изменения в коде не требуют `docker compose up --build`
-- если меняешь зависимости или Dockerfile, тогда запускай `./scripts/dev.sh rebuild` или `./scripts/dev.sh rebuild api`
-- все основные действия теперь доступны через один helper: `./scripts/dev.sh help`
-- Python-сервисы внутри контейнеров запускаются через `uv run --no-sync`, то есть dev/prod стек использует тот же dependency lock и тот же `.venv`-workflow
+- в Docker оставлен только один production-oriented stack: `ops/docker/compose.yml`
+- bind-mount overlay и autoreload убраны; любое изменение кода, зависимостей или build-time env требует пересборки нужного сервиса
+- `web` и `admin` внутри Docker теперь собираются как статические production-бандлы и отдаются через `nginx`
+- все основные действия доступны через helper `./scripts/stack.sh help`
+- Python-сервисы внутри контейнеров запускаются через `uv run --no-sync`, то есть runtime использует тот же lockfile, что и CI
 
 ## Полезные команды
 
-### Основные dev-команды
+### Основные Docker-команды
 
 ```bash
-./scripts/dev.sh logs
-./scripts/dev.sh logs api
-./scripts/dev.sh ps
-./scripts/dev.sh restart api
-./scripts/dev.sh stop
-./scripts/dev.sh down
-./scripts/dev.sh rebuild
-./scripts/dev.sh rebuild web admin
+./scripts/stack.sh logs
+./scripts/stack.sh logs api
+./scripts/stack.sh ps
+./scripts/stack.sh restart api
+./scripts/stack.sh stop
+./scripts/stack.sh down
+./scripts/stack.sh rebuild
+./scripts/stack.sh rebuild web admin
 ```
 
 ### Python quality-команды
@@ -134,30 +135,25 @@ cd apps/admin && npm run test:e2e
 ### Полный сброс с чистой БД
 
 ```bash
-./scripts/dev.sh down --volumes --remove-orphans --rmi local
+./scripts/stack.sh down --volumes --remove-orphans --rmi local
 docker builder prune -a -f
-./scripts/dev.sh rebuild
+./scripts/stack.sh rebuild
 ```
 
 ## Основные документы
 
 - [`docs/architecture.md`](docs/architecture.md) - общая архитектура системы
-- [`docs/bot-inline-menu-v1.md`](docs/bot-inline-menu-v1.md) - целевой UX и технический план inline-бота
 - [`docs/account-linking.md`](docs/account-linking.md) - логика связки Telegram и browser-аккаунтов
-- [`docs/launch-roadmap.md`](docs/launch-roadmap.md) - путь до первого коммерческого запуска
-- [`docs/launch-progress.md`](docs/launch-progress.md) - трекер выполнения по фазам запуска
-- [`docs/product-readiness-plan.md`](docs/product-readiness-plan.md) - план hardening и подготовки `dev -> main`
+- [`docs/broadcasts-v1.md`](docs/broadcasts-v1.md) - доменный контракт админских рассылок
 - [`docs/production-env.md`](docs/production-env.md) - production-контракт по env-переменным
-- [`docs/release-process.md`](docs/release-process.md) - формальный ritual выпуска `dev -> main`
-- [`docs/release-checklist.md`](docs/release-checklist.md) - checklist выпуска `dev -> main`
-- [`docs/releases/README.md`](docs/releases/README.md) - место хранения release notes и шаблон `v0.x.y`
-- [`docs/smoke-checklist.md`](docs/smoke-checklist.md) - ручной smoke перед релизом
-- [`docs/rollback-checklist.md`](docs/rollback-checklist.md) - порядок rollback при неудачном релизе
-- [`docs/runbooks/README.md`](docs/runbooks/README.md) - incident runbooks по платежам, webhook, Mini App, bot и withdrawals
-- [`docs/logging-observability.md`](docs/logging-observability.md) - фазный план логирования и observability
-- [`docs/security-checklist.md`](docs/security-checklist.md) - базовый security checklist
-- [`docs/code-documentation.md`](docs/code-documentation.md) - правила docstring и комментариев в коде
 - [`apps/web/FRONTEND_CONTRACT.md`](apps/web/FRONTEND_CONTRACT.md) - единый контракт frontend на русском
+
+App-level документация:
+
+- [`apps/api/README.md`](apps/api/README.md) - краткое описание API-приложения
+- [`apps/bot/README.md`](apps/bot/README.md) - краткое описание Telegram-бота
+- [`packages/locales/README.md`](packages/locales/README.md) - устройство пакета локалей
+- [`packages/shared/README.md`](packages/shared/README.md) - общий пакет
 
 ## Ключевые замечания
 
@@ -178,6 +174,6 @@ docker builder prune -a -f
 
 ## Правило по документации
 
-- В корне должен оставаться только минимальный набор документации.
-- Подробные документы держим в `docs/`.
-- Не плодим файлы вида `FINAL_SUMMARY.md`, `IMPLEMENTATION_READY.md`, `START_HERE.md` и аналогичные одноразовые отчеты.
+- В репозитории держим только README, контракты и поясняющие документы, которые помогают сопровождать runtime.
+- Процессные трекеры, roadmap-ы, checklist-артефакты и одноразовые отчеты в репозитории не копим.
+- Если документ перестал быть источником истины, его лучше удалить, чем поддерживать для вида.

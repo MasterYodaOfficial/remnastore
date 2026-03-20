@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Local dev helper with bind-mounts and autoreload.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
 
-compose_files=(
-  -f ops/docker/compose.yml
-  -f ops/docker/compose.dev.yml
-)
+compose() {
+  docker compose \
+    --env-file "$repo_root/.env" \
+    -f ops/docker/compose.yml \
+    "$@"
+}
 
 services=(
   api
   bot
   worker
   notifications-worker
+  broadcast-worker
   web
   admin
   db
   redis
 )
-
-compose() {
-  docker compose "${compose_files[@]}" "$@"
-}
 
 is_service() {
   local candidate="${1:-}"
@@ -37,26 +37,26 @@ is_service() {
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/dev.sh                         Start all dev services in background
-  scripts/dev.sh up [--build] [service] Start all or selected services
-  scripts/dev.sh logs [args] [service]  Follow logs for all or selected services
-  scripts/dev.sh ps                     Show running services
-  scripts/dev.sh restart [service]      Restart all or selected services
-  scripts/dev.sh stop [service]         Stop all or selected services
-  scripts/dev.sh down [args]            Stop and remove containers
-  scripts/dev.sh rebuild [service]      Rebuild and restart all or selected services
-  scripts/dev.sh config                 Render merged compose config
-  scripts/dev.sh help                   Show this help
+  scripts/stack.sh                         Start all services in background
+  scripts/stack.sh up [--build] [service] Start all or selected services
+  scripts/stack.sh logs [args] [service]  Follow logs for all or selected services
+  scripts/stack.sh ps                     Show running services
+  scripts/stack.sh restart [service]      Restart all or selected services
+  scripts/stack.sh stop [service]         Stop all or selected services
+  scripts/stack.sh down [args]            Stop and remove containers
+  scripts/stack.sh rebuild [service]      Rebuild and restart all or selected services
+  scripts/stack.sh config                 Render compose config
+  scripts/stack.sh help                   Show this help
 
 Examples:
-  scripts/dev.sh
-  scripts/dev.sh up --build api
-  scripts/dev.sh logs api
-  scripts/dev.sh logs --tail=50 web
-  scripts/dev.sh restart bot
-  scripts/dev.sh stop
-  scripts/dev.sh down
-  scripts/dev.sh rebuild api web
+  scripts/stack.sh
+  scripts/stack.sh up --build api
+  scripts/stack.sh logs api
+  scripts/stack.sh logs --tail=50 web
+  scripts/stack.sh restart bot
+  scripts/stack.sh stop
+  scripts/stack.sh down
+  scripts/stack.sh rebuild api web
 EOF
 }
 

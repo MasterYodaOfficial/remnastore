@@ -11,4 +11,5 @@
 Основная логика находится в каталоге `bot/`.
 
 Полезные документы:
-- [`docs/bot-inline-menu-v1.md`](../../docs/bot-inline-menu-v1.md) - согласованный scope и архитектура inline-бота `v1`
+- [`docs/account-linking.md`](../../docs/account-linking.md) - сценарии связки Telegram и browser-аккаунтов
+- [`docs/architecture.md`](../../docs/architecture.md) - общая архитектура проекта
