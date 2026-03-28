@@ -3,7 +3,10 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.exc import IntegrityError
 
-from app.services.accounts import AccountIdentityConflictError, upsert_supabase_account
+from app.services.accounts import (
+    AccountIdentityConflictError,
+    upsert_supabase_account,
+)
 
 
 class _DummySession:

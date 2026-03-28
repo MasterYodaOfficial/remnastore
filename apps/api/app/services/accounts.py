@@ -21,11 +21,16 @@ class AccountBlockedError(Exception):
     code = "account_blocked"
 
 
-SUPPORTED_SUPABASE_IDENTITY_PROVIDERS = {
+BASE_SUPABASE_IDENTITY_PROVIDERS = {
     "google": AuthProvider.GOOGLE,
     "yandex": AuthProvider.YANDEX,
-    "vk": AuthProvider.VK,
 }
+
+
+def _map_supabase_identity_provider(provider_name: str | None) -> AuthProvider | None:
+    if not provider_name:
+        return None
+    return BASE_SUPABASE_IDENTITY_PROVIDERS.get(provider_name.strip().lower())
 
 
 def _ensure_referral_code(account: Account) -> None:
@@ -105,7 +110,7 @@ def _build_supabase_identity_links(
     seen = {(AuthProvider.SUPABASE, supabase_user.id)}
 
     for identity in supabase_user.identities:
-        provider = SUPPORTED_SUPABASE_IDENTITY_PROVIDERS.get(identity.provider)
+        provider = _map_supabase_identity_provider(identity.provider)
         provider_uid = identity.provider_uid
         if provider is None or not provider_uid:
             continue
@@ -118,6 +123,22 @@ def _build_supabase_identity_links(
         links.append(key)
 
     return links
+
+
+def _find_matching_supabase_identity(
+    supabase_user: SupabaseUser,
+    *,
+    provider: AuthProvider,
+    provider_uid: str,
+) -> SupabaseIdentity | None:
+    for identity in supabase_user.identities:
+        if _map_supabase_identity_provider(identity.provider) != provider:
+            continue
+        if identity.provider_uid != provider_uid:
+            continue
+        return identity
+
+    return None
 
 
 def _identity_display_name(
@@ -228,16 +249,16 @@ async def _upsert_supabase_account_once(
         resolved_account.last_seen_at = now
         _ensure_referral_code(resolved_account)
 
-    identity_map = {
-        identity.provider: identity for identity in supabase_user.identities
-    }
-
     for provider, provider_uid in identity_links:
         auth_account = existing_links.get((provider, provider_uid))
         identity = (
             None
             if provider == AuthProvider.SUPABASE
-            else identity_map.get(provider.value)
+            else _find_matching_supabase_identity(
+                supabase_user,
+                provider=provider,
+                provider_uid=provider_uid,
+            )
         )
         link_display_name = _identity_display_name(supabase_user, identity)
 

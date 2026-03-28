@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, Update
 from aiogram.exceptions import TelegramRetryAfter
@@ -118,7 +120,10 @@ def create_fastapi_app(bot: Bot, dp: Dispatcher) -> FastAPI:
 
 async def main() -> None:
     configure_logging(component_name="bot")
-    bot = Bot(token=settings.bot_token)
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = create_dispatcher()
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

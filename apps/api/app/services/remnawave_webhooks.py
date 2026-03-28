@@ -35,6 +35,8 @@ USER_EXPIRING_EVENT_DAYS = {
 }
 USER_EXPIRED_EVENT = "user.expired"
 USER_DELETED_EVENT = "user.deleted"
+USER_FIRST_CONNECTED_EVENT = "user.first_connected"
+REMNAWAVE_FIRST_CONNECTED_EVENT_TYPE = "subscription.remnawave.first_connected"
 
 
 class RemnawaveWebhookError(Exception):
@@ -89,6 +91,23 @@ def parse_remnawave_webhook_user_data(
 
     if not isinstance(data, dict):
         raise RemnawaveWebhookPayloadError("invalid Remnawave webhook payload")
+
+    nested_user = data.get("user")
+    if isinstance(nested_user, dict):
+        data = nested_user
+
+    if isinstance(data, dict):
+        traffic = data.get("userTraffic")
+        if isinstance(traffic, dict):
+            flattened = dict(data)
+            if "onlineAt" in traffic and "onlineAt" not in flattened:
+                flattened["onlineAt"] = traffic["onlineAt"]
+            if (
+                "firstConnectedAt" in traffic
+                and "firstConnectedAt" not in flattened
+            ):
+                flattened["firstConnectedAt"] = traffic["firstConnectedAt"]
+            data = flattened
 
     try:
         return RemnawaveWebhookUserData.model_validate(data)
@@ -227,6 +246,22 @@ async def process_remnawave_webhook(
         clear_remote_subscription_snapshot(account)
     else:
         _apply_user_webhook_snapshot(account, user=user)
+        if envelope.event == USER_FIRST_CONNECTED_EVENT:
+            await append_account_event(
+                session,
+                account_id=account.id,
+                event_type=REMNAWAVE_FIRST_CONNECTED_EVENT_TYPE,
+                source="webhook",
+                payload={
+                    "remnawave_user_uuid": str(user.uuid),
+                    "first_connected_at": None
+                    if user.first_connected_at is None
+                    else normalize_datetime(user.first_connected_at).isoformat(),
+                    "online_at": None
+                    if user.online_at is None
+                    else normalize_datetime(user.online_at).isoformat(),
+                },
+            )
         handler = USER_EVENT_HANDLERS.get(envelope.event)
         if handler is not None:
             notifications = await handler(session, account, user, envelope)

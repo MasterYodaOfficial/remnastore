@@ -66,6 +66,8 @@ uv run --no-sync python -m unittest discover -s apps/api/tests -p 'test_*.py'
 ./scripts/test.sh bot
 ./scripts/test.sh api
 ./scripts/test.sh all
+./scripts/pr-check.sh python
+./scripts/pr-check.sh
 ./scripts/coverage.sh api
 ./scripts/coverage.sh bot --html
 ./scripts/coverage.sh all --fail-under 30
@@ -121,6 +123,7 @@ HTML-отчеты сохраняются в:
 uv run --group dev ruff check apps/api apps/bot common scripts
 uv run --group dev ruff format --check apps/api apps/bot common scripts
 ./scripts/test.sh all
+./scripts/pr-check.sh python
 ```
 
 ### Frontend quality-команды
@@ -130,7 +133,33 @@ cd apps/web && npm run lint && npm run test && npm run typecheck && npm run buil
 cd apps/web && npm run test:e2e
 cd apps/admin && npm run lint && npm run test && npm run typecheck && npm run build
 cd apps/admin && npm run test:e2e
+./scripts/pr-check.sh web admin
+./scripts/pr-check.sh --install --install-playwright
 ```
+
+### Полная локальная проверка перед push / PR
+
+`./scripts/pr-check.sh` повторяет текущие шаги из [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+- `python`: `ruff check`, `ruff format --check`, `./scripts/test.sh all`
+- `web`: `lint`, `test`, `typecheck`, `test:e2e`, `build`
+- `admin`: `lint`, `test`, `typecheck`, `test:e2e`, `build`
+
+Полезные режимы:
+
+```bash
+./scripts/pr-check.sh
+./scripts/pr-check.sh python
+./scripts/pr-check.sh web admin --install
+./scripts/pr-check.sh all --install --install-playwright
+```
+
+Если хочешь запускать это автоматически перед каждым `git push`, включи репозиторный hook:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+После этого `git push` будет вызывать `./scripts/pr-check.sh`. Если полный прогон для тебя слишком тяжелый на каждый push, оставь hook выключенным и запускай скрипт вручную перед открытием PR.
 
 ### Полный сброс с чистой БД
 

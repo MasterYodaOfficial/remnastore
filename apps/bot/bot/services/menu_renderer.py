@@ -19,7 +19,7 @@ from aiogram.types import (
 from bot.callbacks.menu import action, nav
 from bot.keyboards.main import build_webapp_url
 from bot.services.api import ApiClient
-from bot.services.i18n import translate
+from bot.services.i18n import html_safe, translate, translate_html
 from bot.services.media_registry import get_media_registry
 from bot.services.session_store import MenuSession, get_menu_session_store
 
@@ -229,34 +229,40 @@ def _price_stars_label(plan: dict[str, Any], *, locale: str | None) -> str:
 def _features_block(plan: dict[str, Any], *, locale: str | None) -> str:
     features = plan.get("features")
     if not isinstance(features, list) or not features:
-        return translate("bot.menu.values.not_available", locale=locale)
-    return "\n".join(
-        translate("bot.menu.feature_line", locale=locale, feature=str(feature))
-        for feature in features
-        if str(feature).strip()
+        return html_safe(translate_html("bot.menu.values.not_available", locale=locale))
+    return html_safe(
+        "\n".join(
+            translate_html("bot.menu.feature_line", locale=locale, feature=str(feature))
+            for feature in features
+            if str(feature).strip()
+        )
     )
 
 
 def _plans_overview(plans: list[dict[str, Any]], *, locale: str | None) -> str:
     if not plans:
-        return translate("bot.menu.plans.empty", locale=locale)
+        return html_safe(translate_html("bot.menu.plans.empty", locale=locale))
 
-    return "\n".join(
-        translate(
-            "bot.menu.plan_line",
-            locale=locale,
-            name=_safe_string(
-                plan.get("name"),
-                fallback=_safe_string(
-                    plan.get("code"),
-                    fallback=translate("bot.menu.values.plan_fallback", locale=locale),
+    return html_safe(
+        "\n".join(
+            translate_html(
+                "bot.menu.plan_line",
+                locale=locale,
+                name=_safe_string(
+                    plan.get("name"),
+                    fallback=_safe_string(
+                        plan.get("code"),
+                        fallback=translate(
+                            "bot.menu.values.plan_fallback", locale=locale
+                        ),
+                    ),
                 ),
-            ),
-            price_rub=_format_integer(plan.get("price_rub")),
-            duration_days=_format_integer(plan.get("duration_days")),
-            price_stars=_price_stars_label(plan, locale=locale),
+                price_rub=_format_integer(plan.get("price_rub")),
+                duration_days=_format_integer(plan.get("duration_days")),
+                price_stars=_price_stars_label(plan, locale=locale),
+            )
+            for plan in plans
         )
-        for plan in plans
     )
 
 
@@ -645,7 +651,7 @@ async def build_rendered_menu(
         dashboard = await _get_dashboard_payload(client, telegram_id=telegram_id)
         if not dashboard.get("exists"):
             return RenderedMenu(
-                caption=translate("bot.menu.home.guest_caption", locale=locale),
+                caption=translate_html("bot.menu.home.guest_caption", locale=locale),
                 reply_markup=_build_home_keyboard(
                     locale=locale, referral_code=referral_code
                 ),
@@ -657,7 +663,7 @@ async def build_rendered_menu(
         account = _safe_dict(dashboard.get("account"))
         subscription = _safe_dict(dashboard.get("subscription"))
         return RenderedMenu(
-            caption=translate(
+            caption=translate_html(
                 "bot.menu.home.caption",
                 locale=locale,
                 balance_rub=_format_integer(account.get("balance")),
@@ -678,7 +684,9 @@ async def build_rendered_menu(
         dashboard = await _get_dashboard_payload(client, telegram_id=telegram_id)
         if not dashboard.get("exists"):
             return RenderedMenu(
-                caption=translate("bot.menu.subscription.guest_caption", locale=locale),
+                caption=translate_html(
+                    "bot.menu.subscription.guest_caption", locale=locale
+                ),
                 reply_markup=_build_subscription_keyboard(
                     {},
                     {},
@@ -692,7 +700,7 @@ async def build_rendered_menu(
         subscription = _safe_dict(dashboard.get("subscription"))
         trial_eligibility = _safe_dict(dashboard.get("trial_eligibility"))
         return RenderedMenu(
-            caption=translate(
+            caption=translate_html(
                 "bot.menu.subscription.caption",
                 locale=locale,
                 status=_subscription_status(subscription, locale=locale),
@@ -719,7 +727,7 @@ async def build_rendered_menu(
     if screen == SCREEN_PLANS:
         plans = await _get_plans_payload(client)
         return RenderedMenu(
-            caption=translate(
+            caption=translate_html(
                 "bot.menu.plans.caption",
                 locale=locale,
                 plans_overview=_plans_overview(plans, locale=locale),
@@ -758,7 +766,7 @@ async def build_rendered_menu(
             if dashboard.get("exists")
             else "bot.menu.plan_detail.guest_caption"
         )
-        caption = translate(
+        caption = translate_html(
             caption_key,
             locale=locale,
             plan_name=_safe_string(selected_plan.get("name"), fallback=plan_code),
@@ -771,12 +779,12 @@ async def build_rendered_menu(
             caption = "\n\n".join(
                 [
                     caption,
-                    translate(
+                    translate_html(
                         "bot.menu.plan_detail.promo_line",
                         locale=locale,
                         promo_code=promo_code,
                     ),
-                    translate("bot.menu.plan_detail.promo_hint", locale=locale),
+                    translate_html("bot.menu.plan_detail.promo_hint", locale=locale),
                 ]
             )
         rendered_screen_params = {"plan_code": plan_code}
@@ -800,7 +808,9 @@ async def build_rendered_menu(
         dashboard = await _get_dashboard_payload(client, telegram_id=telegram_id)
         if not dashboard.get("exists"):
             return RenderedMenu(
-                caption=translate("bot.menu.referrals.guest_caption", locale=locale),
+                caption=translate_html(
+                    "bot.menu.referrals.guest_caption", locale=locale
+                ),
                 reply_markup=_build_referrals_keyboard(
                     locale=locale, referral_code=referral_code
                 ),
@@ -810,7 +820,7 @@ async def build_rendered_menu(
 
         referral = _safe_dict(dashboard.get("referral"))
         return RenderedMenu(
-            caption=translate(
+            caption=translate_html(
                 "bot.menu.referrals.caption",
                 locale=locale,
                 referral_code=_safe_string(
@@ -835,7 +845,7 @@ async def build_rendered_menu(
 
     if screen == SCREEN_HELP:
         return RenderedMenu(
-            caption=translate("bot.menu.help.caption", locale=locale),
+            caption=translate_html("bot.menu.help.caption", locale=locale),
             reply_markup=_build_help_keyboard(
                 locale=locale, referral_code=referral_code
             ),
@@ -846,7 +856,7 @@ async def build_rendered_menu(
     if screen == SCREEN_PAYMENT_READY:
         payment_url = _safe_string(params.get("payment_url"), fallback="")
         return RenderedMenu(
-            caption=translate(
+            caption=translate_html(
                 "bot.menu.payment_ready.caption",
                 locale=locale,
                 plan_name=_safe_string(
@@ -924,6 +934,7 @@ async def present_menu(
                     chat_id=target_chat_id,
                     message_id=existing_session.menu_message_id,
                     caption=rendered.caption,
+                    parse_mode="HTML",
                     reply_markup=rendered.reply_markup,
                 )
                 sent_message = result if isinstance(result, Message) else None
@@ -934,6 +945,7 @@ async def present_menu(
                     media=InputMediaPhoto(
                         media=await media_registry.get_input_file(rendered.asset_name),
                         caption=rendered.caption,
+                        parse_mode="HTML",
                     ),
                     reply_markup=rendered.reply_markup,
                 )
@@ -973,6 +985,7 @@ async def present_menu(
         chat_id=chat_id,
         photo=await media_registry.get_input_file(rendered.asset_name),
         caption=rendered.caption,
+        parse_mode="HTML",
         reply_markup=rendered.reply_markup,
     )
     await media_registry.remember_message_media(rendered.asset_name, sent_message)

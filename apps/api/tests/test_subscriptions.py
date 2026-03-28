@@ -29,6 +29,8 @@ from app.db.session import get_session
 from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
 from app.main import create_app
 from app.services.i18n import translate
+from app.services.plans import get_subscription_plans
+from app.services.purchases import reconcile_pending_wallet_plan_purchases
 from app.services import subscriptions as subscriptions_service
 
 
@@ -654,6 +656,124 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(grants), 1)
         self.assertIsNotNone(grants[0].applied_at)
 
+    async def test_wallet_plan_purchase_repeat_with_new_idempotency_resumes_pending_grant(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-repeat-pending@example.com", balance=1000
+        )
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-pending-first"},
+        )
+        self.assertEqual(first_response.status_code, 502)
+
+        subscriptions_service.get_remnawave_gateway = lambda: self._fake_gateway
+        second_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-pending-second"},
+        )
+        self.assertEqual(second_response.status_code, 200)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 1)
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertEqual(grants[0].reference_id, "wallet-pending-first")
+        self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_wallet_plan_purchase_rejects_new_plan_while_previous_wallet_grant_pending(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-pending-conflict@example.com", balance=5000
+        )
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-pending-conflict-first"},
+        )
+        self.assertEqual(first_response.status_code, 502)
+
+        alternate_plan_code = next(
+            plan.code for plan in get_subscription_plans() if plan.code != "plan_1m"
+        )
+        second_response = await self.client.post(
+            f"/api/v1/subscriptions/wallet/plans/{alternate_plan_code}",
+            json={"idempotency_key": "wallet-pending-conflict-second"},
+        )
+        self.assertEqual(second_response.status_code, 409)
+        self.assertEqual(
+            second_response.json()["detail"],
+            translate("api.purchases.errors.wallet_pending_purchase"),
+        )
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 4701)
+        self.assertIsNone(stored_account.subscription_status)
+
+        entries = await self._get_ledger_entries(account.id)
+        self.assertEqual(len(entries), 1)
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNone(grants[0].applied_at)
+
+    async def test_reconcile_pending_wallet_plan_purchases_applies_staged_purchase(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="wallet-reconcile@example.com", balance=1000
+        )
+        self._current_account_id = account.id
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
+
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-reconcile"},
+        )
+        self.assertEqual(first_response.status_code, 502)
+
+        async with self._session_factory() as session:
+            result = await reconcile_pending_wallet_plan_purchases(
+                session,
+                limit=10,
+                gateway_factory=lambda: self._fake_gateway,
+            )
+
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.applied, 1)
+        self.assertEqual(result.still_pending, 0)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+        self.assertTrue(stored_account.subscription_url)
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertIsNotNone(grants[0].applied_at)
+
     async def test_wallet_plan_purchase_can_resume_after_empty_subscription_url(
         self,
     ) -> None:
@@ -908,6 +1028,65 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertFalse(stored_account.subscription_is_trial)
+
+    async def test_remnawave_webhook_first_connected_records_connection_event(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="webhook-first-connected@example.com",
+            subscription_status="ACTIVE",
+        )
+        first_connected_at = datetime.now(UTC) - timedelta(minutes=1)
+        payload = {
+            "scope": "user",
+            "event": "user.first_connected",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {
+                "user": {
+                    "uuid": str(account.id),
+                    "status": "ACTIVE",
+                    "expireAt": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+                    "subscriptionUrl": "https://panel.test/sub/first-connected",
+                    "userTraffic": {
+                        "usedTrafficBytes": 1024,
+                        "lifetimeUsedTrafficBytes": 1024,
+                        "onlineAt": first_connected_at.isoformat(),
+                        "firstConnectedAt": first_connected_at.isoformat(),
+                    },
+                }
+            },
+        }
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["handled"], True)
+        self.assertEqual(response.json()["processed"], True)
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual(
+            [item.event_type for item in event_logs],
+            [
+                "subscription.remnawave.first_connected",
+                "subscription.remnawave.webhook",
+            ],
+        )
+        self.assertEqual(
+            event_logs[0].payload["first_connected_at"],
+            first_connected_at.isoformat(),
+        )
 
     async def test_remnawave_webhook_creates_subscription_expiring_notification(
         self,

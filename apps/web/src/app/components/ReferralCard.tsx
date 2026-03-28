@@ -26,17 +26,17 @@ export function ReferralCard({
 }: ReferralCardProps) {
   return (
     <div
-      className="m-4 rounded-2xl p-4"
+      className="w-full rounded-2xl p-4"
       style={{
         background: 'var(--referral-bg)',
         border: '1px solid var(--referral-border)',
       }}
     >
       <div className="flex items-center gap-3 mb-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]">
-          <Users className="w-6 h-6" />
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)]">
+          <Users className="h-5 w-5 shrink-0" />
         </div>
-        <div>
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-[var(--tg-theme-text-color,#000000)]">
             {t('web.referralCard.title')}
           </h2>

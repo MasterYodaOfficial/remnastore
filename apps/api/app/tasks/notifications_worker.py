@@ -12,6 +12,7 @@ from app.services.cache import get_cache
 from app.services.notifications import (
     TelegramNotificationConfigurationError,
     is_telegram_notification_delivery_enabled,
+    process_subscription_no_connection_reminders,
     process_pending_telegram_deliveries,
 )
 
@@ -52,6 +53,35 @@ async def _run_telegram_delivery_once() -> None:
         await cache.release_lock(TELEGRAM_DELIVERY_LOCK_KEY, lock_token)
 
 
+async def _run_subscription_no_connection_once() -> None:
+    cache = get_cache()
+    lock_token = await cache.try_acquire_lock(
+        "lock:notifications:subscription-no-connection",
+        ttl_seconds=max(10, int(settings.notification_job_lock_ttl_seconds)),
+    )
+    if not lock_token:
+        return
+
+    try:
+        async with SessionLocal() as session:
+            result = await process_subscription_no_connection_reminders(
+                session,
+                limit=max(1, int(settings.notification_jobs_batch_size)),
+            )
+            await session.commit()
+        if result.processed > 0:
+            logger.info(
+                "processed subscription no-connection reminders: processed=%s notified=%s marked_connected=%s",
+                result.processed,
+                result.notified,
+                result.marked_connected,
+            )
+    finally:
+        await cache.release_lock(
+            "lock:notifications:subscription-no-connection", lock_token
+        )
+
+
 async def run() -> None:
     configure_logging(component_name="notifications-worker")
     cache = get_cache()
@@ -79,6 +109,12 @@ async def run() -> None:
                     )
                 except Exception:
                     logger.exception("telegram notification delivery iteration failed")
+                try:
+                    await _run_subscription_no_connection_once()
+                except Exception:
+                    logger.exception(
+                        "subscription no-connection reminder iteration failed"
+                    )
                 next_run_at = now + interval
 
             await asyncio.sleep(1.0)

@@ -33,6 +33,14 @@ class RemnawaveWebhookUserData(BaseModel):
     )
     email: str | None = None
     tag: str | None = None
+    online_at: datetime | None = Field(
+        default=None,
+        validation_alias=AliasChoices("onlineAt", "online_at"),
+    )
+    first_connected_at: datetime | None = Field(
+        default=None,
+        validation_alias=AliasChoices("firstConnectedAt", "first_connected_at"),
+    )
 
 
 class RemnawaveWebhookEnvelope(BaseModel):

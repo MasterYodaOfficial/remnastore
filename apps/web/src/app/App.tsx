@@ -4,6 +4,7 @@ import {
   loadTelegramScript,
   getTelegramWebApp,
   openTelegramInvoice,
+  openTelegramExternalLink,
   openTelegramLink,
   type TelegramWebAppLike,
 } from '../../utils/telegram';
@@ -462,7 +463,17 @@ function pickAvatarUrl(source: Record<string, unknown> | null | undefined): stri
     return undefined;
   }
 
-  for (const key of ['avatar_url', 'picture', 'photo_url', 'image', 'profile_image_url']) {
+  for (const key of [
+    'avatar_url',
+    'avatar',
+    'picture',
+    'photo',
+    'photo_url',
+    'photo_100',
+    'photo_200',
+    'image',
+    'profile_image_url',
+  ]) {
     const value = source[key];
     if (typeof value === 'string' && value.trim()) {
       return value.trim();
@@ -478,10 +489,13 @@ function getSupabaseAvatarUrl(user: SupabaseUserLike | null | undefined): string
   }
 
   const identities = Array.isArray(user.identities) ? user.identities : [];
-  const googleIdentity = identities.find((identity) => identity?.provider === 'google');
+  const prioritizedProviderIds = ['google'];
+  const preferredIdentity = prioritizedProviderIds
+    .map((providerId) => identities.find((identity) => identity?.provider === providerId))
+    .find((identity): identity is SupabaseIdentityLike => Boolean(identity));
 
   return (
-    pickAvatarUrl(googleIdentity?.identity_data) ||
+    pickAvatarUrl(preferredIdentity?.identity_data) ||
     pickAvatarUrl(user.user_metadata) ||
     identities
       .map((identity) => pickAvatarUrl(identity?.identity_data))
@@ -866,13 +880,55 @@ function describePromoQuote(quote: BackendPromoPlanQuoteResponse): string {
   return parts.length > 0 ? `${parts.join(' • ')}.` : t('web.app.promo.activeForPlan');
 }
 
+function getTelegramPreferredBrowser(): string | undefined {
+  if (typeof navigator === 'undefined') {
+    return undefined;
+  }
+
+  const userAgent = navigator.userAgent.toLowerCase();
+  if (userAgent.includes('android')) {
+    return 'chrome';
+  }
+
+  return undefined;
+}
+
+function buildTelegramMiniAppReturnUrl(): string {
+  if (!TELEGRAM_BOT_URL) {
+    return '';
+  }
+
+  try {
+    const telegramUrl = new URL(TELEGRAM_BOT_URL);
+    const isTelegramHost =
+      telegramUrl.hostname === 't.me' || telegramUrl.hostname === 'telegram.me';
+    const pathParts = telegramUrl.pathname.split('/').filter(Boolean);
+
+    if (
+      isTelegramHost &&
+      pathParts.length === 1 &&
+      !telegramUrl.searchParams.has('startapp') &&
+      !telegramUrl.searchParams.has('start')
+    ) {
+      telegramUrl.searchParams.set('startapp', '');
+    }
+
+    return telegramUrl.toString();
+  } catch {
+    return TELEGRAM_BOT_URL;
+  }
+}
+
 function getPaymentReturnUrl(options: { preferTelegramBot?: boolean } = {}): string {
   if (typeof window === 'undefined') {
     return '';
   }
 
-  if (options.preferTelegramBot && TELEGRAM_BOT_URL) {
-    return TELEGRAM_BOT_URL;
+  if (options.preferTelegramBot) {
+    const telegramReturnUrl = buildTelegramMiniAppReturnUrl();
+    if (telegramReturnUrl) {
+      return telegramReturnUrl;
+    }
   }
 
   const { origin, pathname } = window.location;
@@ -1040,6 +1096,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isTelegramWebApp, setIsTelegramWebApp] = useState(false);
+  const [hasTelegramContext, setHasTelegramContext] = useState(false);
   const [authView, setAuthView] = useState<AuthView>('default');
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -1057,6 +1114,7 @@ export default function App() {
   const [paymentMethodSelection, setPaymentMethodSelection] = useState<PaymentSelectionState | null>(null);
   const [paymentMethodSubmitting, setPaymentMethodSubmitting] = useState<PaymentMethodProvider | null>(null);
   const [checkoutAttempts, setCheckoutAttempts] = useState<StoredPaymentAttempt[]>([]);
+  const [desktopSelectedPlanId, setDesktopSelectedPlanId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [referralCopied, setReferralCopied] = useState(false);
@@ -1106,6 +1164,8 @@ export default function App() {
   const authViewRef = useRef<AuthView>('default');
   const promoLaunchAppliedRef = useRef(false);
   const promoLaunchQuoteRequestedRef = useRef(false);
+  const prefetchedBrowserLinkUrlRef = useRef<string | null>(null);
+  const prefetchedBrowserLinkPromiseRef = useRef<Promise<string> | null>(null);
 
   const setAuthViewMode = (view: AuthView) => {
     authViewRef.current = view;
@@ -1601,6 +1661,68 @@ export default function App() {
     }
   };
 
+  const openExternalBrowserWindow = (url: string): boolean => {
+    if (typeof window === 'undefined' || typeof window.open !== 'function') {
+      return false;
+    }
+
+    try {
+      return window.open(url, '_blank', 'noopener,noreferrer') !== null;
+    } catch (err) {
+      console.error('External window open error:', err);
+      return false;
+    }
+  };
+
+  const resetPrefetchedBrowserLink = () => {
+    prefetchedBrowserLinkUrlRef.current = null;
+    prefetchedBrowserLinkPromiseRef.current = null;
+  };
+
+  const requestBrowserLinkUrl = async (token: string): Promise<string> => {
+    const response = await fetch(`${BACKEND_API}/api/v1/accounts/link-browser`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const { detail, errorCode } = parseApiErrorPayload(
+        errorData,
+        t('web.app.toasts.linkCreateFailed')
+      );
+      throw new Error(getLinkingErrorMessage(errorCode, detail));
+    }
+
+    const data = await response.json() as { link_url?: string };
+    if (!data.link_url) {
+      throw new Error(t('web.app.toasts.linkCreateFailed'));
+    }
+
+    return data.link_url;
+  };
+
+  const ensureBrowserLinkUrl = async (token: string): Promise<string> => {
+    if (prefetchedBrowserLinkUrlRef.current) {
+      return prefetchedBrowserLinkUrlRef.current;
+    }
+
+    if (!prefetchedBrowserLinkPromiseRef.current) {
+      prefetchedBrowserLinkPromiseRef.current = requestBrowserLinkUrl(token)
+        .then((linkUrl) => {
+          prefetchedBrowserLinkUrlRef.current = linkUrl;
+          return linkUrl;
+        })
+        .finally(() => {
+          prefetchedBrowserLinkPromiseRef.current = null;
+        });
+    }
+
+    return await prefetchedBrowserLinkPromiseRef.current;
+  };
+
   const getBrowserLinkCallbackState = () => {
     const url = new URL(window.location.href);
     return {
@@ -1639,6 +1761,7 @@ export default function App() {
       
       const tg = getTelegramWebApp();
       if (tg && tg.initData) {
+        setHasTelegramContext(true);
         // Only treat as Telegram WebApp if it's not desktop web platform
         // Desktop Telegram app has platform='web' but should be treated like browser
         const isMobileWebApp = tg.platform !== 'web';
@@ -1662,6 +1785,7 @@ export default function App() {
           checkSupabaseAuth();
         }
       } else {
+        setHasTelegramContext(false);
         setIsTelegramWebApp(false);
         checkSupabaseAuth();
       }
@@ -1722,6 +1846,18 @@ export default function App() {
 
     promoLaunchAppliedRef.current = true;
   }, [isAuthenticated, plans, promoLaunchState]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken || !hasTelegramContext || user?.email) {
+      resetPrefetchedBrowserLink();
+      return;
+    }
+
+    void ensureBrowserLinkUrl(accessToken).catch((err) => {
+      console.error('Browser link prefetch error:', err);
+      resetPrefetchedBrowserLink();
+    });
+  }, [isAuthenticated, accessToken, hasTelegramContext, user?.email]);
 
   useEffect(() => {
     if (
@@ -2692,7 +2828,7 @@ export default function App() {
   ) => {
     pendingPaymentRefreshRef.current = true;
 
-    if (options.provider === 'telegram_stars' && isTelegramWebApp) {
+    if (options.provider === 'telegram_stars' && hasTelegramContext) {
       const opened = openTelegramInvoice(confirmationUrl, (status) => {
         options.onStatusChange?.(status);
         if (status === 'paid') {
@@ -2708,12 +2844,23 @@ export default function App() {
       }
     }
 
-    if (isTelegramWebApp) {
-      const tg = getTelegramWebApp();
-      if (tg?.openLink) {
-        tg.openLink(confirmationUrl, { try_browser: true });
-        return;
-      }
+    if (
+      hasTelegramContext &&
+      openTelegramExternalLink(confirmationUrl, {
+        tryBrowser: getTelegramPreferredBrowser(),
+      })
+    ) {
+      return;
+    }
+
+    if (hasTelegramContext && openExternalBrowserWindow(confirmationUrl)) {
+      return;
+    }
+
+    if (hasTelegramContext) {
+      pendingPaymentRefreshRef.current = false;
+      toast.error(t('web.app.toasts.paymentLinkUnavailable'));
+      return;
     }
 
     window.location.assign(confirmationUrl);
@@ -2994,7 +3141,7 @@ export default function App() {
         },
         body: JSON.stringify({
           amount_rub: amount,
-          success_url: getPaymentReturnUrl({ preferTelegramBot: isTelegramWebApp }),
+          success_url: getPaymentReturnUrl({ preferTelegramBot: hasTelegramContext }),
           description: t('web.app.paymentDescription.topup', {
             amount: formatRubles(amount),
           }),
@@ -3382,7 +3529,7 @@ export default function App() {
           promo_code: promoCodeForProvider,
           ...(useTelegramStars
             ? {}
-            : { success_url: getPaymentReturnUrl({ preferTelegramBot: isTelegramWebApp }) }),
+            : { success_url: getPaymentReturnUrl({ preferTelegramBot: hasTelegramContext }) }),
         }),
       });
 
@@ -3675,29 +3822,25 @@ export default function App() {
     }
 
     try {
-      const response = await fetch(`${BACKEND_API}/api/v1/accounts/link-browser`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
+      const linkUrl = await ensureBrowserLinkUrl(accessToken);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        const { detail, errorCode } = parseApiErrorPayload(
-          errorData,
-          t('web.app.toasts.linkCreateFailed')
-        );
-        throw new Error(getLinkingErrorMessage(errorCode, detail));
+      if (hasTelegramContext) {
+        if (
+          openTelegramExternalLink(linkUrl, {
+            tryBrowser: getTelegramPreferredBrowser(),
+          }) ||
+          openExternalBrowserWindow(linkUrl)
+        ) {
+          resetPrefetchedBrowserLink();
+          toast.success(t('web.app.toasts.linkBrowserOpened'));
+          return;
+        }
+
+        throw new Error(t('web.app.toasts.linkBrowserFailed'));
       }
 
-      const data = await response.json();
-      const tg = getTelegramWebApp();
-      if (isTelegramWebApp && tg?.openLink) {
-        tg.openLink(data.link_url, { try_browser: true });
-      } else {
-        window.location.href = data.link_url;
-      }
+      window.location.href = linkUrl;
+      toast.success(t('web.app.toasts.linkBrowserOpened'));
     } catch (err) {
       console.error('Link Browser error:', err);
       toast.error(getFallbackErrorMessage(err, 'web.app.toasts.linkBrowserFailed'));
@@ -4047,7 +4190,7 @@ export default function App() {
             user={user}
             onLinkTelegram={handleLinkTelegram}
             onLinkBrowser={handleLinkBrowser}
-            isTelegramWebApp={isTelegramWebApp}
+            isTelegramWebApp={hasTelegramContext}
             notificationUnreadCount={notificationsUnreadCount}
             activePaymentsCount={pendingPayments.length}
             onOpenNotificationsCenter={handleOpenNotificationsTab}
@@ -4152,9 +4295,23 @@ export default function App() {
         {plans.map((plan) => (
           <div
             key={plan.id}
-            className={`relative rounded-[28px] border border-slate-200 bg-slate-50/70 p-6 dark:border-slate-800 dark:bg-slate-900/80 ${
+            role="button"
+            tabIndex={0}
+            onClick={() => setDesktopSelectedPlanId(plan.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setDesktopSelectedPlanId(plan.id);
+              }
+            }}
+            className={`relative rounded-[28px] border p-6 transition-all duration-300 ease-out hover:-translate-y-1.5 hover:border-sky-300 hover:bg-white hover:shadow-[0_24px_52px_rgba(15,23,42,0.12)] dark:hover:border-sky-500/50 dark:hover:bg-slate-900 ${
               plan.popular ? 'ring-2 ring-sky-400/60' : ''
+            } ${
+              (checkoutPlanId ?? desktopSelectedPlanId) === plan.id
+                ? 'border-sky-300 bg-white shadow-[0_26px_56px_rgba(37,99,235,0.16)] dark:border-sky-500/60 dark:bg-slate-950'
+                : 'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/80'
             }`}
+            aria-pressed={(checkoutPlanId ?? desktopSelectedPlanId) === plan.id}
           >
             {plan.popular && (
               <div className="absolute -top-3 left-6 rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-white dark:bg-sky-500 dark:text-slate-950">
@@ -4186,10 +4343,11 @@ export default function App() {
               </div>
               <button
                 onClick={() => {
+                  setDesktopSelectedPlanId(plan.id);
                   void handleBuyPlan(plan.id);
                 }}
                 disabled={checkoutPlanId === plan.id}
-                className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
+                className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400"
               >
                 {checkoutPlanId === plan.id
                   ? t('web.plans.buttonOpening')
@@ -4245,8 +4403,8 @@ export default function App() {
       />
 
       <div className="mx-auto flex max-w-[1520px] gap-6">
-        <aside className="sticky top-8 h-[calc(100vh-4rem)] w-[310px] shrink-0 rounded-[32px] border border-white/70 bg-white/82 p-6 shadow-[0_32px_80px_rgba(15,23,42,0.14)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_32px_80px_rgba(2,6,23,0.55)]">
-          <div className="flex h-full flex-col">
+        <aside className="sticky top-8 h-[calc(100vh-4rem)] w-[310px] shrink-0 overflow-y-auto rounded-[32px] border border-white/70 bg-white/82 p-6 shadow-[0_32px_80px_rgba(15,23,42,0.14)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_32px_80px_rgba(2,6,23,0.55)]">
+          <div className="flex min-h-0 h-full flex-col">
             <div className="space-y-6">
               <div className="space-y-3">
                 <span className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-700 dark:bg-sky-500/15 dark:text-sky-200">
@@ -4441,7 +4599,7 @@ export default function App() {
                   {t('web.app.desktop.subscriptionPanelBody')}
                 </p>
               </div>
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="space-y-4 p-6 pt-4">
                 <div className="min-w-0">
                   <SubscriptionCard
                     subscription={subscriptionData}
@@ -4451,17 +4609,15 @@ export default function App() {
                     onOpenAccess={handleOpenSubscriptionAccess}
                   />
                 </div>
-                <div className="p-6">
-                  <div className="rounded-[28px] bg-slate-50 p-5 dark:bg-slate-900">
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                      {t('web.app.desktop.changesTitle')}
-                    </div>
-                    <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-500 dark:text-slate-300">
-                      {desktopChanges.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
+                <div className="rounded-[28px] bg-slate-50 p-5 dark:bg-slate-900">
+                  <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                    {t('web.app.desktop.changesTitle')}
                   </div>
+                  <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-500 dark:text-slate-300">
+                    {desktopChanges.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             </section>
@@ -4503,7 +4659,7 @@ export default function App() {
                   {t('web.app.desktop.referralsPanelBody')}
                 </p>
               </div>
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="space-y-4 p-6 pt-4">
                 <div className="min-w-0">
                   <ReferralCard
                     referralCode={user.referralCode || ''}
@@ -4518,35 +4674,35 @@ export default function App() {
                     copied={referralCopied}
                   />
                 </div>
-                <div className="p-6">
-                  <div className="grid gap-4">
-                    <div className="rounded-[24px] bg-slate-50 p-4 dark:bg-slate-900">
-                      <div className="text-xs uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                        {t('web.app.desktop.invitedTitle')}
-                      </div>
-                      <div className="mt-3 text-3xl font-semibold text-slate-950 dark:text-slate-50">
-                        {user.referralsCount || 0}
-                      </div>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <div className="rounded-[24px] bg-slate-50 p-4 dark:bg-slate-900">
+                    <div className="text-xs uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
+                      {t('web.app.desktop.invitedTitle')}
                     </div>
-                    <div className="rounded-[24px] bg-slate-950 p-4 text-white dark:border dark:border-slate-800 dark:bg-slate-900">
-                      <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
-                        {t('web.app.desktop.availableToWithdrawTitle')}
-                      </div>
-                      <div className="mt-3 text-3xl font-semibold">
-                        {formatRubles(referralSummary?.available_for_withdraw ?? user.referralEarnings)} ₽
-                      </div>
+                    <div className="mt-3 text-3xl font-semibold text-slate-950 dark:text-slate-50">
+                      {user.referralsCount || 0}
                     </div>
-                    <WithdrawalRequestsCard
-                      items={withdrawals}
-                      total={withdrawalsTotal}
-                      isLoading={isLoadingWithdrawals}
-                      availableForWithdraw={
-                        referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)
-                      }
-                      minimumAmount={withdrawalMinimumAmount}
-                      onCreate={handleWithdraw}
-                    />
                   </div>
+                  <div className="rounded-[24px] bg-slate-950 p-4 text-white dark:border dark:border-slate-800 dark:bg-slate-900">
+                    <div className="text-xs uppercase tracking-[0.16em] text-slate-300">
+                      {t('web.app.desktop.availableToWithdrawTitle')}
+                    </div>
+                    <div className="mt-3 text-3xl font-semibold">
+                      {formatRubles(referralSummary?.available_for_withdraw ?? user.referralEarnings)} ₽
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <WithdrawalRequestsCard
+                    items={withdrawals}
+                    total={withdrawalsTotal}
+                    isLoading={isLoadingWithdrawals}
+                    availableForWithdraw={
+                      referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)
+                    }
+                    minimumAmount={withdrawalMinimumAmount}
+                    onCreate={handleWithdraw}
+                  />
                 </div>
               </div>
             </section>

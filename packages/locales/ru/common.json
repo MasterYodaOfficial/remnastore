@@ -1,33 +1,33 @@
 {
   "common": {
     "actions": {
-      "open_webapp": "Открыть кабинет",
-      "home": "На главную",
-      "back": "Назад",
-      "subscription": "Мой доступ",
-      "plans": "Тарифы",
-      "referrals": "Рефералы",
-      "help": "Помощь",
-      "get_config": "Открыть доступ",
-      "activate_trial": "Попробовать бесплатно",
-      "renew_subscription": "Продлить доступ",
-      "buy_in_telegram": "Оплатить в Telegram Stars",
-      "pay_by_card": "Оплатить картой",
-      "enter_promo_code": "Ввести промокод",
-      "clear_promo_code": "Убрать код",
-      "apply_promo_in_webapp": "Открыть тариф с кодом",
-      "open_in_browser": "Открыть в браузере",
-      "pay_now": "Перейти к оплате",
-      "open_plans_in_webapp": "Все тарифы в кабинете",
-      "open_subscription_in_webapp": "Подписка в кабинете",
-      "share_link": "Поделиться ссылкой",
-      "open_referrals_in_webapp": "Рефералы в кабинете",
-      "instructions_channel": "Инструкции",
-      "support": "Поддержка",
-      "faq_in_webapp": "FAQ в кабинете"
+      "open_webapp": "🌐 Открыть кабинет",
+      "home": "🏠 На главную",
+      "back": "← Назад",
+      "subscription": "🔐 Мой доступ",
+      "plans": "💳 Тарифы",
+      "referrals": "👥 Рефералы",
+      "help": "❓ Помощь",
+      "get_config": "🚀 Открыть доступ",
+      "activate_trial": "🎁 Попробовать бесплатно",
+      "renew_subscription": "🔄 Продлить доступ",
+      "buy_in_telegram": "⭐ Оплатить в Telegram",
+      "pay_by_card": "💳 Оплатить картой",
+      "enter_promo_code": "🏷 Ввести промокод",
+      "clear_promo_code": "🗑 Убрать код",
+      "apply_promo_in_webapp": "🌐 Открыть тариф с кодом",
+      "open_in_browser": "🌍 Открыть в браузере",
+      "pay_now": "💳 Перейти к оплате",
+      "open_plans_in_webapp": "🌐 Все тарифы в кабинете",
+      "open_subscription_in_webapp": "🌐 Подписка в кабинете",
+      "share_link": "📨 Поделиться ссылкой",
+      "open_referrals_in_webapp": "🌐 Рефералы в кабинете",
+      "instructions_channel": "📚 Инструкции",
+      "support": "💬 Поддержка",
+      "faq_in_webapp": "🌐 FAQ в кабинете"
     },
     "errors": {
-      "unknown": "Неизвестная ошибка"
+      "unknown": "Что-то пошло не так. Попробуйте ещё раз."
     }
   }
 }

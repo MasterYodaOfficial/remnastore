@@ -574,7 +574,7 @@ test.describe("web mobile browser smoke", () => {
 
     await page.goto("/?link_flow=browser&link_token=browser-link-token-123");
 
-    await expect(page.getByText("Браузерный аккаунт успешно привязан")).toBeVisible();
+    await expect(page.getByText("Браузерный вход успешно привязан")).toBeVisible();
     await expect(page).toHaveURL("http://127.0.0.1:4175/");
 
     await page.getByRole("button", { name: "Настройки" }).click();
@@ -582,6 +582,121 @@ test.describe("web mobile browser smoke", () => {
     await expect(page.getByRole("heading", { name: "Настройки" })).toBeVisible();
     await expect(page.getByText("Telegram аккаунт")).toBeVisible();
     await expect(page.getByText("Привязать Telegram")).toHaveCount(0);
+  });
+
+  test("prefetches browser account linking in Telegram and opens the cached external link", async ({
+    page,
+  }) => {
+    let linkBrowserRequests = 0;
+
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "__telegramOpenedLinks", {
+        value: [] as string[],
+        writable: true,
+      });
+
+      window.Telegram = {
+        WebApp: {
+          initData: "tg-init-data",
+          initDataUnsafe: {
+            user: {
+              id: 100500,
+              photo_url: "https://example.com/telegram-user.png",
+            },
+          },
+          platform: "ios",
+          colorScheme: "light",
+          expand: () => {},
+          openLink: (url: string) => {
+            (window as unknown as { __telegramOpenedLinks: string[] }).__telegramOpenedLinks.push(
+              url,
+            );
+          },
+        },
+      };
+    });
+
+    await mockAuthenticatedMobileSession(page, {
+      initialUnreadCount: 0,
+      withStoredToken: false,
+      getBootstrapPayload: () => ({
+        ...bootstrapPayload,
+        account: {
+          ...bootstrapPayload.account,
+          email: null,
+          telegram_id: 100500,
+          display_name: "Alice Telegram",
+        },
+      }),
+    });
+
+    await page.route("**/api/v1/auth/telegram/webapp", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          access_token: "telegram-session-token",
+          account: {
+            id: "telegram-account-1",
+            email: null,
+            display_name: "Alice Telegram",
+            username: "alice_tg",
+            telegram_id: 100500,
+            balance: 1250,
+            referral_code: "ALICE123",
+            referral_earnings: 340,
+            referrals_count: 2,
+            referred_by_account_id: null,
+            has_used_trial: false,
+            subscription_status: "ACTIVE",
+            subscription_url: "https://example.com/subscription/alice",
+            subscription_expires_at: "2026-04-20T09:00:00Z",
+            subscription_last_synced_at: "2026-03-20T09:00:00Z",
+            subscription_is_trial: false,
+            trial_used_at: null,
+            trial_ends_at: null,
+          },
+          referral_result: null,
+        }),
+      });
+    });
+
+    await page.route("**/api/v1/accounts/link-browser", async (route) => {
+      linkBrowserRequests += 1;
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          link_url: "http://127.0.0.1:4175/?link_flow=browser&link_token=prefetched-link-123",
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await page.waitForFunction((storageKey) => {
+      return window.localStorage.getItem(storageKey) !== null;
+    }, telegramAuthStorageKey);
+
+    await expect
+      .poll(() => linkBrowserRequests, {
+        message: "browser linking URL should be prefetched before the user presses the button",
+      })
+      .toBe(1);
+
+    await page.getByRole("button", { name: "Настройки" }).click();
+    await expect(page.getByRole("heading", { name: "Настройки" })).toBeVisible();
+    await expect(page.getByText("Привязать браузерный вход")).toBeVisible();
+
+    await page.getByRole("button", { name: "Связать" }).click();
+
+    const openedLinks = await page.evaluate(
+      () => (window as unknown as { __telegramOpenedLinks: string[] }).__telegramOpenedLinks,
+    );
+    expect(openedLinks).toContain(
+      "http://127.0.0.1:4175/?link_flow=browser&link_token=prefetched-link-123",
+    );
+    expect(linkBrowserRequests).toBe(1);
   });
 
   test("completes cross-surface account linking from Telegram Mini App to browser callback", async ({
@@ -681,7 +796,7 @@ test.describe("web mobile browser smoke", () => {
     await page.getByRole("button", { name: "Настройки" }).click();
 
     await expect(page.getByRole("heading", { name: "Настройки" })).toBeVisible();
-    await expect(page.getByText("Привязать браузерный аккаунт")).toBeVisible();
+    await expect(page.getByText("Привязать браузерный вход")).toBeVisible();
 
     await page.getByRole("button", { name: "Связать" }).click();
 
@@ -722,7 +837,7 @@ test.describe("web mobile browser smoke", () => {
 
     await browserPage.goto(openedLinks[0]);
 
-    await expect(browserPage.getByText("Браузерный аккаунт успешно привязан")).toBeVisible();
+    await expect(browserPage.getByText("Браузерный вход успешно привязан")).toBeVisible();
     await browserPage.getByRole("button", { name: "Настройки" }).click();
     await expect(browserPage.getByText("Telegram аккаунт")).toBeVisible();
     await expect(browserPage.getByText("Привязать Telegram")).toHaveCount(0);

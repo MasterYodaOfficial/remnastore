@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from html import escape
 import logging
+import math
 import uuid
 
 import httpx
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     Account,
+    AccountEventLog,
     Notification,
     NotificationChannel,
     NotificationDelivery,
@@ -20,9 +23,16 @@ from app.db.models import (
     ReferralReward,
     Withdrawal,
 )
-from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.core.config import settings
+from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
+from app.integrations.remnawave import (
+    RemnawaveConfigurationError,
+    RemnawaveRequestError,
+    RemnawaveUser,
+    get_remnawave_gateway,
+)
 from app.services.accounts import mark_telegram_bot_blocked
+from app.services.account_events import append_account_event
 from app.services.i18n import translate
 from app.services.plans import SubscriptionPlanError, get_subscription_plan
 
@@ -62,6 +72,27 @@ FINAL_FAILED_PAYMENT_STATUSES = {
     PaymentStatus.FAILED,
     PaymentStatus.CANCELLED,
     PaymentStatus.EXPIRED,
+}
+SUBSCRIPTION_ACTIVATION_EVENT_TYPES = (
+    "subscription.trial.activated",
+    "subscription.wallet_purchase.applied",
+    "subscription.direct_payment.applied",
+    "admin.subscription_grant",
+)
+REMNAWAVE_FIRST_CONNECTED_EVENT_TYPE = "subscription.remnawave.first_connected"
+SUBSCRIPTION_NO_CONNECTION_REMINDER_EVENT_TYPE = (
+    "subscription.no_connection_reminder.sent"
+)
+TELEGRAM_NOTIFICATION_TYPE_EMOJI: dict[NotificationType, str] = {
+    NotificationType.PAYMENT_SUCCEEDED: "✅",
+    NotificationType.PAYMENT_FAILED: "⚠️",
+    NotificationType.REFERRAL_REWARD_RECEIVED: "🎁",
+    NotificationType.SUBSCRIPTION_EXPIRING: "⏳",
+    NotificationType.SUBSCRIPTION_EXPIRED: "⛔",
+    NotificationType.SUBSCRIPTION_NO_CONNECTION: "🛠",
+    NotificationType.WITHDRAWAL_CREATED: "📝",
+    NotificationType.WITHDRAWAL_PAID: "💸",
+    NotificationType.WITHDRAWAL_REJECTED: "⚠️",
 }
 
 
@@ -111,6 +142,12 @@ def _format_subscription_expiry_moment(expires_at: datetime | None) -> str | Non
         return None
     normalized = expires_at.astimezone(UTC)
     return normalized.strftime("%d.%m.%Y %H:%M UTC")
+
+
+def _normalize_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _build_subscription_expiry_token(expires_at: datetime | None) -> str:
@@ -174,13 +211,28 @@ async def _resolve_notification_channels(
     return tuple(resolved_channels)
 
 
-def _format_telegram_notification_text(notification: Notification) -> str:
-    parts = [notification.title.strip(), notification.body.strip()]
+def _format_telegram_notification_html(notification: Notification) -> str:
+    title = notification.title.strip()
+    body = notification.body.strip()
+    emoji = TELEGRAM_NOTIFICATION_TYPE_EMOJI.get(notification.type, "🔔")
+    parts: list[str] = []
+
+    if title:
+        title_text = f"{emoji} {title}" if emoji else title
+        parts.append(f"<b>{escape(title_text, quote=True)}</b>")
+
+    if body:
+        parts.append(escape(body, quote=True))
+
     if notification.action_url:
+        action_url = escape(notification.action_url.strip(), quote=True)
+        action_label = notification.action_label.strip() if notification.action_label else ""
         if notification.action_label:
-            parts.append(f"{notification.action_label}: {notification.action_url}")
+            parts.append(
+                f'<a href="{action_url}">{escape(action_label, quote=True)}</a>'
+            )
         else:
-            parts.append(notification.action_url)
+            parts.append(f'<a href="{action_url}">{action_url}</a>')
     return "\n\n".join(part for part in parts if part)
 
 
@@ -354,6 +406,34 @@ class TelegramDeliveryProcessResult:
         self.delivered = 0
         self.scheduled_retry = 0
         self.terminal_failed = 0
+
+
+class SubscriptionNoConnectionReminderResult:
+    __slots__ = ("processed", "notified", "marked_connected")
+
+    def __init__(self) -> None:
+        self.processed = 0
+        self.notified = 0
+        self.marked_connected = 0
+
+
+def _build_support_action() -> tuple[str | None, str | None]:
+    support_url = settings.support_telegram_url.strip()
+    if not support_url:
+        return None, None
+    return (
+        translate("api.notifications.subscription_no_connection.action_label"),
+        support_url,
+    )
+
+
+def _has_remote_first_connection(remote_user: RemnawaveUser) -> bool:
+    return (
+        remote_user.first_connected_at is not None
+        or remote_user.online_at is not None
+        or remote_user.lifetime_used_traffic_bytes > 0
+        or remote_user.used_traffic_bytes > 0
+    )
 
 
 async def create_notification(
@@ -708,6 +788,170 @@ async def notify_withdrawal_rejected(
     )
 
 
+async def notify_subscription_no_connection(
+    session: AsyncSession,
+    *,
+    account: Account,
+    activated_at: datetime,
+    grace_seconds: int,
+) -> Notification | None:
+    normalized_activated_at = _normalize_datetime(activated_at)
+    action_label, action_url = _build_support_action()
+    grace_minutes = max(1, math.ceil(grace_seconds / 60))
+    return await create_notification(
+        session,
+        account_id=account.id,
+        type=NotificationType.SUBSCRIPTION_NO_CONNECTION,
+        title=translate("api.notifications.subscription_no_connection.title"),
+        body=translate(
+            "api.notifications.subscription_no_connection.body",
+            minutes=grace_minutes,
+        ),
+        priority=NotificationPriority.WARNING,
+        payload={
+            "activated_at": normalized_activated_at.isoformat(),
+            "grace_seconds": grace_seconds,
+            "remnawave_user_uuid": str(account.remnawave_user_uuid or account.id),
+        },
+        action_label=action_label,
+        action_url=action_url,
+        dedupe_key=f"subscription_no_connection:{account.id}:{normalized_activated_at.isoformat()}",
+    )
+
+
+async def process_subscription_no_connection_reminders(
+    session: AsyncSession,
+    *,
+    limit: int,
+) -> SubscriptionNoConnectionReminderResult:
+    result = SubscriptionNoConnectionReminderResult()
+    if limit <= 0:
+        return result
+
+    grace_seconds = max(
+        60, int(settings.subscription_activation_no_connection_grace_seconds)
+    )
+    cutoff = datetime.now(UTC) - timedelta(seconds=grace_seconds)
+    latest_activation_subquery = (
+        select(
+            AccountEventLog.account_id.label("account_id"),
+            func.max(AccountEventLog.created_at).label("activated_at"),
+        )
+        .where(
+            AccountEventLog.account_id.is_not(None),
+            AccountEventLog.event_type.in_(SUBSCRIPTION_ACTIVATION_EVENT_TYPES),
+        )
+        .group_by(AccountEventLog.account_id)
+        .subquery()
+    )
+
+    first_connected_exists = exists(
+        select(AccountEventLog.id).where(
+            AccountEventLog.account_id == Account.id,
+            AccountEventLog.event_type == REMNAWAVE_FIRST_CONNECTED_EVENT_TYPE,
+            AccountEventLog.created_at >= latest_activation_subquery.c.activated_at,
+        )
+    )
+    reminder_sent_exists = exists(
+        select(AccountEventLog.id).where(
+            AccountEventLog.account_id == Account.id,
+            AccountEventLog.event_type
+            == SUBSCRIPTION_NO_CONNECTION_REMINDER_EVENT_TYPE,
+            AccountEventLog.created_at >= latest_activation_subquery.c.activated_at,
+        )
+    )
+
+    rows = await session.execute(
+        select(Account, latest_activation_subquery.c.activated_at)
+        .join(
+            latest_activation_subquery,
+            latest_activation_subquery.c.account_id == Account.id,
+        )
+        .where(
+            Account.remnawave_user_uuid.is_not(None),
+            latest_activation_subquery.c.activated_at <= cutoff,
+            ~first_connected_exists,
+            ~reminder_sent_exists,
+        )
+        .order_by(
+            latest_activation_subquery.c.activated_at.asc(),
+            Account.created_at.asc(),
+            Account.id.asc(),
+        )
+        .limit(limit)
+    )
+    candidates = rows.all()
+    if not candidates:
+        return result
+
+    try:
+        gateway = get_remnawave_gateway()
+    except RemnawaveConfigurationError:
+        logger.warning(
+            "subscription no-connection reminders are disabled: Remnawave is not configured"
+        )
+        return result
+
+    for account, activated_at in candidates:
+        result.processed += 1
+        normalized_activated_at = _normalize_datetime(activated_at)
+        remote_user_uuid = account.remnawave_user_uuid or account.id
+        try:
+            remote_user = await gateway.get_user_by_uuid(remote_user_uuid)
+        except RemnawaveRequestError:
+            logger.exception(
+                "failed to verify first connection before reminder account_id=%s remnawave_user_uuid=%s",
+                account.id,
+                remote_user_uuid,
+            )
+            continue
+
+        if remote_user is None:
+            continue
+
+        if _has_remote_first_connection(remote_user):
+            await append_account_event(
+                session,
+                account_id=account.id,
+                event_type=REMNAWAVE_FIRST_CONNECTED_EVENT_TYPE,
+                source="poll",
+                payload={
+                    "remnawave_user_uuid": str(remote_user.uuid),
+                    "first_connected_at": None
+                    if remote_user.first_connected_at is None
+                    else remote_user.first_connected_at.isoformat(),
+                    "online_at": None
+                    if remote_user.online_at is None
+                    else remote_user.online_at.isoformat(),
+                },
+            )
+            result.marked_connected += 1
+            continue
+
+        notification = await notify_subscription_no_connection(
+            session,
+            account=account,
+            activated_at=normalized_activated_at,
+            grace_seconds=grace_seconds,
+        )
+        await append_account_event(
+            session,
+            account_id=account.id,
+            event_type=SUBSCRIPTION_NO_CONNECTION_REMINDER_EVENT_TYPE,
+            source="system",
+            payload={
+                "activated_at": normalized_activated_at.isoformat(),
+                "grace_seconds": grace_seconds,
+                "notification_id": None if notification is None else notification.id,
+                "remnawave_user_uuid": str(remote_user.uuid),
+            },
+        )
+        result.notified += 1
+
+    await session.flush()
+    return result
+
+
 async def process_pending_telegram_deliveries(
     session: AsyncSession,
     *,
@@ -773,7 +1017,8 @@ async def process_pending_telegram_deliveries(
             try:
                 provider_message_id = await telegram_client.send_message(
                     telegram_id=int(account.telegram_id),
-                    text=_format_telegram_notification_text(notification),
+                    text=_format_telegram_notification_html(notification),
+                    parse_mode="HTML",
                 )
             except TelegramNotificationDeliveryError as exc:
                 delivery.status = NotificationDeliveryStatus.FAILED

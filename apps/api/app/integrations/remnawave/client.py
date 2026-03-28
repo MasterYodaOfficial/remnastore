@@ -45,6 +45,10 @@ class RemnawaveUser:
     email: Optional[str]
     tag: Optional[str]
     hwid_device_limit: Optional[int] = None
+    used_traffic_bytes: int = 0
+    lifetime_used_traffic_bytes: int = 0
+    online_at: Optional[datetime] = None
+    first_connected_at: Optional[datetime] = None
 
 
 def _sanitize_username_component(value: str | None) -> str:
@@ -130,6 +134,12 @@ def _to_user_snapshot(response: object) -> RemnawaveUser:
         email=response.email,
         tag=response.tag,
         hwid_device_limit=getattr(response, "hwid_device_limit", None),
+        used_traffic_bytes=int(getattr(response, "used_traffic_bytes", 0) or 0),
+        lifetime_used_traffic_bytes=int(
+            getattr(response, "lifetime_used_traffic_bytes", 0) or 0
+        ),
+        online_at=getattr(response, "online_at", None),
+        first_connected_at=getattr(response, "first_connected_at", None),
     )
 
 

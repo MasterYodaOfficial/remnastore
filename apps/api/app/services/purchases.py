@@ -74,6 +74,13 @@ class PurchaseResult:
     trial_ends_at: datetime | None = None
 
 
+@dataclass(slots=True)
+class WalletGrantReconcileResult:
+    processed: int = 0
+    applied: int = 0
+    still_pending: int = 0
+
+
 WALLET_PURCHASE_REFERENCE_TYPE = "wallet_purchase"
 
 
@@ -273,6 +280,28 @@ async def get_subscription_grant_by_reference(
     return result.scalar_one_or_none()
 
 
+async def get_pending_wallet_subscription_grant(
+    session: AsyncSession,
+    *,
+    account_id: UUID,
+    for_update: bool = False,
+) -> SubscriptionGrant | None:
+    statement = (
+        select(SubscriptionGrant)
+        .where(
+            SubscriptionGrant.account_id == account_id,
+            SubscriptionGrant.purchase_source == PurchaseSource.WALLET.value,
+            SubscriptionGrant.reference_type == WALLET_PURCHASE_REFERENCE_TYPE,
+            SubscriptionGrant.applied_at.is_(None),
+        )
+        .order_by(SubscriptionGrant.created_at.asc(), SubscriptionGrant.id.asc())
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    result = await session.execute(statement)
+    return result.scalars().first()
+
+
 def _normalize_required_reference_id(reference_id: str) -> str:
     normalized = reference_id.strip()
     if not normalized:
@@ -336,6 +365,21 @@ async def stage_wallet_plan_purchase(
             duration_days=duration_days,
         )
         return existing_grant
+
+    pending_grant = await get_pending_wallet_subscription_grant(
+        session,
+        account_id=account_id,
+        for_update=True,
+    )
+    if pending_grant is not None:
+        if (
+            pending_grant.plan_code == plan.code
+            and pending_grant.amount == amount
+            and pending_grant.currency == "RUB"
+            and pending_grant.duration_days == duration_days
+        ):
+            return pending_grant
+        raise _purchase_exception(PurchaseConflictError, "wallet_pending_purchase")
 
     await apply_debit_in_transaction(
         session,
@@ -490,7 +534,7 @@ async def purchase_plan_with_wallet(
     duration_days_override: int | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> Account:
-    await stage_wallet_plan_purchase(
+    grant = await stage_wallet_plan_purchase(
         session,
         account_id=account_id,
         plan_code=plan_code,
@@ -501,6 +545,47 @@ async def purchase_plan_with_wallet(
     return await finalize_wallet_plan_purchase(
         session,
         account_id=account_id,
-        idempotency_key=idempotency_key,
+        idempotency_key=str(grant.reference_id or idempotency_key),
         gateway_factory=gateway_factory,
     )
+
+
+async def reconcile_pending_wallet_plan_purchases(
+    session: AsyncSession,
+    *,
+    limit: int = 100,
+    gateway_factory: GatewayFactory | None = None,
+) -> WalletGrantReconcileResult:
+    statement = (
+        select(SubscriptionGrant)
+        .where(
+            SubscriptionGrant.purchase_source == PurchaseSource.WALLET.value,
+            SubscriptionGrant.reference_type == WALLET_PURCHASE_REFERENCE_TYPE,
+            SubscriptionGrant.applied_at.is_(None),
+        )
+        .order_by(SubscriptionGrant.created_at.asc(), SubscriptionGrant.id.asc())
+        .limit(max(1, limit))
+    )
+    result = await session.execute(statement)
+    grants = list(result.scalars().all())
+
+    summary = WalletGrantReconcileResult()
+    for grant in grants:
+        reference_id = grant.reference_id
+        if not reference_id:
+            continue
+
+        summary.processed += 1
+        try:
+            await finalize_wallet_plan_purchase(
+                session,
+                account_id=grant.account_id,
+                idempotency_key=reference_id,
+                gateway_factory=gateway_factory,
+            )
+        except RemnawaveSyncError:
+            summary.still_pending += 1
+        else:
+            summary.applied += 1
+
+    return summary

@@ -19,7 +19,10 @@ export interface TelegramWebAppLike {
   offEvent?: (event: 'themeChanged', handler: () => void) => void;
   openInvoice?: (invoiceUrl: string, callback?: (status: string) => void) => void;
   openTelegramLink?: (url: string) => void;
-  openLink?: (url: string, options?: { try_browser?: boolean }) => void;
+  openLink?: (
+    url: string,
+    options?: { try_browser?: string; try_instant_view?: boolean }
+  ) => void;
 }
 
 declare global {
@@ -87,6 +90,28 @@ export const openTelegramLink = (url: string): boolean => {
     return true;
   } catch (err) {
     console.error('Telegram link open error:', err);
+    return false;
+  }
+};
+
+export const openTelegramExternalLink = (
+  url: string,
+  options: { tryBrowser?: string } = {}
+): boolean => {
+  const tg = getTelegramWebApp();
+  if (!tg?.openLink) {
+    return false;
+  }
+
+  try {
+    if (options.tryBrowser) {
+      tg.openLink(url, { try_browser: options.tryBrowser });
+    } else {
+      tg.openLink(url);
+    }
+    return true;
+  } catch (err) {
+    console.error('Telegram external link open error:', err);
     return false;
   }
 };

@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,6 +60,10 @@ class Settings(BaseSettings):
         default=120,
         validation_alias="PAYMENT_RECONCILE_YOOKASSA_INTERVAL_SECONDS",
     )
+    payment_reconcile_wallet_grants_interval_seconds: int = Field(
+        default=60,
+        validation_alias="PAYMENT_RECONCILE_WALLET_GRANTS_INTERVAL_SECONDS",
+    )
     payment_reconcile_yookassa_min_age_seconds: int = Field(
         default=180,
         validation_alias="PAYMENT_RECONCILE_YOOKASSA_MIN_AGE_SECONDS",
@@ -95,6 +99,10 @@ class Settings(BaseSettings):
     notification_telegram_retry_max_seconds: int = Field(
         default=900,
         validation_alias="NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS",
+    )
+    subscription_activation_no_connection_grace_seconds: int = Field(
+        default=900,
+        validation_alias="SUBSCRIPTION_ACTIVATION_NO_CONNECTION_GRACE_SECONDS",
     )
     broadcast_timezone: str = Field(
         default="Europe/Moscow",
@@ -168,6 +176,12 @@ class Settings(BaseSettings):
     telegram_bot_username: str = Field(
         default="",
         validation_alias="BOT_USERNAME",
+    )
+    support_telegram_url: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SUPPORT_TELEGRAM_URL", "VITE_SUPPORT_TELEGRAM_URL"
+        ),
     )
     telegram_init_data_ttl_seconds: int = 600
     webapp_url: str = Field(default="", validation_alias="WEBAPP_URL")

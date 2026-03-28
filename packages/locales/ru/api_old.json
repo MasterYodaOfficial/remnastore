@@ -3,11 +3,11 @@
     "auth": {
       "errors": {
         "bot_token_not_configured": "Вход через Telegram временно недоступен.",
-        "hash_missing": "Не удалось проверить вход через Telegram. Откройте приложение заново.",
+        "hash_missing": "Не удалось проверить данные Telegram. Откройте приложение заново.",
         "invalid_signature": "Не удалось подтвердить вход через Telegram. Попробуйте открыть приложение заново.",
-        "auth_date_invalid": "Сессия входа устарела. Откройте приложение заново.",
+        "auth_date_invalid": "Не удалось проверить данные Telegram. Откройте приложение заново.",
         "init_data_expired": "Сессия Telegram устарела. Откройте приложение заново.",
-        "user_payload_invalid": "Не удалось прочитать данные профиля Telegram.",
+        "user_payload_invalid": "Не удалось прочитать данные Telegram-профиля.",
         "init_data_missing_user": "Не удалось определить пользователя Telegram. Откройте приложение заново."
       }
     },
@@ -68,18 +68,18 @@
         "cannot_modify_another_account": "Нельзя изменять другой аккаунт.",
         "telegram_already_linked": "Telegram уже привязан к этому аккаунту.",
         "telegram_required": "Для этого действия нужен аккаунт Telegram.",
-        "webapp_url_missing": "Кабинет временно недоступен. Попробуйте позже.",
+        "webapp_url_missing": "Веб-приложение временно недоступно. Попробуйте позже.",
         "browser_complete_in_browser": "Завершите привязку в браузере после входа в аккаунт.",
         "account_not_found": "Аккаунт не найден.",
         "merge_conflict": "Не удалось объединить аккаунты из-за конфликта данных.",
-        "remnawave_merge_failed": "Не удалось объединить данные аккаунтов. Попробуйте позже."
+        "remnawave_merge_failed": "Не удалось синхронизировать подписку при объединении аккаунтов. Попробуйте позже."
       }
     },
     "plans": {
       "errors": {
         "config_unavailable": "Каталог тарифов временно недоступен.",
         "unknown_plan": "Тариф не найден.",
-        "stars_price_not_configured": "Для этого тарифа оплата в Telegram пока недоступна."
+        "stars_price_not_configured": "Для этого тарифа оплата через Telegram Stars пока недоступна."
       }
     },
     "ledger": {
@@ -91,13 +91,13 @@
     },
     "payments": {
       "providers": {
-        "yookassa": "Банковская карта",
-        "telegram_stars": "В Telegram"
+        "yookassa": "YooKassa",
+        "telegram_stars": "Telegram Stars"
       },
-      "invoice_title": "QuickVPN: {plan_name}",
+      "invoice_title": "RemnaStore: {plan_name}",
       "descriptions": {
         "plan": "Оплата тарифа {plan_name}",
-        "plan_stars": "Оплата тарифа {plan_name} в Telegram"
+        "plan_stars": "Оплата тарифа {plan_name} в Telegram Stars"
       },
       "pre_checkout_errors": {
         "payment_not_found": "Платёж не найден",
@@ -110,9 +110,9 @@
         "unsupported_flow_type": "Неподдерживаемый тип платежа"
       },
       "errors": {
-        "yookassa_not_configured": "Оплата картой временно недоступна.",
-        "stars_bot_token_required": "Оплата в Telegram временно недоступна.",
-        "stars_callback_not_configured": "Оплата в Telegram временно недоступна.",
+        "yookassa_not_configured": "Оплата через YooKassa временно недоступна.",
+        "stars_bot_token_required": "Оплата через Telegram Stars временно недоступна.",
+        "stars_callback_not_configured": "Оплата через Telegram Stars временно недоступна.",
         "payment_not_found": "Платёж не найден.",
         "account_not_found": "Аккаунт не найден.",
         "account_blocked": "Заблокированные аккаунты не могут создавать платежи.",
@@ -123,18 +123,18 @@
         "idempotency_promo_conflict": "Этот ключ уже используется с другим промокодом.",
         "promo_idempotency_required": "Для оплаты с промокодом нужен ключ запроса.",
         "promo_payment_not_found": "Не удалось подготовить оплату с промокодом. Попробуйте ещё раз.",
-        "stars_telegram_required": "Этот способ оплаты доступен только для Telegram-аккаунтов.",
+        "stars_telegram_required": "Telegram Stars доступны только для Telegram-аккаунтов.",
         "telegram_stars_account_not_found": "Аккаунт Telegram для этого платежа не найден.",
         "telegram_stars_account_mismatch": "Платёж относится к другому Telegram-аккаунту.",
-        "gateway_failed": "Не удалось создать оплату. Попробуйте позже."
+        "gateway_failed": "Не удалось создать платёж. Попробуйте позже."
       }
     },
     "purchases": {
       "errors": {
         "account_not_found": "Аккаунт не найден.",
         "remnawave_not_configured": "Сервис подписки временно недоступен.",
-        "remnawave_unavailable": "Не удалось обновить подписку. Попробуйте позже.",
-        "remnawave_subscription_url_missing": "Не удалось получить ссылку для подключения. Попробуйте позже.",
+        "remnawave_unavailable": "Не удалось связаться с сервисом подписки. Попробуйте позже.",
+        "remnawave_subscription_url_missing": "Сервис подписки не вернул ссылку на подключение.",
         "idempotency_required": "Укажите ключ запроса и попробуйте снова.",
         "idempotency_account_conflict": "Этот ключ уже используется для другого аккаунта.",
         "idempotency_plan_conflict": "Этот ключ уже используется для другого тарифа.",
@@ -146,8 +146,7 @@
         "wallet_amount_invalid": "Сумма покупки должна быть больше нуля.",
         "wallet_duration_invalid": "Срок подписки должен быть больше нуля.",
         "wallet_staging_failed": "Не удалось подготовить покупку с баланса. Попробуйте ещё раз.",
-        "wallet_grant_account_conflict": "Эта покупка с баланса относится к другому аккаунту.",
-        "wallet_pending_purchase": "Предыдущая покупка с баланса ещё не завершена. Новую покупку можно начать после завершения текущей."
+        "wallet_grant_account_conflict": "Эта покупка с баланса относится к другому аккаунту."
       }
     },
     "subscriptions": {
@@ -214,7 +213,7 @@
       "payment_succeeded": {
         "topup": {
           "title": "Баланс пополнен",
-          "body": "Баланс пополнен на {amount}."
+          "body": "Баланс пополнен на {amount} через {provider}."
         },
         "plan": {
           "title": "Оплата прошла",
@@ -224,11 +223,11 @@
       "payment_failed": {
         "topup": {
           "title": "Пополнение не завершено",
-          "body": "Пополнение на {amount} не было завершено."
+          "body": "Платеж на {amount} через {provider} не завершен."
         },
         "plan": {
           "title": "Оплата не завершена",
-          "body": "Оплата тарифа «{plan_name}» не была завершена."
+          "body": "Оплата тарифа «{plan_name}» через {provider} не завершена."
         }
       },
       "referral_reward_received": {
@@ -244,11 +243,11 @@
         "title": "Подписка закончилась",
         "body": "Срок действия подписки истек.",
         "deadline_suffix": " Подписка завершилась {expires_at}.",
-        "action_hint": "Чтобы продолжить пользоваться QuickVPN, продлите подписку."
+        "action_hint": " Чтобы продолжить пользоваться сервисом, продлите тариф."
       },
       "subscription_no_connection": {
         "title": "Нужна помощь с подключением?",
-        "body": "Мы видим, что доступ уже активирован, но за {minutes} мин. первое подключение так и не появилось. Если нужна помощь с настройкой, откройте инструкции или напишите в поддержку.",
+        "body": "Мы увидели, что подписка уже активирована, но за {minutes} мин. первое подключение так и не появилось. Если возникли сложности с настройкой, обратитесь в техподдержку.",
         "action_label": "Открыть поддержку"
       },
       "withdrawal_created": {
@@ -281,7 +280,7 @@
         "amount_positive": "Сумма должна быть больше нуля.",
         "destination_required": "Укажите реквизиты для вывода.",
         "invalid_card": "Проверьте номер банковской карты.",
-        "minimum_amount": "Минимальная сумма вывода — {amount} ₽.",
+        "minimum_amount": "Минимальная сумма вывода — {amount} RUB.",
         "account_blocked": "Заблокированные аккаунты не могут создавать заявки на вывод.",
         "insufficient_available": "Недостаточно доступных реферальных средств для вывода."
       }

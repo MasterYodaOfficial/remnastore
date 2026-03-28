@@ -34,6 +34,7 @@ class NotificationType(str, enum.Enum):
     PAYMENT_FAILED = "payment_failed"
     SUBSCRIPTION_EXPIRING = "subscription_expiring"
     SUBSCRIPTION_EXPIRED = "subscription_expired"
+    SUBSCRIPTION_NO_CONNECTION = "subscription_no_connection"
     REFERRAL_REWARD_RECEIVED = "referral_reward_received"
     WITHDRAWAL_CREATED = "withdrawal_created"
     WITHDRAWAL_PAID = "withdrawal_paid"

@@ -18,3 +18,4 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     account: AccountResponse
     referral_result: TelegramReferralResultResponse | None = None
+    avatar_url: str | None = None

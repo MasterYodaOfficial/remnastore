@@ -400,24 +400,45 @@ async def purchase_subscription_with_wallet(
         amount_override=quote.final_amount,
         duration_days_override=quote.final_duration_days,
     )
+    resolved_reference_id = str(grant.reference_id or idempotency_key)
+    if resolved_reference_id != idempotency_key:
+        existing_redemption = await get_promo_redemption_by_reference(
+            session,
+            reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+            reference_id=resolved_reference_id,
+        )
+        if existing_redemption is None:
+            raise PurchaseConflictError(
+                translate("api.purchases.errors.wallet_pending_purchase"),
+                code="wallet_pending_purchase",
+            )
+        existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
+        if (
+            existing_promo_code is None
+            or existing_promo_code.code != normalize_promo_code(promo_code)
+        ):
+            raise PurchaseConflictError(
+                _subscription_error("idempotency_promo_conflict"),
+                code="idempotency_promo_conflict",
+            )
     await stage_promo_redemption(
         session,
         account_id=account.id,
         quote=quote,
         reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
-        reference_id=idempotency_key,
+        reference_id=resolved_reference_id,
         subscription_grant_id=grant.id,
     )
     account = await finalize_wallet_plan_purchase(
         session,
         account_id=account.id,
-        idempotency_key=idempotency_key,
+        idempotency_key=resolved_reference_id,
         gateway_factory=get_remnawave_gateway,
     )
     await mark_promo_redemption_applied(
         session,
         reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
-        reference_id=idempotency_key,
+        reference_id=resolved_reference_id,
         subscription_grant_id=grant.id,
     )
     await session.commit()

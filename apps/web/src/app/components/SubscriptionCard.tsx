@@ -1,6 +1,7 @@
 import React from 'react';
-import { ExternalLink, Shield, Sparkles } from 'lucide-react';
+import { ExternalLink, Sparkles } from 'lucide-react';
 import { t } from '../../lib/i18n';
+import { AppLogo } from './AppLogo';
 
 interface SubscriptionCardProps {
   subscription: {
@@ -65,26 +66,19 @@ export function SubscriptionCard({
   const configReady = Boolean(subscription.subscriptionUrl);
 
   return (
-    <section className="m-4 overflow-hidden rounded-[24px] border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(145deg,var(--tg-theme-secondary-bg-color,#f4f4f5)_0%,var(--app-surface-color,#dbe4f2)_100%)]">
+    <section className="w-full overflow-hidden rounded-[24px] border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(145deg,var(--tg-theme-secondary-bg-color,#f4f4f5)_0%,var(--app-surface-color,#dbe4f2)_100%)]">
       <div className="px-4 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] shadow-[0_10px_24px_rgba(37,99,235,0.18)]">
-              <Shield className="h-5 w-5" />
-            </div>
-            <div>
+            <AppLogo className="h-10 w-10 shrink-0 shadow-[0_10px_24px_rgba(37,99,235,0.18)]" />
+            <div className="min-w-0">
               <h2 className="text-base font-semibold text-[var(--tg-theme-text-color,#000000)]">
                 {t('web.subscriptionCard.title')}
               </h2>
-              <p className="mt-1 text-sm text-[var(--tg-theme-hint-color,#999999)]">
-                {subscription.isActive
-                  ? t('web.subscriptionCard.subtitleActive')
-                  : t('web.subscriptionCard.subtitleInactive')}
-              </p>
             </div>
           </div>
           <div
-            className="rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white"
+            className="shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white"
             style={{
               backgroundColor: subscription.isActive
                 ? statusTone.accent
@@ -172,17 +166,17 @@ export function SubscriptionCard({
             <button
               onClick={onOpenAccess}
               disabled={!configReady}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {t('web.subscriptionCard.openAccess')}
-              <ExternalLink className="h-4 w-4" />
+              <ExternalLink className="h-4 w-4 shrink-0" />
             </button>
             <button
               onClick={onRenew}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90"
             >
               {t('web.subscriptionCard.renew')}
-              <Sparkles className="h-4 w-4" />
+              <Sparkles className="h-4 w-4 shrink-0" />
             </button>
           </div>
         </div>
@@ -197,19 +191,19 @@ export function SubscriptionCard({
           {subscription.hasTrial && !subscription.hasUsedTrial ? (
             <button
               onClick={onActivateTrial}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90"
             >
               {t('web.subscriptionCard.activateTrial')}
-              <Sparkles className="h-4 w-4" />
+              <Sparkles className="h-4 w-4 shrink-0" />
             </button>
           ) : null}
 
           <button
             onClick={onBuy}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90"
           >
             {t('web.subscriptionCard.buyPlan')}
-            <ExternalLink className="h-4 w-4" />
+            <ExternalLink className="h-4 w-4 shrink-0" />
           </button>
         </div>
       )}

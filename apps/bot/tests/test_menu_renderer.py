@@ -81,6 +81,7 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
             chat_id=42,
             photo="welcome-file",
             caption="Menu caption",
+            parse_mode="HTML",
             reply_markup=rendered.reply_markup,
         )
         bot.edit_message_reply_markup.assert_awaited_once_with(
@@ -100,7 +101,7 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         button = _top_webapp_row(locale="ru", referral_code=None)[0]
 
         self.assertEqual(button.style, BUTTON_STYLE_SUCCESS)
-        self.assertEqual(button.text, "Открыть кабинет")
+        self.assertEqual(button.text, translate("common.actions.open_webapp", locale="ru"))
 
     def test_back_buttons_use_danger_style(self) -> None:
         keyboard = _build_help_keyboard(locale="ru", referral_code=None)
@@ -120,7 +121,10 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         )
         stars_button = keyboard.inline_keyboard[1][0]
 
-        self.assertEqual(stars_button.text, "Оплатить в Telegram Stars")
+        self.assertEqual(
+            stars_button.text,
+            translate("common.actions.buy_in_telegram", locale="ru"),
+        )
 
     async def test_build_rendered_menu_plan_includes_promo_code_and_actions(
         self,
@@ -151,25 +155,65 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
                 api_client=client,
             )
 
-        self.assertIn("Промокод: SPRING20", rendered.caption)
+        self.assertIn("SPRING20", rendered.caption)
         self.assertEqual(
             rendered.screen_params,
             {"plan_code": "plan_1m", "promo_code": "SPRING20"},
         )
-        self.assertIn("Код сохранен.", rendered.caption)
+        self.assertIn("Код сохран", rendered.caption)
         buttons = [
             button for row in rendered.reply_markup.inline_keyboard for button in row
         ]
         button_texts = [button.text for button in buttons]
-        self.assertIn("Открыть тариф с кодом", button_texts)
-        self.assertIn("Открыть в браузере", button_texts)
-        self.assertIn("Ввести промокод", button_texts)
-        self.assertIn("Убрать код", button_texts)
+        self.assertIn(
+            translate("common.actions.apply_promo_in_webapp", locale="ru"),
+            button_texts,
+        )
+        self.assertIn(
+            translate("common.actions.open_in_browser", locale="ru"),
+            button_texts,
+        )
+        self.assertIn(
+            translate("common.actions.enter_promo_code", locale="ru"),
+            button_texts,
+        )
+        self.assertIn(
+            translate("common.actions.clear_promo_code", locale="ru"),
+            button_texts,
+        )
         browser_button = next(
-            button for button in buttons if button.text == "Открыть в браузере"
+            button
+            for button in buttons
+            if button.text == translate("common.actions.open_in_browser", locale="ru")
         )
         self.assertIn("promo=SPRING20", browser_button.url)
         self.assertIn("plan=plan_1m", browser_button.url)
+
+    async def test_build_rendered_menu_plans_preserves_allowed_html_in_plan_lines(
+        self,
+    ) -> None:
+        client = AsyncMock()
+        client.get_bot_plans.return_value = {
+            "items": [
+                {
+                    "code": "plan_1m",
+                    "name": "1 месяц",
+                    "price_rub": 299,
+                    "price_stars": 1,
+                    "duration_days": 30,
+                }
+            ]
+        }
+
+        rendered = await build_rendered_menu(
+            telegram_id=758107031,
+            locale="ru",
+            screen="plans",
+            referral_code=None,
+            api_client=client,
+        )
+
+        self.assertIn("• <b>1 месяц</b> — 299 ₽ · 30 дн. · Telegram: 1", rendered.caption)
 
     async def test_yookassa_gateway_failure_returns_short_payment_error(self) -> None:
         request = httpx.Request(
@@ -197,7 +241,7 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             error_text,
-            "Не удалось подготовить оплату. Попробуйте позже или откройте кабинет.",
+            translate("bot.menu.messages.payment_failed", locale="ru"),
         )
 
     def test_build_bot_payment_idempotency_key_fits_yookassa_limit(self) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import unescape
+import re
 import httpx
 
 from aiogram import F, Router
@@ -20,16 +22,18 @@ from bot.services.menu_renderer import (
     create_plan_payment_and_render,
     present_menu,
 )
-from bot.services.i18n import translate
+from bot.services.i18n import translate, translate_html
 from bot.services.session_store import get_menu_session_store
 from bot.states.menu import MenuState
 
 router = Router()
 CALLBACK_ANSWER_TEXT_LIMIT = 200
+TELEGRAM_HTML_TAG_RE = re.compile(r"</?[^>]+>")
 
 
 def _normalize_callback_answer_text(text: str | None, *, locale: str | None) -> str:
-    normalized = " ".join((text or "").split())
+    plain_text = unescape(TELEGRAM_HTML_TAG_RE.sub("", text or ""))
+    normalized = " ".join(plain_text.split())
     if not normalized:
         return translate("bot.menu.messages.generic_error", locale=locale)
     if len(normalized) <= CALLBACK_ANSWER_TEXT_LIMIT:
@@ -229,7 +233,7 @@ async def handle_plan_promo_code_message(message: Message, state: FSMContext) ->
     plan_code = str(data.get("plan_code") or "")
     if not promo_code:
         await message.answer(
-            translate("bot.menu.messages.enter_promo_code", locale=locale)
+            translate_html("bot.menu.messages.enter_promo_code", locale=locale)
         )
         return
 

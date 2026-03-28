@@ -8,6 +8,9 @@ from fastapi import Request
 
 
 audit_logger = logging.getLogger("app.audit")
+_RESERVED_LOG_RECORD_FIELDS = frozenset(
+    {"message", "asctime", *logging.makeLogRecord({}).__dict__.keys()}
+)
 
 _OUTCOME_LEVELS = {
     "success": logging.INFO,
@@ -38,12 +41,25 @@ def log_audit_event(
     category: str = "security",
     **fields: Any,
 ) -> None:
+    sanitized_fields: dict[str, Any] = {}
+    for key, value in fields.items():
+        if value is None:
+            continue
+
+        sanitized_key = key
+        if sanitized_key in _RESERVED_LOG_RECORD_FIELDS:
+            sanitized_key = f"audit_{sanitized_key}"
+            while sanitized_key in _RESERVED_LOG_RECORD_FIELDS or sanitized_key in sanitized_fields:
+                sanitized_key = f"audit_{sanitized_key}"
+
+        sanitized_fields[sanitized_key] = value
+
     payload = {
         "event": event,
         "outcome": outcome,
         "category": category,
     }
-    payload.update({key: value for key, value in fields.items() if value is not None})
+    payload.update(sanitized_fields)
 
     message = " ".join(
         [

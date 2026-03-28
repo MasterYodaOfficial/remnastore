@@ -34,6 +34,7 @@ export function PlansPage({
   isTelegramWebApp = false,
   resumablePlanIds = [],
 }: PlansPageProps) {
+  const [selectedPlanId, setSelectedPlanId] = React.useState<string | null>(null);
   const getPlanButtonLabel = (plan: Plan): string => {
     if (resumablePlanIds.includes(plan.id)) {
       return t('web.plans.buttonResume');
@@ -99,9 +100,6 @@ export function PlansPage({
         <h1 className="text-2xl font-bold text-[var(--tg-theme-text-color,#000000)] mb-2">
           {t('web.plans.title')}
         </h1>
-        <p className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
-          {t('web.plans.subtitle', { amount: formatRubles(balance) })}
-        </p>
       </div>
 
       <div className="rounded-[24px] border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[linear-gradient(135deg,var(--tg-theme-secondary-bg-color,#f4f4f5)_0%,var(--app-surface-color,#dbe4f2)_100%)] p-4">
@@ -127,9 +125,23 @@ export function PlansPage({
         {plans.map((plan) => (
           <div
             key={plan.id}
-            className={`relative bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] rounded-2xl p-4 ${
+            role="button"
+            tabIndex={0}
+            onClick={() => setSelectedPlanId(plan.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setSelectedPlanId(plan.id);
+              }
+            }}
+            className={`relative rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(15,23,42,0.12)] ${
               plan.popular ? 'ring-2 ring-[var(--tg-theme-button-color,#3390ec)]' : ''
+            } ${
+              selectedPlanId === plan.id
+                ? 'border border-[var(--tg-theme-button-color,#3390ec)] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-[0_20px_44px_rgba(37,99,235,0.16)]'
+                : 'border border-transparent'
             }`}
+            aria-pressed={selectedPlanId === plan.id}
           >
             {plan.popular && (
               <div className="absolute -top-2 left-4 flex items-center gap-1 rounded-full bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-xs font-semibold text-[var(--tg-theme-button-text-color,#ffffff)]">
@@ -174,7 +186,7 @@ export function PlansPage({
             <button
               onClick={() => onBuyPlan(plan.id)}
               disabled={checkoutPlanId === plan.id}
-              className="w-full py-3 rounded-xl font-medium bg-[var(--tg-theme-button-color,#3390ec)] text-[var(--tg-theme-button-text-color,#ffffff)] hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] py-3 font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-all duration-200 hover:-translate-y-0.5 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {checkoutPlanId === plan.id
                 ? t('web.plans.buttonOpening')

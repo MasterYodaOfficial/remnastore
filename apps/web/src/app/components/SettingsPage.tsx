@@ -56,6 +56,17 @@ type SettingsSection = {
   items: SettingsItem[];
 };
 
+function TelegramIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+      <path
+        fill="#229ED9"
+        d="M21.9 4.6c.3-.9-.6-1.7-1.5-1.4L3.5 9.3c-1 .3-1 1.7 0 2l4 1.2 1.5 4.8c.3 1 .1 1.1.5 1.1.4 0 .6-.2.9-.5l2.3-2.2 4.4 3.2c.8.6 1.9.2 2.1-.8L21.9 4.6zm-3 1.8-7.7 6.9a.9.9 0 0 0-.3.5l-.6 2.8-1-3.1a.9.9 0 0 0-.6-.6l-3.1-.9 13.3-5.6z"
+      />
+    </svg>
+  );
+}
+
 export function SettingsPage({
   theme,
   onThemeChange,
@@ -102,14 +113,7 @@ export function SettingsPage({
 
   if (hasTelegram) {
     accountItems.push({
-      icon: () => (
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="#229ED9"
-            d="M21.9 4.6c.3-.9-.6-1.7-1.5-1.4L3.5 9.3c-1 .3-1 1.7 0 2l4 1.2 1.5 4.8c.3 1 .1 1.1.5 1.1.4 0 .6-.2.9-.5l2.3-2.2 4.4 3.2c.8.6 1.9.2 2.1-.8L21.9 4.6zm-3 1.8-7.7 6.9a.9.9 0 0 0-.3.5l-.6 2.8-1-3.1a.9.9 0 0 0-.6-.6l-3.1-.9 13.3-5.6z"
-          />
-        </svg>
-      ),
+      icon: TelegramIcon,
       label: t('web.settings.labels.telegramAccount'),
       action: <CheckCircle className="h-5 w-5 text-[var(--app-success-color,#16a34a)]" />,
     });
@@ -117,14 +121,7 @@ export function SettingsPage({
 
   if (!isTelegramWebApp && !hasTelegram && onLinkTelegram) {
     accountItems.push({
-      icon: () => (
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path
-            fill="#229ED9"
-            d="M21.9 4.6c.3-.9-.6-1.7-1.5-1.4L3.5 9.3c-1 .3-1 1.7 0 2l4 1.2 1.5 4.8c.3 1 .1 1.1.5 1.1.4 0 .6-.2.9-.5l2.3-2.2 4.4 3.2c.8.6 1.9.2 2.1-.8L21.9 4.6zm-3 1.8-7.7 6.9a.9.9 0 0 0-.3.5l-.6 2.8-1-3.1a.9.9 0 0 0-.6-.6l-3.1-.9 13.3-5.6z"
-          />
-        </svg>
-      ),
+      icon: TelegramIcon,
       label: t('web.settings.labels.linkTelegram'),
       action: (
         <button
@@ -355,7 +352,7 @@ export function SettingsPage({
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Icon className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />
+                    <Icon className="h-5 w-5 shrink-0 text-[var(--tg-theme-button-color,#3390ec)]" />
                     <span className="text-[var(--tg-theme-text-color,#000000)] font-medium">
                       {item.label}
                     </span>

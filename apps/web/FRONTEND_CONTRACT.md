@@ -650,9 +650,9 @@ Frontend использует такие переменные:
 
 ## OAuth и Telegram setup
 
-### Browser auth через Supabase
+### Browser auth
 
-- основной social provider: `Google`
+- `Google` через `Supabase Auth`
 - можно использовать email/password и password reset
 - нельзя использовать `service_role` или `sb_secret_*` на фронте
 - redirect URL должны быть явно перечислены без лишних wildcard
@@ -687,7 +687,7 @@ npm run build
 
 Минимальный ручной smoke test:
 - открыть browser app
-- пройти login через Google или email
+- пройти login через Google, `VK ID` или email
 - проверить загрузку `GET /api/v1/bootstrap/me`
 - проверить баланс, профиль и настройки
 - проверить `notifications`, `pending payments` и `balance history`

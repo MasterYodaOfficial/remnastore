@@ -1,11 +1,14 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Loader2, Lock, Mail, Shield } from 'lucide-react';
+import { ArrowLeft, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../../utils/supabase/client';
 import { getActiveReferralCode, buildTelegramReferralBotUrl } from '../lib/referrals';
 import { t } from '../../lib/i18n';
+import { AppLogo } from './AppLogo';
 
 type LoginFormMode = 'signin' | 'signup' | 'forgot';
+type OAuthProviderState = 'google';
+type SupabaseOAuthProvider = Parameters<typeof supabase.auth.signInWithOAuth>[0]['provider'];
 
 interface LoginPageProps {
   view?: 'default' | 'recovery' | 'recovery-expired';
@@ -16,7 +19,7 @@ interface LoginPageProps {
 
 function TelegramIcon() {
   return (
-    <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+    <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
       <path
         fill="#229ED9"
         d="M21.9 4.6c.3-.9-.6-1.7-1.5-1.4L3.5 9.3c-1 .3-1 1.7 0 2l4 1.2 1.5 4.8c.3 1 .1 1.1.5 1.1.4 0 .6-.2.9-.5l2.3-2.2 4.4 3.2c.8.6 1.9.2 2.1-.8L21.9 4.6zm-3 1.8-7.7 6.9a.9.9 0 0 0-.3.5l-.6 2.8-1-3.1a.9.9 0 0 0-.6-.6l-3.1-.9 13.3-5.6z"
@@ -43,7 +46,7 @@ export function LoginPage({
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeProvider, setActiveProvider] = useState<'google' | 'email' | 'recovery' | null>(
+  const [activeProvider, setActiveProvider] = useState<OAuthProviderState | 'email' | 'recovery' | null>(
     null
   );
   const telegramBotUrl = useMemo(
@@ -81,12 +84,22 @@ export function LoginPage({
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const startOAuthLogin = async ({
+    provider,
+    state,
+    errorToastKey,
+    errorLogLabel,
+  }: {
+    provider: SupabaseOAuthProvider;
+    state: OAuthProviderState;
+    errorToastKey: string;
+    errorLogLabel: string;
+  }) => {
     try {
-      setActiveProvider('google');
+      setActiveProvider(state);
       const redirectUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
       const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
+        provider,
         options: {
           redirectTo: redirectUrl,
         },
@@ -96,12 +109,20 @@ export function LoginPage({
         throw error;
       }
     } catch (err) {
-      console.error('Google login error:', err);
-      toast.error(loginT('toasts.googleStartError'));
+      console.error(`${errorLogLabel} login error:`, err);
+      toast.error(loginT(errorToastKey));
     } finally {
       setActiveProvider(null);
     }
   };
+
+  const handleGoogleLogin = async () =>
+    startOAuthLogin({
+      provider: 'google',
+      state: 'google',
+      errorToastKey: 'toasts.googleStartError',
+      errorLogLabel: 'Google',
+    });
 
   const handleEmailSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -597,9 +618,11 @@ export function LoginPage({
           <div className="space-y-6">
             <div className="space-y-4 text-center">
               <div className="flex justify-center">
-                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[var(--tg-theme-button-color,#3390ec)] shadow-[0_14px_32px_rgba(51,144,236,0.28)]">
-                  <Shield className="h-11 w-11 text-white" />
-                </div>
+                <AppLogo
+                  shape="card"
+                  className="h-[88px] w-[176px] shadow-[0_14px_32px_rgba(51,144,236,0.18)]"
+                  imageClassName="p-[12px]"
+                />
               </div>
               <div className="space-y-2">
                 <h1 className="text-3xl font-bold text-[var(--tg-theme-text-color,#000000)]">

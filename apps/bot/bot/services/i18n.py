@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -101,6 +102,35 @@ class _SafeFormatDict(dict[str, Any]):
         return "{" + key + "}"
 
 
+class HtmlSafeString(str):
+    pass
+
+
+def html_safe(value: str) -> HtmlSafeString:
+    return HtmlSafeString(value)
+
+
+def _render_translation(
+    value: str,
+    *,
+    escape_params: bool,
+    params: dict[str, Any],
+) -> str:
+    if not params:
+        return value
+
+    if escape_params:
+        safe_params: dict[str, str] = {}
+        for key, param in params.items():
+            if isinstance(param, HtmlSafeString):
+                safe_params[key] = str(param)
+                continue
+            safe_params[key] = escape(str(param), quote=True)
+        return value.format_map(_SafeFormatDict(safe_params))
+
+    return value.format_map(_SafeFormatDict(params))
+
+
 def translate(key: str, *, locale: str | None = None, **params: Any) -> str:
     normalized_locale = normalize_locale(locale)
     catalog = load_bot_catalog(normalized_locale)
@@ -112,7 +142,18 @@ def translate(key: str, *, locale: str | None = None, **params: Any) -> str:
     if not isinstance(value, str):
         return key
 
-    if not params:
-        return value
+    return _render_translation(value, escape_params=False, params=params)
 
-    return value.format_map(_SafeFormatDict(params))
+
+def translate_html(key: str, *, locale: str | None = None, **params: Any) -> str:
+    normalized_locale = normalize_locale(locale)
+    catalog = load_bot_catalog(normalized_locale)
+    value = _resolve_nested_value(catalog, key)
+
+    if value is None and normalized_locale != DEFAULT_LOCALE:
+        value = _resolve_nested_value(load_bot_catalog(DEFAULT_LOCALE), key)
+
+    if not isinstance(value, str):
+        return key
+
+    return _render_translation(value, escape_params=True, params=params)

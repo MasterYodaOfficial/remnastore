@@ -6,7 +6,7 @@ import httpx
 
 from bot.core.config import settings
 from bot.services.api import ApiClient
-from bot.services.i18n import translate
+from bot.services.i18n import translate, translate_html
 from bot.services.menu_renderer import show_menu_for_message
 from bot.states.menu import MenuState
 
@@ -81,11 +81,11 @@ async def handle_browser_link(message: Message, link_token: str) -> None:
             )
 
         if response.status_code == 200:
-            await message.answer(translate("bot.linking.success", locale=locale))
+            await message.answer(translate_html("bot.linking.success", locale=locale))
         elif response.status_code == 400:
             error_data = response.json()
             await message.answer(
-                translate(
+                translate_html(
                     "bot.linking.error_with_detail",
                     locale=locale,
                     detail=error_data.get(
@@ -94,9 +94,11 @@ async def handle_browser_link(message: Message, link_token: str) -> None:
                 )
             )
         else:
-            await message.answer(translate("bot.linking.generic_error", locale=locale))
+            await message.answer(
+                translate_html("bot.linking.generic_error", locale=locale)
+            )
     except Exception:
-        await message.answer(translate("bot.linking.generic_error", locale=locale))
+        await message.answer(translate_html("bot.linking.generic_error", locale=locale))
 
 
 async def handle_telegram_link(message: Message, link_token: str) -> None:
@@ -126,11 +128,11 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
             )
 
         if response.status_code == 200:
-            await message.answer(translate("bot.linking.success", locale=locale))
+            await message.answer(translate_html("bot.linking.success", locale=locale))
         elif response.status_code == 400:
             error_data = response.json()
             await message.answer(
-                translate(
+                translate_html(
                     "bot.linking.error_with_detail",
                     locale=locale,
                     detail=error_data.get(
@@ -139,16 +141,18 @@ async def handle_telegram_link(message: Message, link_token: str) -> None:
                 )
             )
         else:
-            await message.answer(translate("bot.linking.generic_error", locale=locale))
+            await message.answer(
+                translate_html("bot.linking.generic_error", locale=locale)
+            )
     except Exception:
-        await message.answer(translate("bot.linking.generic_error", locale=locale))
+        await message.answer(translate_html("bot.linking.generic_error", locale=locale))
 
 
 async def handle_referral_start(message: Message, referral_code: str) -> None:
     """Handle referral deep link and preserve the code in the WebApp URL."""
     locale = message.from_user.language_code if message.from_user is not None else None
     if not referral_code:
-        await message.answer(translate("bot.referral.invalid_link", locale=locale))
+        await message.answer(translate_html("bot.referral.invalid_link", locale=locale))
         await show_menu_for_message(message, force_new=True)
         return
 
@@ -165,11 +169,13 @@ async def handle_referral_start(message: Message, referral_code: str) -> None:
             )
 
         if response.status_code == 400:
-            await message.answer(translate("bot.referral.invalid_code", locale=locale))
+            await message.answer(
+                translate_html("bot.referral.invalid_code", locale=locale)
+            )
             await show_menu_for_message(message, force_new=True)
             return
     except Exception:
         pass
 
-    await message.answer(translate("bot.referral.saved", locale=locale))
+    await message.answer(translate_html("bot.referral.saved", locale=locale))
     await show_menu_for_message(message, referral_code=referral_code, force_new=True)

@@ -14,7 +14,11 @@ from app.schemas.auth import (
     TelegramReferralResultResponse,
 )
 from app.services.account_events import append_account_event
-from app.services.accounts import AccountBlockedError, upsert_telegram_account
+from app.services.accounts import (
+    AccountBlockedError,
+    upsert_telegram_account,
+)
+from app.services.cache import get_cache
 from app.services.i18n import translate
 from app.services.referrals import (
     ReferralCodeNotFoundError,
@@ -23,6 +27,25 @@ from app.services.referrals import (
 )
 
 router = APIRouter()
+
+
+def _build_browser_auth_response(
+    account,
+    *,
+    avatar_url: str | None = None,
+    referral_result: TelegramReferralResultResponse | None = None,
+) -> AuthResponse:
+    token = create_access_token(
+        {"sub": str(account.id), "telegram_id": account.telegram_id},
+        secret=settings.jwt_secret,
+        expires_in_seconds=settings.jwt_access_token_expires_seconds,
+    )
+    return AuthResponse(
+        access_token=token,
+        account=AccountResponse.model_validate(account),
+        referral_result=referral_result,
+        avatar_url=avatar_url,
+    )
 
 
 @router.post(
@@ -122,11 +145,6 @@ async def auth_telegram_webapp(
             )
         )
 
-    token = create_access_token(
-        {"sub": str(account.id), "telegram_id": account.telegram_id},
-        secret=settings.jwt_secret,
-        expires_in_seconds=settings.jwt_access_token_expires_seconds,
-    )
     await append_account_event(
         session,
         account_id=account.id,
@@ -156,8 +174,7 @@ async def auth_telegram_webapp(
         **request_context,
     )
 
-    return AuthResponse(
-        access_token=token,
-        account=AccountResponse.model_validate(account),
+    return _build_browser_auth_response(
+        account,
         referral_result=referral_result,
     )

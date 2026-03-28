@@ -39,7 +39,7 @@ export function HomePage({
   referralCopied,
 }: HomePageProps) {
   return (
-    <div className="pb-20 space-y-0">
+    <div className="space-y-4 px-4 pb-20 pt-4">
       <SubscriptionCard
         subscription={subscription}
         onActivateTrial={onActivateTrial}

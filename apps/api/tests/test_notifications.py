@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
 import uuid
@@ -12,6 +12,7 @@ from app.api.dependencies import get_current_account
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     Notification,
     NotificationChannel,
     NotificationDelivery,
@@ -19,13 +20,16 @@ from app.db.models import (
     NotificationPriority,
     NotificationType,
 )
+from app.integrations.remnawave.client import RemnawaveUser
 from app.db.session import get_session
 from app.main import create_app
+from app.services.account_events import append_account_event
 from app.services.i18n import translate
 from app.services.notifications import (
     TelegramNotificationDeliveryError,
     create_notification,
     process_pending_telegram_deliveries,
+    process_subscription_no_connection_reminders,
 )
 
 
@@ -49,17 +53,41 @@ class DummyCache:
 
 class FakeTelegramNotificationClient:
     def __init__(self) -> None:
-        self.sent_messages: list[tuple[int, str]] = []
+        self.sent_messages: list[dict[str, object]] = []
         self._error: TelegramNotificationDeliveryError | None = None
 
     def fail_with(self, error: TelegramNotificationDeliveryError) -> None:
         self._error = error
 
-    async def send_message(self, *, telegram_id: int, text: str) -> str:
-        self.sent_messages.append((telegram_id, text))
+    async def send_message(
+        self,
+        *,
+        telegram_id: int,
+        text: str,
+        parse_mode: str | None = None,
+        disable_web_page_preview: bool | None = True,
+        reply_markup: dict | None = None,
+    ) -> str:
+        self.sent_messages.append(
+            {
+                "telegram_id": telegram_id,
+                "text": text,
+                "parse_mode": parse_mode,
+                "disable_web_page_preview": disable_web_page_preview,
+                "reply_markup": reply_markup,
+            }
+        )
         if self._error is not None:
             raise self._error
         return "message-1"
+
+
+class FakeRemnawaveGateway:
+    def __init__(self) -> None:
+        self.users: dict[uuid.UUID, RemnawaveUser] = {}
+
+    async def get_user_by_uuid(self, user_uuid: uuid.UUID) -> RemnawaveUser | None:
+        return self.users.get(user_uuid)
 
 
 class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -90,10 +118,27 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self._original_notification_retry_max_seconds = (
             notifications_service.settings.notification_telegram_retry_max_seconds
         )
+        self._original_no_connection_grace_seconds = (
+            notifications_service.settings.subscription_activation_no_connection_grace_seconds
+        )
+        self._original_support_telegram_url = (
+            notifications_service.settings.support_telegram_url
+        )
+        self._fake_remnawave_gateway = FakeRemnawaveGateway()
+        self._original_remnawave_gateway_factory = (
+            notifications_service.get_remnawave_gateway
+        )
         notifications_service.settings.telegram_bot_token = "telegram-token"
         notifications_service.settings.notification_telegram_max_attempts = 3
         notifications_service.settings.notification_telegram_retry_base_seconds = 30
         notifications_service.settings.notification_telegram_retry_max_seconds = 900
+        notifications_service.settings.subscription_activation_no_connection_grace_seconds = 900
+        notifications_service.settings.support_telegram_url = (
+            "https://t.me/remnastore_support"
+        )
+        notifications_service.get_remnawave_gateway = (
+            lambda: self._fake_remnawave_gateway
+        )
 
         self.app = create_app()
 
@@ -137,6 +182,15 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self._notifications_service.settings.notification_telegram_retry_base_seconds = self._original_notification_retry_base_seconds
         self._notifications_service.settings.notification_telegram_retry_max_seconds = (
             self._original_notification_retry_max_seconds
+        )
+        self._notifications_service.settings.subscription_activation_no_connection_grace_seconds = (
+            self._original_no_connection_grace_seconds
+        )
+        self._notifications_service.settings.support_telegram_url = (
+            self._original_support_telegram_url
+        )
+        self._notifications_service.get_remnawave_gateway = (
+            self._original_remnawave_gateway_factory
         )
         await self._engine.dispose()
         self._tmpdir.cleanup()
@@ -186,9 +240,42 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             return await session.get(Notification, notification_id)
 
+    async def _list_notifications(self) -> list[Notification]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Notification).order_by(Notification.id.asc())
+            )
+            return list(result.scalars().all())
+
     async def _get_account(self, account_id: uuid.UUID) -> Account | None:
         async with self._session_factory() as session:
             return await session.get(Account, account_id)
+
+    async def _append_account_event(
+        self,
+        *,
+        account_id: uuid.UUID,
+        event_type: str,
+        created_at: datetime,
+    ) -> None:
+        async with self._session_factory() as session:
+            event = await append_account_event(
+                session,
+                account_id=account_id,
+                event_type=event_type,
+                source="test",
+            )
+            event.created_at = created_at
+            await session.commit()
+
+    async def _get_account_events(self, account_id: uuid.UUID) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.created_at.asc(), AccountEventLog.id.asc())
+            )
+            return list(result.scalars().all())
 
     async def test_create_notification_creates_in_app_delivery_and_dedupes(
         self,
@@ -297,7 +384,15 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.terminal_failed, 0)
         self.assertEqual(
             client.sent_messages,
-            [(758107031, "Оплата прошла\n\nПлатеж успешно завершен.")],
+            [
+                {
+                    "telegram_id": 758107031,
+                    "text": "<b>✅ Оплата прошла</b>\n\nПлатеж успешно завершен.",
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                    "reply_markup": None,
+                }
+            ],
         )
 
         deliveries = await self._get_deliveries(notification.id)
@@ -417,6 +512,162 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
         self.assertIsNotNone(stored_account.telegram_bot_blocked_at)
+
+    async def test_process_subscription_no_connection_reminders_creates_notification(
+        self,
+    ) -> None:
+        now = datetime.now(UTC)
+        account = await self._create_account(
+            email="no-connection@example.com",
+            telegram_id=758107031,
+            remnawave_user_uuid=uuid.uuid4(),
+            subscription_status="ACTIVE",
+            subscription_expires_at=now + timedelta(days=30),
+        )
+        await self._append_account_event(
+            account_id=account.id,
+            event_type="subscription.direct_payment.applied",
+            created_at=now - timedelta(minutes=16),
+        )
+        self._fake_remnawave_gateway.users[account.remnawave_user_uuid] = RemnawaveUser(
+            uuid=account.remnawave_user_uuid,
+            username="user_1",
+            status="ACTIVE",
+            expire_at=now + timedelta(days=30),
+            subscription_url="https://panel.test/sub/1",
+            telegram_id=account.telegram_id,
+            email=account.email,
+            tag=None,
+        )
+
+        async with self._session_factory() as session:
+            result = await process_subscription_no_connection_reminders(
+                session,
+                limit=10,
+            )
+            await session.commit()
+
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.notified, 1)
+        self.assertEqual(result.marked_connected, 0)
+
+        notifications = await self._list_notifications()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(
+            notifications[0].type, NotificationType.SUBSCRIPTION_NO_CONNECTION
+        )
+        self.assertIn("подписка уже активирована", notifications[0].body)
+        self.assertEqual(notifications[0].action_label, "Открыть поддержку")
+        self.assertEqual(
+            notifications[0].action_url, "https://t.me/remnastore_support"
+        )
+
+        events = await self._get_account_events(account.id)
+        self.assertEqual(
+            [item.event_type for item in events],
+            [
+                "subscription.direct_payment.applied",
+                "subscription.no_connection_reminder.sent",
+            ],
+        )
+
+    async def test_process_subscription_no_connection_reminders_skips_connected_user(
+        self,
+    ) -> None:
+        now = datetime.now(UTC)
+        account = await self._create_account(
+            email="connected@example.com",
+            remnawave_user_uuid=uuid.uuid4(),
+            subscription_status="ACTIVE",
+            subscription_expires_at=now + timedelta(days=30),
+        )
+        await self._append_account_event(
+            account_id=account.id,
+            event_type="subscription.wallet_purchase.applied",
+            created_at=now - timedelta(minutes=16),
+        )
+        self._fake_remnawave_gateway.users[account.remnawave_user_uuid] = RemnawaveUser(
+            uuid=account.remnawave_user_uuid,
+            username="user_2",
+            status="ACTIVE",
+            expire_at=now + timedelta(days=30),
+            subscription_url="https://panel.test/sub/2",
+            telegram_id=account.telegram_id,
+            email=account.email,
+            tag=None,
+            first_connected_at=now - timedelta(minutes=5),
+        )
+
+        async with self._session_factory() as session:
+            result = await process_subscription_no_connection_reminders(
+                session,
+                limit=10,
+            )
+            await session.commit()
+
+        self.assertEqual(result.processed, 1)
+        self.assertEqual(result.notified, 0)
+        self.assertEqual(result.marked_connected, 1)
+        self.assertEqual(await self._list_notifications(), [])
+
+        events = await self._get_account_events(account.id)
+        self.assertEqual(
+            [item.event_type for item in events],
+            [
+                "subscription.wallet_purchase.applied",
+                "subscription.remnawave.first_connected",
+            ],
+        )
+
+    async def test_process_subscription_no_connection_reminders_does_not_repeat(
+        self,
+    ) -> None:
+        now = datetime.now(UTC)
+        account = await self._create_account(
+            email="no-repeat@example.com",
+            remnawave_user_uuid=uuid.uuid4(),
+            subscription_status="ACTIVE",
+            subscription_expires_at=now + timedelta(days=30),
+        )
+        activation_at = now - timedelta(minutes=16)
+        await self._append_account_event(
+            account_id=account.id,
+            event_type="subscription.trial.activated",
+            created_at=activation_at,
+        )
+        self._fake_remnawave_gateway.users[account.remnawave_user_uuid] = RemnawaveUser(
+            uuid=account.remnawave_user_uuid,
+            username="user_3",
+            status="ACTIVE",
+            expire_at=now + timedelta(days=30),
+            subscription_url="https://panel.test/sub/3",
+            telegram_id=account.telegram_id,
+            email=account.email,
+            tag="TRIAL",
+        )
+
+        async with self._session_factory() as session:
+            first_result = await process_subscription_no_connection_reminders(
+                session,
+                limit=10,
+            )
+            await session.commit()
+
+        async with self._session_factory() as session:
+            second_result = await process_subscription_no_connection_reminders(
+                session,
+                limit=10,
+            )
+            await session.commit()
+
+        self.assertEqual(first_result.notified, 1)
+        self.assertEqual(second_result.processed, 0)
+        notifications = await self._list_notifications()
+        self.assertEqual(len(notifications), 1)
+        self.assertEqual(
+            notifications[0].dedupe_key,
+            f"subscription_no_connection:{account.id}:{activation_at.isoformat()}",
+        )
 
     async def test_list_notifications_returns_unread_count_and_filter(self) -> None:
         account = await self._create_account(email="list@example.com")
