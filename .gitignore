@@ -46,3 +46,6 @@ playwright-report/
 /.idea/dataSources/2c021d54-4b61-40b0-a6c5-d36e8b4873e9/storage_v2/_src_/schema/main.uQUzAA.meta
 /.idea/dataSources/c7d5556a-be08-4ed6-9c6e-60406972de1f.xml
 /.idea/dataSources/c7d5556a-be08-4ed6-9c6e-60406972de1f/storage_v2/_src_/schema/main.uQUzAA.meta
+/apps/web/.env
+/.idea/.gitignore
+/.idea/modules.xml
