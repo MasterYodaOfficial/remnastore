@@ -412,7 +412,9 @@ async def purchase_subscription_with_wallet(
                 translate("api.purchases.errors.wallet_pending_purchase"),
                 code="wallet_pending_purchase",
             )
-        existing_promo_code = await session.get(PromoCode, existing_redemption.promo_code_id)
+        existing_promo_code = await session.get(
+            PromoCode, existing_redemption.promo_code_id
+        )
         if (
             existing_promo_code is None
             or existing_promo_code.code != normalize_promo_code(promo_code)

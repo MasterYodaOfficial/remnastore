@@ -534,7 +534,7 @@ test.describe("web mobile browser smoke", () => {
 
     await page.getByRole("button", { name: "Связать" }).click();
 
-    await expect(page.getByText("Ссылка для привязки Telegram открыта в новом окне")).toBeVisible();
+    await expect(page.getByText("Ссылка для привязки Telegram открыта")).toBeVisible();
 
     const openedUrls = await page.evaluate(
       () => (window as unknown as { __openedUrls: string[] }).__openedUrls,

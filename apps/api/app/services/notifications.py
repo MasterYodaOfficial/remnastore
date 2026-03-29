@@ -226,7 +226,9 @@ def _format_telegram_notification_html(notification: Notification) -> str:
 
     if notification.action_url:
         action_url = escape(notification.action_url.strip(), quote=True)
-        action_label = notification.action_label.strip() if notification.action_label else ""
+        action_label = (
+            notification.action_label.strip() if notification.action_label else ""
+        )
         if notification.action_label:
             parts.append(
                 f'<a href="{action_url}">{escape(action_label, quote=True)}</a>'

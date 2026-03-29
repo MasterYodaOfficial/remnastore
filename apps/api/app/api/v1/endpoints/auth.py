@@ -18,7 +18,6 @@ from app.services.accounts import (
     AccountBlockedError,
     upsert_telegram_account,
 )
-from app.services.cache import get_cache
 from app.services.i18n import translate
 from app.services.referrals import (
     ReferralCodeNotFoundError,

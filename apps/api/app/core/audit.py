@@ -49,7 +49,10 @@ def log_audit_event(
         sanitized_key = key
         if sanitized_key in _RESERVED_LOG_RECORD_FIELDS:
             sanitized_key = f"audit_{sanitized_key}"
-            while sanitized_key in _RESERVED_LOG_RECORD_FIELDS or sanitized_key in sanitized_fields:
+            while (
+                sanitized_key in _RESERVED_LOG_RECORD_FIELDS
+                or sanitized_key in sanitized_fields
+            ):
                 sanitized_key = f"audit_{sanitized_key}"
 
         sanitized_fields[sanitized_key] = value

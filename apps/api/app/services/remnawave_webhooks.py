@@ -102,10 +102,7 @@ def parse_remnawave_webhook_user_data(
             flattened = dict(data)
             if "onlineAt" in traffic and "onlineAt" not in flattened:
                 flattened["onlineAt"] = traffic["onlineAt"]
-            if (
-                "firstConnectedAt" in traffic
-                and "firstConnectedAt" not in flattened
-            ):
+            if "firstConnectedAt" in traffic and "firstConnectedAt" not in flattened:
                 flattened["firstConnectedAt"] = traffic["firstConnectedAt"]
             data = flattened
 

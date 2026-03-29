@@ -101,7 +101,9 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         button = _top_webapp_row(locale="ru", referral_code=None)[0]
 
         self.assertEqual(button.style, BUTTON_STYLE_SUCCESS)
-        self.assertEqual(button.text, translate("common.actions.open_webapp", locale="ru"))
+        self.assertEqual(
+            button.text, translate("common.actions.open_webapp", locale="ru")
+        )
 
     def test_back_buttons_use_danger_style(self) -> None:
         keyboard = _build_help_keyboard(locale="ru", referral_code=None)
@@ -213,7 +215,9 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
             api_client=client,
         )
 
-        self.assertIn("• <b>1 месяц</b> — 299 ₽ · 30 дн. · Telegram: 1", rendered.caption)
+        self.assertIn(
+            "• <b>1 месяц</b> — 299 ₽ · 30 дн. · Telegram: 1", rendered.caption
+        )
 
     async def test_yookassa_gateway_failure_returns_short_payment_error(self) -> None:
         request = httpx.Request(

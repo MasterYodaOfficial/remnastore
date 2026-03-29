@@ -38,7 +38,7 @@ describe('parseApiErrorPayload', () => {
 describe('error mappers', () => {
   it('maps payment error codes before looking at raw detail', () => {
     expect(getPaymentErrorMessage('yookassa_not_configured', 'raw detail')).toBe(
-      'Платежный шлюз пока не настроен.'
+      'Оплата картой пока недоступна.'
     );
   });
 

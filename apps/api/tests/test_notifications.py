@@ -118,9 +118,7 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self._original_notification_retry_max_seconds = (
             notifications_service.settings.notification_telegram_retry_max_seconds
         )
-        self._original_no_connection_grace_seconds = (
-            notifications_service.settings.subscription_activation_no_connection_grace_seconds
-        )
+        self._original_no_connection_grace_seconds = notifications_service.settings.subscription_activation_no_connection_grace_seconds
         self._original_support_telegram_url = (
             notifications_service.settings.support_telegram_url
         )
@@ -136,8 +134,8 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         notifications_service.settings.support_telegram_url = (
             "https://t.me/remnastore_support"
         )
-        notifications_service.get_remnawave_gateway = (
-            lambda: self._fake_remnawave_gateway
+        notifications_service.get_remnawave_gateway = lambda: (
+            self._fake_remnawave_gateway
         )
 
         self.app = create_app()
@@ -183,9 +181,7 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self._notifications_service.settings.notification_telegram_retry_max_seconds = (
             self._original_notification_retry_max_seconds
         )
-        self._notifications_service.settings.subscription_activation_no_connection_grace_seconds = (
-            self._original_no_connection_grace_seconds
-        )
+        self._notifications_service.settings.subscription_activation_no_connection_grace_seconds = self._original_no_connection_grace_seconds
         self._notifications_service.settings.support_telegram_url = (
             self._original_support_telegram_url
         )
@@ -556,11 +552,10 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             notifications[0].type, NotificationType.SUBSCRIPTION_NO_CONNECTION
         )
-        self.assertIn("подписка уже активирована", notifications[0].body)
+        self.assertIn("доступ уже активирован", notifications[0].body)
+        self.assertIn("первое подключение так и не появилось", notifications[0].body)
         self.assertEqual(notifications[0].action_label, "Открыть поддержку")
-        self.assertEqual(
-            notifications[0].action_url, "https://t.me/remnastore_support"
-        )
+        self.assertEqual(notifications[0].action_url, "https://t.me/remnastore_support")
 
         events = await self._get_account_events(account.id)
         self.assertEqual(
