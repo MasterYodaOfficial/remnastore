@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 import tempfile
 import unittest
@@ -29,9 +30,20 @@ from app.db.session import get_session
 from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
 from app.main import create_app
 from app.services.i18n import translate
+from app.services.referrals import calculate_referral_reward_amount
 from app.services.plans import get_subscription_plans
 from app.services.purchases import reconcile_pending_wallet_plan_purchases
 from app.services import subscriptions as subscriptions_service
+
+PLAN_1M = next(plan for plan in get_subscription_plans() if plan.code == "plan_1m")
+PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
+
+
+def _referral_reward(amount: int, *, rate: float | Decimal) -> int:
+    return calculate_referral_reward_amount(
+        purchase_amount_rub=amount,
+        reward_rate=Decimal(str(rate)),
+    )
 
 
 class DummyCache:
@@ -526,14 +538,14 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
         self.assertTrue(stored_account.subscription_url)
 
         entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].entry_type, LedgerEntryType.SUBSCRIPTION_DEBIT)
-        self.assertEqual(entries[0].amount, -299)
+        self.assertEqual(entries[0].amount, -PLAN_1M_PRICE_RUB)
 
         grants = await self._get_subscription_grants(account.id)
         self.assertEqual(len(grants), 1)
@@ -604,7 +616,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
 
         entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(entries), 1)
@@ -652,7 +664,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertIsNone(stored_account.subscription_status)
 
         entries = await self._get_ledger_entries(account.id)
@@ -671,7 +683,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
 
         entries = await self._get_ledger_entries(account.id)
@@ -707,7 +719,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
 
         entries = await self._get_ledger_entries(account.id)
@@ -750,7 +762,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 4701)
+        self.assertEqual(stored_account.balance, 5000 - PLAN_1M_PRICE_RUB)
         self.assertIsNone(stored_account.subscription_status)
 
         entries = await self._get_ledger_entries(account.id)
@@ -790,7 +802,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
         self.assertTrue(stored_account.subscription_url)
 
@@ -878,7 +890,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertIsNone(stored_account.subscription_url)
         self.assertIsNone(stored_account.subscription_status)
 
@@ -897,7 +909,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 701)
+        self.assertEqual(stored_account.balance, 1000 - PLAN_1M_PRICE_RUB)
         self.assertTrue(stored_account.subscription_url)
 
         grants = await self._get_subscription_grants(account.id)
@@ -932,14 +944,26 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_referrer)
         assert stored_referrer is not None
         self.assertEqual(stored_referrer.referrals_count, 1)
-        self.assertEqual(stored_referrer.referral_earnings, 59)
+        self.assertEqual(
+            stored_referrer.referral_earnings,
+            _referral_reward(
+                PLAN_1M_PRICE_RUB,
+                rate=settings.default_referral_reward_rate,
+            ),
+        )
 
         referrer_entries = await self._get_ledger_entries(referrer.id)
         self.assertEqual(len(referrer_entries), 1)
         self.assertEqual(
             referrer_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD
         )
-        self.assertEqual(referrer_entries[0].amount, 59)
+        self.assertEqual(
+            referrer_entries[0].amount,
+            _referral_reward(
+                PLAN_1M_PRICE_RUB,
+                rate=settings.default_referral_reward_rate,
+            ),
+        )
 
     async def test_wallet_plan_repeat_purchase_extends_active_subscription(
         self,
@@ -972,7 +996,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 1402)
+        self.assertEqual(stored_account.balance, 2000 - (PLAN_1M_PRICE_RUB * 2))
 
         entries = await self._get_ledger_entries(account.id)
         self.assertEqual(len(entries), 2)

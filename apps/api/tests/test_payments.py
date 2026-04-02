@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 import uuid
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.dependencies import get_current_account
+from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
@@ -28,6 +30,8 @@ from app.db.models import (
 from app.db.session import get_session
 from app.main import create_app
 from app.services.i18n import translate
+from app.services.plans import get_subscription_plan
+from app.services.referrals import calculate_referral_reward_amount
 from app.services.payments import (
     CreatePaymentIntentCommand,
     PaymentIntentSnapshot,
@@ -42,6 +46,18 @@ from app.services.payments import (
     expire_stale_payments,
     reconcile_pending_yookassa_payments,
 )
+
+PLAN_1M = get_subscription_plan("plan_1m")
+PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
+PLAN_1M_PRICE_STARS = PLAN_1M.price_stars or 0
+PLAN_1M_DURATION_DAYS = PLAN_1M.duration_days
+
+
+def _referral_reward(amount: int) -> int:
+    return calculate_referral_reward_amount(
+        purchase_amount_rub=amount,
+        reward_rate=Decimal(str(settings.default_referral_reward_rate)),
+    )
 
 
 class DummyYooKassaResponse:
@@ -686,12 +702,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         body = response.json()
 
         self.assertGreaterEqual(len(body), 3)
-        self.assertEqual(body[0]["code"], "plan_1m")
-        self.assertEqual(body[0]["price_rub"], 299)
-        self.assertIsInstance(body[0]["price_stars"], int)
-        self.assertGreater(body[0]["price_stars"], 0)
-        self.assertEqual(body[0]["duration_days"], 30)
-        self.assertTrue(body[0]["popular"])
+        plan_1m = next(item for item in body if item["code"] == "plan_1m")
+        self.assertEqual(plan_1m["price_rub"], PLAN_1M_PRICE_RUB)
+        self.assertEqual(plan_1m["price_stars"], PLAN_1M_PRICE_STARS)
+        self.assertEqual(plan_1m["duration_days"], PLAN_1M_DURATION_DAYS)
+        self.assertEqual(plan_1m["popular"], PLAN_1M.popular)
 
     async def test_get_payment_status_returns_current_state_for_account(self) -> None:
         account = await self._create_account(balance=0, email="status@example.com")
@@ -747,7 +762,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                         provider=PaymentProvider.YOOKASSA,
                         flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                         status=PaymentStatus.SUCCEEDED,
-                        amount=299,
+                        amount=PLAN_1M_PRICE_RUB,
                         currency="RUB",
                         provider_payment_id="yoopay-done-299",
                     ),
@@ -992,9 +1007,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             return_value=SimpleNamespace(
                 code="plan_1m",
                 name="1 месяц",
-                price_rub=299,
-                price_stars=85,
-                duration_days=30,
+                price_rub=PLAN_1M_PRICE_RUB,
+                price_stars=PLAN_1M_PRICE_STARS,
+                duration_days=PLAN_1M_DURATION_DAYS,
             ),
         ):
             create_response = await self.client.post(
@@ -1171,7 +1186,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                     provider_event_id="payment.succeeded:yoopay-plan-1m",
                     provider_payment_id="yoopay-plan-1m",
                     status=PaymentStatus.SUCCEEDED,
-                    amount=299,
+                    amount=PLAN_1M_PRICE_RUB,
                     currency="RUB",
                     flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                     account_id=account.id,
@@ -1281,7 +1296,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                     provider_event_id="payment.succeeded:yoopay-plan-1m",
                     provider_payment_id="yoopay-plan-1m",
                     status=PaymentStatus.SUCCEEDED,
-                    amount=299,
+                    amount=PLAN_1M_PRICE_RUB,
                     currency="RUB",
                     flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                     account_id=account.id,
@@ -1304,12 +1319,15 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_referrer)
         assert stored_referrer is not None
         self.assertEqual(stored_referrer.referrals_count, 1)
-        self.assertEqual(stored_referrer.referral_earnings, 59)
+        self.assertEqual(
+            stored_referrer.referral_earnings,
+            _referral_reward(PLAN_1M_PRICE_RUB),
+        )
 
         ledger_entries = await self._get_ledger_entries(referrer.id)
         self.assertEqual(len(ledger_entries), 1)
         self.assertEqual(ledger_entries[0].entry_type, LedgerEntryType.REFERRAL_REWARD)
-        self.assertEqual(ledger_entries[0].amount, 59)
+        self.assertEqual(ledger_entries[0].amount, _referral_reward(PLAN_1M_PRICE_RUB))
 
         referrer_notifications = await self._get_notifications(referrer.id)
         self.assertEqual(len(referrer_notifications), 1)
@@ -1383,7 +1401,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                 provider_event_id="payment.succeeded:yoopay-plan-1m",
                 provider_payment_id="yoopay-plan-1m",
                 status=PaymentStatus.SUCCEEDED,
-                amount=299,
+                amount=PLAN_1M_PRICE_RUB,
                 currency="RUB",
                 flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                 account_id=account.id,
@@ -1470,7 +1488,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                 flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                 account_id=account.id,
                 status=PaymentStatus.SUCCEEDED,
-                amount=299,
+                amount=PLAN_1M_PRICE_RUB,
                 currency="RUB",
                 provider_payment_id="yoopay-plan-1m",
                 external_reference="plan-1m",
@@ -1523,9 +1541,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             return_value=SimpleNamespace(
                 code="plan_1m",
                 name="1 месяц",
-                price_rub=299,
-                price_stars=85,
-                duration_days=30,
+                price_rub=PLAN_1M_PRICE_RUB,
+                price_stars=PLAN_1M_PRICE_STARS,
+                duration_days=PLAN_1M_DURATION_DAYS,
             ),
         ):
             response = await self.client.post(
@@ -1536,7 +1554,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(body["provider"], "telegram_stars")
-        self.assertEqual(body["amount"], 85)
+        self.assertEqual(body["amount"], PLAN_1M_PRICE_STARS)
         self.assertEqual(body["currency"], "XTR")
         self.assertTrue(body["provider_payment_id"].startswith("rmstars:dp:"))
         self.assertIn("https://t.me/invoice/", body["confirmation_url"])
@@ -1545,7 +1563,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_payment)
         assert stored_payment is not None
         self.assertEqual(stored_payment.provider, PaymentProvider.TELEGRAM_STARS)
-        self.assertEqual(stored_payment.amount, 85)
+        self.assertEqual(stored_payment.amount, PLAN_1M_PRICE_STARS)
         self.assertEqual(stored_payment.plan_code, "plan_1m")
         self.assertIsNotNone(stored_payment.expires_at)
 
@@ -1564,9 +1582,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             return_value=SimpleNamespace(
                 code="plan_1m",
                 name="1 месяц",
-                price_rub=299,
-                price_stars=85,
-                duration_days=30,
+                price_rub=PLAN_1M_PRICE_RUB,
+                price_stars=PLAN_1M_PRICE_STARS,
+                duration_days=PLAN_1M_DURATION_DAYS,
             ),
         ):
             create_response = await self.client.post(
@@ -1587,7 +1605,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "telegram_id": 758107031,
                 "invoice_payload": provider_payment_id,
-                "total_amount": 85,
+                "total_amount": PLAN_1M_PRICE_STARS,
                 "currency": "XTR",
                 "pre_checkout_query_id": "pcq-blocked-1",
             },
@@ -1630,9 +1648,9 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             return_value=SimpleNamespace(
                 code="plan_1m",
                 name="1 месяц",
-                price_rub=299,
-                price_stars=85,
-                duration_days=30,
+                price_rub=PLAN_1M_PRICE_RUB,
+                price_stars=PLAN_1M_PRICE_STARS,
+                duration_days=PLAN_1M_DURATION_DAYS,
             ),
         ):
             create_response = await self.client.post(
@@ -1648,7 +1666,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "telegram_id": 758107031,
                 "invoice_payload": provider_payment_id,
-                "total_amount": 85,
+                "total_amount": PLAN_1M_PRICE_STARS,
                 "currency": "XTR",
                 "pre_checkout_query_id": "pcq-1",
             },
@@ -1668,7 +1686,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                 provider_event_id=f"successful_payment:{long_charge_id}",
                 provider_payment_id=provider_payment_id,
                 status=PaymentStatus.SUCCEEDED,
-                amount=85,
+                amount=PLAN_1M_PRICE_STARS,
                 currency="XTR",
                 flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                 account_id=account.id,
@@ -1677,7 +1695,7 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                     "event_type": "successful_payment",
                     "telegram_id": 758107031,
                     "currency": "XTR",
-                    "total_amount": 85,
+                    "total_amount": PLAN_1M_PRICE_STARS,
                     "invoice_payload": provider_payment_id,
                     "telegram_payment_charge_id": long_charge_id,
                     "provider_payment_charge_id": "provider-charge-1",

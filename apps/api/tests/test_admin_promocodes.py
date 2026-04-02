@@ -21,6 +21,10 @@ from app.db.session import get_session
 from app.main import create_app
 from app.services.admin_auth import create_admin
 from app.services.i18n import translate
+from app.services.plans import get_subscription_plan
+
+PLAN_1M = get_subscription_plan("plan_1m")
+PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
 
 
 class DummyCache:
@@ -437,8 +441,8 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
                         effect_type=PromoEffectType.FIXED_PRICE,
                         effect_value=99,
                         currency="RUB",
-                        original_amount=299,
-                        discount_amount=200,
+                        original_amount=PLAN_1M_PRICE_RUB,
+                        discount_amount=PLAN_1M_PRICE_RUB - 99,
                         final_amount=99,
                         reference_type="payment",
                         reference_id="payment-1",

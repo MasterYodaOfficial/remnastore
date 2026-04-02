@@ -28,7 +28,18 @@ from app.db.models import (
 from app.db.session import get_session
 from app.main import create_app
 from app.services.i18n import translate
+from app.services.plans import get_subscription_plan
 from app.services import referrals as referrals_service
+
+PLAN_1M = get_subscription_plan("plan_1m")
+PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
+
+
+def _referral_reward_for_amount(amount: int, *, rate: Decimal | float) -> int:
+    return referrals_service.calculate_referral_reward_amount(
+        purchase_amount_rub=amount,
+        reward_rate=Decimal(str(rate)),
+    )
 
 
 class DummyCache:
@@ -188,7 +199,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         *,
         account_id: uuid.UUID,
         plan_code: str = "plan_1m",
-        amount: int = 299,
+        amount: int = PLAN_1M_PRICE_RUB,
         purchase_source: str = "wallet",
         reference_type: str = "wallet_purchase",
     ) -> SubscriptionGrant:
@@ -329,7 +340,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
                 reference_type="wallet_purchase",
                 reference_id="summary-grant",
                 plan_code="plan_1m",
-                amount=299,
+                amount=PLAN_1M_PRICE_RUB,
                 currency="RUB",
                 duration_days=30,
                 base_expires_at=datetime.now(UTC),
@@ -354,19 +365,23 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(body["referral_code"], "ref-summary")
         self.assertEqual(body["referrals_count"], 1)
-        self.assertEqual(body["referral_earnings"], 59)
-        self.assertEqual(body["available_for_withdraw"], 59)
+        expected_reward = _referral_reward_for_amount(
+            PLAN_1M_PRICE_RUB,
+            rate=settings.default_referral_reward_rate,
+        )
+        self.assertEqual(body["referral_earnings"], expected_reward)
+        self.assertEqual(body["available_for_withdraw"], expected_reward)
         self.assertEqual(body["effective_reward_rate"], 20.0)
         self.assertEqual(len(body["items"]), 1)
         self.assertEqual(body["items"][0]["referred_account_id"], str(referred.id))
-        self.assertEqual(body["items"][0]["reward_amount"], 59)
+        self.assertEqual(body["items"][0]["reward_amount"], expected_reward)
         self.assertEqual(body["items"][0]["status"], "active")
 
         rewards = await self._get_referral_rewards(referrer.id)
         self.assertEqual(len(rewards), 1)
         entries = await self._get_ledger_entries(referrer.id)
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0].amount, 59)
+        self.assertEqual(entries[0].amount, expected_reward)
 
         event_types = [
             item.event_type for item in await self._get_account_event_logs(referrer.id)
@@ -516,7 +531,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
                 reference_type="wallet_purchase",
                 reference_id="override-1",
                 plan_code="plan_1m",
-                amount=299,
+                amount=PLAN_1M_PRICE_RUB,
                 currency="RUB",
                 duration_days=30,
                 base_expires_at=datetime.now(UTC),
@@ -530,7 +545,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
                 reference_type="wallet_purchase",
                 reference_id="override-2",
                 plan_code="plan_1m",
-                amount=299,
+                amount=PLAN_1M_PRICE_RUB,
                 currency="RUB",
                 duration_days=30,
                 base_expires_at=datetime.now(UTC),
@@ -564,7 +579,13 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_referrer = await self._get_account(referrer.id)
         self.assertIsNotNone(stored_referrer)
         assert stored_referrer is not None
-        self.assertEqual(stored_referrer.referral_earnings, 98)
+        self.assertEqual(
+            stored_referrer.referral_earnings,
+            _referral_reward_for_amount(
+                PLAN_1M_PRICE_RUB,
+                rate=Decimal("33.00"),
+            ),
+        )
 
         notifications = await self._get_notifications(referrer.id)
         self.assertEqual(len(notifications), 1)

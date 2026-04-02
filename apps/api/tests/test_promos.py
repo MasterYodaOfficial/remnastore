@@ -40,6 +40,11 @@ from app.domain.payments import (
 )
 from app.integrations.remnawave.client import RemnawaveUser
 from app.main import create_app
+from app.services.plans import get_subscription_plan
+
+PLAN_1M = get_subscription_plan("plan_1m")
+PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
+PLAN_1M_DURATION_DAYS = PLAN_1M.duration_days
 
 
 class DummyCache:
@@ -294,12 +299,12 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
                 "plan_code": "plan_1m",
                 "promo_code": "SPRING20",
                 "effect_type": "percent_discount",
-                "original_amount": 299,
-                "final_amount": 240,
-                "discount_amount": 59,
+                "original_amount": PLAN_1M_PRICE_RUB,
+                "final_amount": PLAN_1M_PRICE_RUB - ((PLAN_1M_PRICE_RUB * 20) // 100),
+                "discount_amount": (PLAN_1M_PRICE_RUB * 20) // 100,
                 "currency": "RUB",
-                "original_duration_days": 30,
-                "final_duration_days": 30,
+                "original_duration_days": PLAN_1M_DURATION_DAYS,
+                "final_duration_days": PLAN_1M_DURATION_DAYS,
             },
         )
 
@@ -371,7 +376,8 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
         assert stored_account is not None
-        self.assertEqual(stored_account.balance, 850)
+        discounted_amount = PLAN_1M_PRICE_RUB - ((PLAN_1M_PRICE_RUB * 50) // 100)
+        self.assertEqual(stored_account.balance, 1000 - discounted_amount)
         self.assertEqual(stored_account.subscription_status, "ACTIVE")
 
         ledger_entries = await self._get_ledger_entries(account.id)
@@ -379,19 +385,22 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             ledger_entries[0].entry_type, LedgerEntryType.SUBSCRIPTION_DEBIT
         )
-        self.assertEqual(ledger_entries[0].amount, -150)
+        self.assertEqual(ledger_entries[0].amount, -discounted_amount)
 
         grants = await self._get_subscription_grants(account.id)
         self.assertEqual(len(grants), 1)
-        self.assertEqual(grants[0].amount, 150)
-        self.assertEqual(grants[0].duration_days, 30)
+        self.assertEqual(grants[0].amount, discounted_amount)
+        self.assertEqual(grants[0].duration_days, PLAN_1M_DURATION_DAYS)
         self.assertIsNotNone(grants[0].applied_at)
 
         redemptions = await self._get_promo_redemptions(account.id)
         self.assertEqual(len(redemptions), 1)
         self.assertEqual(redemptions[0].status, PromoRedemptionStatus.APPLIED)
-        self.assertEqual(redemptions[0].discount_amount, 149)
-        self.assertEqual(redemptions[0].final_amount, 150)
+        self.assertEqual(
+            redemptions[0].discount_amount,
+            (PLAN_1M_PRICE_RUB * 50) // 100,
+        )
+        self.assertEqual(redemptions[0].final_amount, discounted_amount)
         self.assertEqual(redemptions[0].subscription_grant_id, grants[0].id)
 
     async def test_direct_plan_payment_with_extra_days_applies_extended_grant(
@@ -415,12 +424,12 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(create_response.status_code, 200)
-        self.assertEqual(create_response.json()["amount"], 299)
+        self.assertEqual(create_response.json()["amount"], PLAN_1M_PRICE_RUB)
 
         stored_payment = await self._get_payment("yoopay-plan-plus7")
         self.assertIsNotNone(stored_payment)
         assert stored_payment is not None
-        self.assertEqual(stored_payment.amount, 299)
+        self.assertEqual(stored_payment.amount, PLAN_1M_PRICE_RUB)
         self.assertEqual(stored_payment.request_metadata["rm_plan_duration_days"], "37")
         self.assertEqual(stored_payment.request_metadata["rm_promo_code"], "PLUS7")
 
@@ -436,7 +445,7 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
                 provider_event_id="payment.succeeded:yoopay-plan-plus7",
                 provider_payment_id="yoopay-plan-plus7",
                 status=PaymentStatus.SUCCEEDED,
-                amount=299,
+                amount=PLAN_1M_PRICE_RUB,
                 currency="RUB",
                 flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                 account_id=account.id,
