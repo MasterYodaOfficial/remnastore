@@ -1,13 +1,14 @@
 # API
 
-`apps/api` - backend на `FastAPI`, который отвечает за бизнес-логику проекта.
+`apps/api` — backend проекта на `FastAPI`.
 
-Основные зоны ответственности:
-- аккаунты и авторизация
-- связка Telegram и browser-аккаунтов
-- баланс и ledger
-- платежи и webhook-и
-- подписки и интеграция с Remnawave
-- рефералы, уведомления и выводы
+Отвечает за:
 
-Точка входа: `app/main.py`.
+- аккаунты и авторизацию
+- баланс, рефералов и выводы
+- платежи и webhook
+- подписки и интеграцию с `Remnawave`
+- bootstrap для `web` и `admin`
+
+Основной docker-сервис: `api`  
+Health endpoint: `GET /api/v1/health`

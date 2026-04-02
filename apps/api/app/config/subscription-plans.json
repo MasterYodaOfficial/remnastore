@@ -1,47 +1,62 @@
 [
   {
-    "code": "plan_1m",
-    "name": "1 месяц",
-    "price_rub": 299,
-    "price_stars": 1,
-    "duration_days": 30,
+    "code": "plan_1w",
+    "name": "1 неделя",
+    "price_rub": 99,
+    "price_stars": 49,
+    "duration_days": 7,
     "features": [
+      "Попробовать VPN",
       "Доступ ко всем серверам",
       "Мгновенная активация"
-    ],
-    "popular": true
+    ]
+  },
+  {
+    "code": "plan_1m",
+    "name": "1 месяц",
+    "price_rub": 199,
+    "price_stars": 99,
+    "duration_days": 30,
+    "features": [
+      "Полный доступ ко всем серверам",
+      "Высокая скорость",
+      "Без ограничений"
+    ]
   },
   {
     "code": "plan_3m",
     "name": "3 месяца",
-    "price_rub": 480,
-    "price_stars": 1,
+    "price_rub": 560,
+    "price_stars": 279,
     "duration_days": 90,
     "features": [
-      "Доступ ко всем серверам",
-      "Выгоднее чем помесячно"
-    ]
+      "Небольшая экономия",
+      "Стабильное соединение",
+      "Лучший выбор"
+    ],
+    "popular": true
   },
   {
     "code": "plan_6m",
     "name": "6 месяцев",
-    "price_rub": 1490,
-    "price_stars": 1,
+    "price_rub": 990,
+    "price_stars": 499,
     "duration_days": 180,
     "features": [
-      "Доступ ко всем серверам",
-      "Хорошая экономия"
+      "Хорошая экономия",
+      "Приоритетные сервера",
+      "Отличная цена"
     ]
   },
   {
     "code": "plan_12m",
     "name": "12 месяцев",
-    "price_rub": 2690,
-    "price_stars": 1,
+    "price_rub": 1990,
+    "price_stars": 999,
     "duration_days": 365,
     "features": [
-      "Доступ ко всем серверам",
-      "Максимальная выгода",
+      "Самый выгодный тариф",
+      "Максимальная экономия",
       "Год без продлений"
     ]
   }

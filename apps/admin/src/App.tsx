@@ -8,6 +8,7 @@ import {
   parseManualAudienceTargetsInput,
   parseOptionalIntegerInput,
 } from "./lib/admin-helpers";
+import { apiBaseUrl as API_BASE_URL } from "./runtime-config";
 
 type AdminProfile = {
   id: string;
@@ -700,8 +701,6 @@ type GlobalEventSearchFilters = {
 };
 
 type AdminView = "dashboard" | "accounts" | "events" | "broadcasts" | "withdrawals" | "promos";
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") || "http://localhost:8000";
 const TOKEN_KEY = "remnastore_admin_token";
 const ADMIN_LEDGER_HISTORY_PAGE_SIZE = 20;
 const ADMIN_ACCOUNT_EVENT_HISTORY_PAGE_SIZE = 20;

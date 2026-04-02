@@ -1,6 +1,5 @@
 import { t } from '../../lib/i18n';
-
-const TELEGRAM_BOT_URL = (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim().replace(/\/+$/, '');
+import { telegramBotUrl as TELEGRAM_BOT_URL } from '../../../utils/runtime-config'
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = 'remnastore.pending_referral_code';
 

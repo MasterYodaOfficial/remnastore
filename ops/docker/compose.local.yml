@@ -1,0 +1,47 @@
+services:
+  api:
+    image: remnastore-api:local
+    pull_policy: never
+    build: &api-build
+      context: ../../
+      dockerfile: ops/docker/api.Dockerfile
+
+  bot:
+    image: remnastore-bot:local
+    pull_policy: never
+    build:
+      context: ../../
+      dockerfile: ops/docker/bot.Dockerfile
+
+  worker:
+    image: remnastore-api:local
+    pull_policy: never
+    build: *api-build
+
+  notifications-worker:
+    image: remnastore-api:local
+    pull_policy: never
+    build: *api-build
+
+  broadcast-worker:
+    image: remnastore-api:local
+    pull_policy: never
+    build: *api-build
+
+  web:
+    image: remnastore-web:local
+    pull_policy: never
+    build:
+      context: ../../
+      dockerfile: ops/docker/web.Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+
+  admin:
+    image: remnastore-admin:local
+    pull_policy: never
+    build:
+      context: ../../
+      dockerfile: ops/docker/admin.Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}

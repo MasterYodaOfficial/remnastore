@@ -1,15 +1,20 @@
 # Telegram-бот
 
-`apps/bot` - Telegram-бот на `aiogram`.
+`apps/bot` — бот на `aiogram`.
 
-Он отвечает за:
-- вход пользователя в продукт через Telegram
+Отвечает за:
+
+- вход пользователя через Telegram
 - запуск Mini App
-- подтверждение сценариев связки аккаунтов
-- уведомления и вспомогательные user flows
+- webhook Telegram
+- пользовательские уведомления
+- вспомогательные сценарии связки Telegram и браузерного аккаунта
 
-Основная логика находится в каталоге `bot/`.
+Основной docker-сервис: `bot`  
+Порт внутри стека: `8080`
 
 Полезные документы:
-- [`docs/account-linking.md`](../../docs/account-linking.md) - сценарии связки Telegram и browser-аккаунтов
-- [`docs/architecture.md`](../../docs/architecture.md) - общая архитектура проекта
+
+- [`docs/architecture.md`](../../docs/architecture.md)
+- [`docs/local-run.md`](../../docs/local-run.md)
+- [`docs/deploy-vds.md`](../../docs/deploy-vds.md)

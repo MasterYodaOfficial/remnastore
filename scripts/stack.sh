@@ -38,19 +38,21 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/stack.sh                         Start all services in background
-  scripts/stack.sh up [--build] [service] Start all or selected services
+  scripts/stack.sh up [service]           Start all or selected services
+  scripts/stack.sh pull [service]         Pull latest images for all or selected services
   scripts/stack.sh logs [args] [service]  Follow logs for all or selected services
   scripts/stack.sh ps                     Show running services
   scripts/stack.sh restart [service]      Restart all or selected services
   scripts/stack.sh stop [service]         Stop all or selected services
   scripts/stack.sh down [args]            Stop and remove containers
-  scripts/stack.sh rebuild [service]      Rebuild and restart all or selected services
+  scripts/stack.sh rebuild [service]      Pull latest images and restart all or selected services
   scripts/stack.sh config                 Render compose config
   scripts/stack.sh help                   Show this help
 
 Examples:
   scripts/stack.sh
-  scripts/stack.sh up --build api
+  scripts/stack.sh pull
+  scripts/stack.sh up api
   scripts/stack.sh logs api
   scripts/stack.sh logs --tail=50 web
   scripts/stack.sh restart bot
@@ -72,6 +74,9 @@ case "$command" in
     ;;
   up)
     compose up -d "$@"
+    ;;
+  pull)
+    compose pull "$@"
     ;;
   logs)
     compose logs --tail=200 -f "$@"
@@ -97,7 +102,8 @@ case "$command" in
     compose down "$@"
     ;;
   rebuild)
-    compose up -d --build "$@"
+    compose pull "$@"
+    compose up -d "$@"
     ;;
   config)
     compose config "$@"

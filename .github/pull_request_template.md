@@ -1,39 +1,39 @@
-## Summary
+## Что изменено
 
-- What changed?
-- Why was it needed?
+- Что именно изменилось?
+- Зачем это было нужно?
 
-## Checks
+## Проверки
 
 - [ ] `./scripts/test.sh all`
 - [ ] `uv run --group dev ruff check apps/api apps/bot common scripts`
 - [ ] `uv run --group dev ruff format --check apps/api apps/bot common scripts`
-- [ ] `npm run lint` in `apps/web`
-- [ ] `npm run test` in `apps/web`
-- [ ] `npm run test:e2e` in `apps/web` if web auth/browser flow changed
-- [ ] `npm run typecheck` in `apps/web`
-- [ ] `npm run build` in `apps/web`
-- [ ] `npm run lint` in `apps/admin`
-- [ ] `npm run test` in `apps/admin`
-- [ ] `npm run test:e2e` in `apps/admin` if admin UI or auth/browser flow changed
-- [ ] `npm run typecheck` in `apps/admin`
-- [ ] `npm run build` in `apps/admin`
+- [ ] `npm run lint` в `apps/web`
+- [ ] `npm run test` в `apps/web`
+- [ ] `npm run test:e2e` в `apps/web`, если менялся auth/UI/browser flow
+- [ ] `npm run typecheck` в `apps/web`
+- [ ] `npm run build` в `apps/web`
+- [ ] `npm run lint` в `apps/admin`
+- [ ] `npm run test` в `apps/admin`
+- [ ] `npm run test:e2e` в `apps/admin`, если менялся auth/UI/browser flow
+- [ ] `npm run typecheck` в `apps/admin`
+- [ ] `npm run build` в `apps/admin`
 
-## Impact
+## Влияние
 
-- [ ] Database migrations
-- [ ] New or changed environment variables
-- [ ] API or frontend contract changes
-- [ ] Docs updated if behavior changed
+- [ ] Есть миграции БД
+- [ ] Есть новые или измененные env-переменные
+- [ ] Изменился API или frontend-контракт
+- [ ] Документация обновлена
 
-## UI Review
+## Интерфейс
 
-- [ ] No UI changes
-- [ ] Screenshots attached
-- [ ] Manual smoke completed for affected flow
+- [ ] Изменений в UI нет
+- [ ] Скриншоты приложены
+- [ ] Ручной smoke пройден
 
-## Release
+## Релиз
 
-- [ ] Not a `dev -> main` release PR
-- [ ] For `dev -> main`: draft release note prepared
-- [ ] For `dev -> main`: planned tag `v0.x.y` recorded
+- [ ] Это не релизный PR `dev -> main`
+- [ ] Для `dev -> main` подготовлена заметка к релизу
+- [ ] Для `dev -> main` зафиксирован планируемый тег `v0.x.y`

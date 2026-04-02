@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase/client';
 import {
+  apiBaseUrl as BACKEND_API,
+  supportTelegramUrl as SUPPORT_TELEGRAM_URL,
+  telegramBotUrl as TELEGRAM_BOT_URL,
+} from '../../utils/runtime-config'
+import {
   loadTelegramScript,
   getTelegramWebApp,
   openTelegramInvoice,
@@ -78,13 +83,6 @@ import {
   isReferralSelfError,
   parseApiErrorPayload,
 } from './lib/api-errors';
-
-const BACKEND_API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(
-  /\/+$/,
-  ""
-);
-const TELEGRAM_BOT_URL = (import.meta.env.VITE_TELEGRAM_BOT_URL || '').trim().replace(/\/+$/, '');
-const SUPPORT_TELEGRAM_URL = (import.meta.env.VITE_SUPPORT_TELEGRAM_URL || '').trim();
 const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
 const TELEGRAM_AUTH_STORAGE_KEY = 'remnastore.telegram_auth';
 const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';

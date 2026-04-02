@@ -37,8 +37,8 @@ Frontend не является источником истины для:
 - код frontend: `apps/web/src/app`
 - backend API и схемы: `apps/api/app`
 - общая архитектура проекта: `docs/architecture.md`
-- логика связки аккаунтов: `docs/account-linking.md`
 - production env-контракт: `docs/production-env.md`
+- локальный запуск и CloudPub: `docs/local-run.md`
 
 Если этот документ расходится с кодом, нужно исправить либо код, либо этот документ в том же изменении.
 
@@ -84,7 +84,8 @@ Frontend не является источником истины для:
 - `VITE_SUPABASE_URL` обязателен
 - `VITE_SUPABASE_ANON_KEY` обязателен
 - frontend больше не должен использовать зашитый fallback `projectId` или встроенный `publicAnonKey`
-- runtime-клиент Supabase должен собираться только из явных `VITE_*` переменных
+- runtime-клиент Supabase должен собираться из публичного runtime-конфига `window.__REMNASTORE_RUNTIME_CONFIG__`
+- в dev/test допустим fallback на `import.meta.env`, но production Docker-образ не должен зависеть от build-time `VITE_*`
 
 ## Актуальный backend API, который использует frontend
 
@@ -647,6 +648,8 @@ Frontend использует такие переменные:
 - `VITE_SUPABASE_ANON_KEY` — публичный anon key Supabase
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота для browser login entrypoint
 - `VITE_SUPPORT_TELEGRAM_URL` — ссылка на support chat / support contact action
+
+В production Docker runtime эти значения должны приходить из `runtime-config.js`, который генерируется контейнером при старте из хостового `.env`.
 
 ## OAuth и Telegram setup
 

@@ -68,9 +68,9 @@ export function PaymentMethodSheet({
         : 'border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] text-[var(--tg-theme-hint-color,#999999)]';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
-      <div className="w-full max-w-lg rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-xl">
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--tg-theme-hint-color,#e5e5e5)] border-opacity-30 p-5">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4">
+      <div className="flex max-h-[min(calc(100dvh-1.5rem),calc(100svh-1.5rem))] w-full max-w-lg flex-col overflow-hidden rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-xl sm:max-h-[min(calc(100dvh-2rem),calc(100svh-2rem))]">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[var(--tg-theme-hint-color,#e5e5e5)] border-opacity-30 bg-[var(--tg-theme-bg-color,#ffffff)] p-5">
           <div className="space-y-1">
             <h2 className="text-xl font-bold text-[var(--tg-theme-text-color,#000000)]">{title}</h2>
             {subtitle ? (
@@ -80,13 +80,14 @@ export function PaymentMethodSheet({
           <button
             onClick={onClose}
             disabled={isSubmitting}
-            className="rounded-lg p-2 transition-colors hover:bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)]"
+            aria-label={t('web.paymentMethods.closeAriaLabel')}
+            className="shrink-0 rounded-lg p-2 transition-colors hover:bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)]"
           >
             <X className="h-5 w-5 text-[var(--tg-theme-hint-color,#999999)]" />
           </button>
         </div>
 
-        <div className="space-y-3 p-5">
+        <div className="min-h-0 space-y-3 overflow-y-auto px-5 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           {onPromoCodeChange && onApplyPromo ? (
             <div className="rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] p-4">
               <div className="flex items-start gap-3">

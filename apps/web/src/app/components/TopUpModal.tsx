@@ -37,9 +37,9 @@ export function TopUpModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-4 sm:items-center">
-      <div className="w-full max-w-md overflow-hidden rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-[0_24px_64px_rgba(15,23,42,0.24)]">
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--tg-theme-hint-color,#e5e5e5)] border-opacity-30 px-5 py-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-3 sm:items-center sm:p-4">
+      <div className="flex max-h-[min(calc(100dvh-1.5rem),calc(100svh-1.5rem))] w-full max-w-md flex-col overflow-hidden rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-[0_24px_64px_rgba(15,23,42,0.24)] sm:max-h-[min(calc(100dvh-2rem),calc(100svh-2rem))]">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[var(--tg-theme-hint-color,#e5e5e5)] border-opacity-30 bg-[var(--tg-theme-bg-color,#ffffff)] px-5 py-4">
           <div className="space-y-1">
             <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)]">
               <Wallet className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />
@@ -54,13 +54,14 @@ export function TopUpModal({
           <button
             onClick={onClose}
             disabled={isSubmitting}
-            className="rounded-lg p-2 transition-colors hover:bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)]"
+            aria-label={t('web.topUpModal.closeAriaLabel')}
+            className="shrink-0 rounded-lg p-2 transition-colors hover:bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)]"
           >
             <X className="w-5 h-5 text-[var(--tg-theme-hint-color,#999999)]" />
           </button>
         </div>
 
-        <div className="space-y-5 px-5 py-5">
+        <div className="min-h-0 space-y-5 overflow-y-auto px-5 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           <div>
             <p className="mb-3 text-sm text-[var(--tg-theme-hint-color,#999999)]">
               {t('web.topUpModal.chooseAmount')}
