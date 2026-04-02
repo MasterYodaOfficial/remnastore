@@ -557,7 +557,7 @@ async def reconcile_pending_wallet_plan_purchases(
     gateway_factory: GatewayFactory | None = None,
 ) -> WalletGrantReconcileResult:
     statement = (
-        select(SubscriptionGrant)
+        select(SubscriptionGrant.account_id, SubscriptionGrant.reference_id)
         .where(
             SubscriptionGrant.purchase_source == PurchaseSource.WALLET.value,
             SubscriptionGrant.reference_type == WALLET_PURCHASE_REFERENCE_TYPE,
@@ -567,11 +567,10 @@ async def reconcile_pending_wallet_plan_purchases(
         .limit(max(1, limit))
     )
     result = await session.execute(statement)
-    grants = list(result.scalars().all())
+    grants = list(result.all())
 
     summary = WalletGrantReconcileResult()
-    for grant in grants:
-        reference_id = grant.reference_id
+    for account_id, reference_id in grants:
         if not reference_id:
             continue
 
@@ -579,7 +578,7 @@ async def reconcile_pending_wallet_plan_purchases(
         try:
             await finalize_wallet_plan_purchase(
                 session,
-                account_id=grant.account_id,
+                account_id=account_id,
                 idempotency_key=reference_id,
                 gateway_factory=gateway_factory,
             )

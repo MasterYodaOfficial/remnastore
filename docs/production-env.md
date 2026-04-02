@@ -173,6 +173,14 @@
   - минимальная сумма пользовательской заявки на вывод реферальных средств
   - если не задана, backend использует дефолт из `apps/api/app/core/config.py`
 
+- `DEFAULT_REFERRAL_REWARD_RATE`
+  - базовый процент первой реферальной выплаты
+  - используется, если у аккаунта не задан персональный `referral_reward_rate`
+
+- `SUBSCRIPTION_ACTIVATION_NO_CONNECTION_GRACE_SECONDS`
+  - grace period после выдачи доступа, в течение которого отсутствие первого подключения еще не считается проблемой
+  - влияет на UX и диагностику активации подписки сразу после покупки
+
 - `PAYMENT_PENDING_TTL_SECONDS_YOOKASSA`
   - локальный fallback TTL для pending YooKassa платежей, если провайдер не вернул `expires_at`
   - нужен для cleanup stale pending payments
@@ -186,6 +194,10 @@
 
 - `PAYMENT_RECONCILE_YOOKASSA_INTERVAL_SECONDS`
   - период запуска worker job сверки pending YooKassa платежей с провайдером
+
+- `PAYMENT_RECONCILE_WALLET_GRANTS_INTERVAL_SECONDS`
+  - период сверки отложенных wallet subscription grants
+  - нужен, если выдача подписки должна быть догружена после успешного внутреннего списания
 
 - `PAYMENT_RECONCILE_YOOKASSA_MIN_AGE_SECONDS`
   - минимальный возраст pending YooKassa платежа, после которого worker начинает его сверять с провайдером
@@ -217,6 +229,30 @@
 
 - `NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS`
   - верхняя граница backoff между retry попытками Telegram delivery
+
+- `BROADCAST_TIMEZONE`
+  - timezone для планировщика рассылок
+
+- `BROADCAST_SCHEDULER_INTERVAL_SECONDS`
+  - период опроса запланированных рассылок
+
+- `BROADCAST_DELIVERY_INTERVAL_SECONDS`
+  - период одного прохода worker'а доставки рассылок
+
+- `BROADCAST_JOBS_BATCH_SIZE`
+  - размер батча для отправки рассылок
+
+- `BROADCAST_JOB_LOCK_TTL_SECONDS`
+  - TTL Redis lock для задач рассылок
+
+- `BROADCAST_TELEGRAM_MAX_ATTEMPTS`
+  - максимальное число retry попыток Telegram-доставки рассылки
+
+- `BROADCAST_TELEGRAM_RETRY_BASE_SECONDS`
+  - базовый backoff для retry рассылок в Telegram
+
+- `BROADCAST_TELEGRAM_RETRY_MAX_SECONDS`
+  - верхняя граница backoff для retry рассылок в Telegram
 
 - backend-каталог тарифов теперь читается из файла
   - [subscription-plans.json](/home/yoda/PycharmProjects/remnastore/apps/api/app/config/subscription-plans.json)
@@ -285,9 +321,20 @@
 - `NOTIFICATION_TELEGRAM_RETRY_MAX_SECONDS`
 - `TELEGRAM_INIT_DATA_TTL_SECONDS`
 - `TRIAL_DURATION_DAYS`
+- `DEFAULT_REFERRAL_REWARD_RATE`
 - `MIN_WITHDRAWAL_AMOUNT_RUB`
+- `SUBSCRIPTION_ACTIVATION_NO_CONNECTION_GRACE_SECONDS`
 - `YOOKASSA_API_URL`
 - `YOOKASSA_VERIFY_TLS`
+- `PAYMENT_RECONCILE_WALLET_GRANTS_INTERVAL_SECONDS`
+- `BROADCAST_TIMEZONE`
+- `BROADCAST_SCHEDULER_INTERVAL_SECONDS`
+- `BROADCAST_DELIVERY_INTERVAL_SECONDS`
+- `BROADCAST_JOBS_BATCH_SIZE`
+- `BROADCAST_JOB_LOCK_TTL_SECONDS`
+- `BROADCAST_TELEGRAM_MAX_ATTEMPTS`
+- `BROADCAST_TELEGRAM_RETRY_BASE_SECONDS`
+- `BROADCAST_TELEGRAM_RETRY_MAX_SECONDS`
 
 Их можно не менять на первом production deploy, если дефолты подходят.
 

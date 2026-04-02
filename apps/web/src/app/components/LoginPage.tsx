@@ -17,6 +17,16 @@ interface LoginPageProps {
   onAuthViewReset?: () => Promise<void> | void;
 }
 
+function buildAuthRedirectUrl(extraParams: Record<string, string> = {}): string {
+  const url = new URL(window.location.origin + window.location.pathname);
+
+  for (const [key, value] of Object.entries(extraParams)) {
+    url.searchParams.set(key, value);
+  }
+
+  return url.toString();
+}
+
 function TelegramIcon() {
   return (
     <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
@@ -72,11 +82,8 @@ export function LoginPage({
   }, [view]);
 
   const requestPasswordReset = async (normalizedEmail: string) => {
-    const resetUrl = new URL(window.location.origin);
-    resetUrl.searchParams.set('auth_action', 'reset-password');
-
     const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-      redirectTo: resetUrl.toString(),
+      redirectTo: buildAuthRedirectUrl({ auth_action: 'reset-password' }),
     });
 
     if (error) {
@@ -97,11 +104,10 @@ export function LoginPage({
   }) => {
     try {
       setActiveProvider(state);
-      const redirectUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
-          redirectTo: redirectUrl,
+          redirectTo: buildAuthRedirectUrl(),
         },
       });
 
@@ -196,7 +202,7 @@ export function LoginPage({
         email: normalizedEmail,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}${window.location.pathname}${window.location.search}`,
+          emailRedirectTo: buildAuthRedirectUrl(),
         },
       });
 

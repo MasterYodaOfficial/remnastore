@@ -49,3 +49,4 @@ playwright-report/
 /apps/web/.env
 /.idea/.gitignore
 /.idea/modules.xml
+/tasks.txt

@@ -153,6 +153,30 @@ class MissingSubscriptionUrlGateway(FakeRemnawaveGateway):
         return user
 
 
+@dataclass
+class SelectivelyUnavailableRemnawaveGateway(FakeRemnawaveGateway):
+    failing_user_ids: set[uuid.UUID]
+
+    async def provision_user(
+        self,
+        *,
+        user_uuid: uuid.UUID,
+        expire_at: datetime,
+        email: str | None,
+        telegram_id: int | None,
+        is_trial: bool,
+    ) -> RemnawaveUser:
+        if user_uuid in self.failing_user_ids:
+            raise RemnawaveRequestError("ConnectError")
+        return await super().provision_user(
+            user_uuid=user_uuid,
+            expire_at=expire_at,
+            email=email,
+            telegram_id=telegram_id,
+            is_trial=is_trial,
+        )
+
+
 class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -773,6 +797,62 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         grants = await self._get_subscription_grants(account.id)
         self.assertEqual(len(grants), 1)
         self.assertIsNotNone(grants[0].applied_at)
+
+    async def test_reconcile_pending_wallet_plan_purchases_continues_after_rollback(
+        self,
+    ) -> None:
+        failing_account = await self._create_account(
+            email="wallet-reconcile-fail@example.com", balance=1000
+        )
+        successful_account = await self._create_account(
+            email="wallet-reconcile-success@example.com", balance=1000
+        )
+        subscriptions_service.get_remnawave_gateway = lambda: (
+            UnavailableRemnawaveGateway()
+        )
+
+        self._current_account_id = failing_account.id
+        first_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-reconcile-failing"},
+        )
+        self.assertEqual(first_response.status_code, 502)
+
+        self._current_account_id = successful_account.id
+        second_response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "wallet-reconcile-successful"},
+        )
+        self.assertEqual(second_response.status_code, 502)
+
+        reconcile_gateway = SelectivelyUnavailableRemnawaveGateway(
+            users={},
+            failing_user_ids={failing_account.id},
+        )
+        async with self._session_factory() as session:
+            result = await reconcile_pending_wallet_plan_purchases(
+                session,
+                limit=10,
+                gateway_factory=lambda: reconcile_gateway,
+            )
+
+        self.assertEqual(result.processed, 2)
+        self.assertEqual(result.applied, 1)
+        self.assertEqual(result.still_pending, 1)
+
+        failing_grants = await self._get_subscription_grants(failing_account.id)
+        self.assertEqual(len(failing_grants), 1)
+        self.assertIsNone(failing_grants[0].applied_at)
+
+        successful_grants = await self._get_subscription_grants(successful_account.id)
+        self.assertEqual(len(successful_grants), 1)
+        self.assertIsNotNone(successful_grants[0].applied_at)
+
+        stored_successful_account = await self._get_account(successful_account.id)
+        self.assertIsNotNone(stored_successful_account)
+        assert stored_successful_account is not None
+        self.assertEqual(stored_successful_account.subscription_status, "ACTIVE")
+        self.assertTrue(stored_successful_account.subscription_url)
 
     async def test_wallet_plan_purchase_can_resume_after_empty_subscription_url(
         self,

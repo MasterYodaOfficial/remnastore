@@ -57,8 +57,25 @@ class SupabaseAuthClient:
             return user
 
         if response.status_code in {401, 403}:
+            if _is_invalid_api_key_response(response):
+                raise SupabaseAuthConfigurationError(
+                    "supabase auth api key is invalid or does not match SUPABASE_URL"
+                )
             await cache.delete(cache.supabase_user_key(access_token))
             raise SupabaseAuthInvalidTokenError("invalid access token")
 
         response.raise_for_status()
         raise SupabaseAuthError("unexpected supabase auth response")
+
+
+def _is_invalid_api_key_response(response: httpx.Response) -> bool:
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+
+    message = payload.get("message")
+    hint = payload.get("hint")
+    return (isinstance(message, str) and "api key" in message.lower()) or (
+        isinstance(hint, str) and "api key" in hint.lower()
+    )

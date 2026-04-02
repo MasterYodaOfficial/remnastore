@@ -31,9 +31,18 @@ class Settings(BaseSettings):
     remnawave_user_label: str = ""
     remnawave_default_internal_squad_uuid: str = ""
     remnawave_default_internal_squad_name: str = ""
-    trial_duration_days: int = 3
-    default_referral_reward_rate: float = 20.0
-    min_withdrawal_amount_rub: int = 300
+    trial_duration_days: int = Field(
+        default=3,
+        validation_alias="TRIAL_DURATION_DAYS",
+    )
+    default_referral_reward_rate: float = Field(
+        default=20.0,
+        validation_alias="DEFAULT_REFERRAL_REWARD_RATE",
+    )
+    min_withdrawal_amount_rub: int = Field(
+        default=300,
+        validation_alias="MIN_WITHDRAWAL_AMOUNT_RUB",
+    )
     yookassa_shop_id: str = Field(default="", validation_alias="YOOKASSA_SHOP_ID")
     yookassa_secret_key: str = Field(default="", validation_alias="YOOKASSA_SECRET_KEY")
     yookassa_api_url: str = Field(

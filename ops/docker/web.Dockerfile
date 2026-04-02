@@ -19,6 +19,7 @@ WORKDIR /app/apps/web
 RUN npm ci --no-progress --registry=${NPM_REGISTRY}
 
 COPY apps/web ./
+COPY apps/bot/bot/assets /app/apps/bot/bot/assets
 COPY packages/locales /app/packages/locales
 
 RUN npm run build

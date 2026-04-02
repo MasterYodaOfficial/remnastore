@@ -1,6 +1,6 @@
 import React from 'react';
 
-import appLogoUrl from '../../../../bot/bot/assets/menu/logo.png';
+import appLogoUrl from '../../../../bot/bot/assets/menu/logo.jpg';
 
 interface AppLogoProps {
   className?: string;
