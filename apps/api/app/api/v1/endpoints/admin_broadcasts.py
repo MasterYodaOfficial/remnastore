@@ -1,0 +1,848 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Query, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.errors import api_error, api_error_from_exception
+from app.api.dependencies import get_current_admin, require_superuser_admin
+from app.db.models import (
+    Admin,
+    Broadcast,
+    BroadcastChannel,
+    BroadcastDeliveryStatus,
+    BroadcastRunStatus,
+    BroadcastRunType,
+    BroadcastStatus,
+)
+from app.db.session import get_session
+from app.schemas.admin import (
+    AdminBroadcastAudiencePreviewRequest,
+    AdminBroadcastAudiencePreviewResponse,
+    AdminBroadcastAudiencePresetListResponse,
+    AdminBroadcastAudiencePresetResponse,
+    AdminBroadcastAudiencePresetUpsertRequest,
+    AdminBroadcastEstimateRequest,
+    AdminBroadcastEstimateResponse,
+    AdminBroadcastListResponse,
+    AdminBroadcastRunDeliveryResponse,
+    AdminBroadcastRunDetailResponse,
+    AdminBroadcastRunListResponse,
+    AdminBroadcastRunResponse,
+    AdminBroadcastResponse,
+    AdminBroadcastRuntimeActionRequest,
+    AdminBroadcastScheduleRequest,
+    AdminBroadcastTestSendRequest,
+    AdminBroadcastTestSendResponse,
+    AdminBroadcastUpsertRequest,
+)
+from app.services.i18n import translate
+from app.services.broadcasts import (
+    MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT,
+    BroadcastAudiencePresetNotFoundError,
+    BroadcastConflictError,
+    BroadcastNotFoundError,
+    BroadcastValidationError,
+    cancel_broadcast,
+    create_broadcast_audience_preset,
+    delete_broadcast_draft,
+    delete_broadcast_audience_preset,
+    estimate_broadcast_audience,
+    get_broadcast_run,
+    get_latest_broadcast_run,
+    create_broadcast_draft,
+    get_broadcast,
+    launch_broadcast_now,
+    list_broadcast_audience_presets,
+    list_broadcasts,
+    list_broadcast_run_deliveries,
+    list_broadcast_runs,
+    pause_broadcast,
+    preview_broadcast_audience,
+    resume_broadcast,
+    schedule_broadcast_launch,
+    send_broadcast_test,
+    update_broadcast_audience_preset,
+    update_broadcast_draft,
+)
+
+
+router = APIRouter()
+
+_ADMIN_BROADCAST_ERROR_TRANSLATIONS: dict[str, str] = {
+    "admin_broadcast_conflict": "api.admin.errors.broadcast_conflict",
+    "admin_broadcast_validation_failed": "api.admin.errors.broadcast_validation_failed",
+    "broadcast_edit_requires_draft": "api.admin.errors.broadcast_edit_requires_draft",
+    "broadcast_delete_requires_draft": "api.admin.errors.broadcast_delete_requires_draft",
+    "broadcast_launch_requires_draft": "api.admin.errors.broadcast_launch_requires_draft",
+    "broadcast_schedule_requires_draft": "api.admin.errors.broadcast_schedule_requires_draft",
+    "broadcast_schedule_in_past": "api.admin.errors.broadcast_schedule_in_past",
+    "broadcast_pause_invalid_state": "api.admin.errors.broadcast_pause_invalid_state",
+    "broadcast_resume_invalid_state": "api.admin.errors.broadcast_resume_invalid_state",
+    "broadcast_resume_missing_run": "api.admin.errors.broadcast_resume_missing_run",
+    "broadcast_cancel_invalid_state": "api.admin.errors.broadcast_cancel_invalid_state",
+    "broadcast_test_send_idempotency_invalid": "api.admin.errors.broadcast_test_send_idempotency_invalid",
+}
+
+
+def _admin_broadcast_not_found() -> None:
+    raise api_error(
+        status.HTTP_404_NOT_FOUND,
+        translate("api.admin.errors.broadcast_not_found"),
+        error_code="admin_broadcast_not_found",
+    )
+
+
+def _admin_broadcast_run_not_found() -> None:
+    raise api_error(
+        status.HTTP_404_NOT_FOUND,
+        translate("api.admin.errors.broadcast_run_not_found"),
+        error_code="admin_broadcast_run_not_found",
+    )
+
+
+def _admin_broadcast_audience_preset_not_found() -> None:
+    raise api_error(
+        status.HTTP_404_NOT_FOUND,
+        translate("api.admin.errors.broadcast_audience_preset_not_found"),
+        error_code="admin_broadcast_audience_preset_not_found",
+    )
+
+
+def _admin_broadcast_service_error(
+    status_code: int,
+    exc: Exception,
+):
+    error_code = getattr(exc, "code", None)
+    detail_key = (
+        _ADMIN_BROADCAST_ERROR_TRANSLATIONS.get(error_code)
+        if isinstance(error_code, str)
+        else None
+    )
+    if detail_key is not None:
+        exc.args = (translate(detail_key),)
+    return api_error_from_exception(
+        status_code,
+        exc,
+        error_code=error_code if isinstance(error_code, str) else None,
+    )
+
+
+def _build_run_response(item) -> AdminBroadcastRunResponse:
+    run = item.run
+    counters = item.counters
+    return AdminBroadcastRunResponse(
+        id=run.id,
+        broadcast_id=run.broadcast_id,
+        run_type=run.run_type,
+        status=run.status,
+        triggered_by_admin_id=run.triggered_by_admin_id,
+        snapshot_total_accounts=run.snapshot_total_accounts,
+        snapshot_in_app_targets=run.snapshot_in_app_targets,
+        snapshot_telegram_targets=run.snapshot_telegram_targets,
+        total_deliveries=counters.total_deliveries,
+        pending_deliveries=counters.pending_deliveries,
+        delivered_deliveries=counters.delivered_deliveries,
+        failed_deliveries=counters.failed_deliveries,
+        skipped_deliveries=counters.skipped_deliveries,
+        in_app_delivered=counters.in_app_delivered,
+        telegram_delivered=counters.telegram_delivered,
+        in_app_pending=counters.in_app_pending,
+        telegram_pending=counters.telegram_pending,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        cancelled_at=run.cancelled_at,
+        last_error=run.last_error,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )
+
+
+async def _build_broadcast_response(
+    session: AsyncSession,
+    broadcast: Broadcast,
+) -> AdminBroadcastResponse:
+    latest_run = await get_latest_broadcast_run(session, broadcast_id=broadcast.id)
+    payload = AdminBroadcastResponse.model_validate(
+        broadcast, from_attributes=True
+    ).model_dump()
+    payload["latest_run"] = (
+        _build_run_response(latest_run) if latest_run is not None else None
+    )
+    return AdminBroadcastResponse(**payload)
+
+
+def _build_broadcast_audience_preset_response(
+    item,
+) -> AdminBroadcastAudiencePresetResponse:
+    return AdminBroadcastAudiencePresetResponse.model_validate(
+        item, from_attributes=True
+    )
+
+
+@router.post("/estimate", response_model=AdminBroadcastEstimateResponse)
+async def estimate_admin_broadcast(
+    payload: AdminBroadcastEstimateRequest,
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastEstimateResponse:
+    try:
+        estimate = await estimate_broadcast_audience(
+            session,
+            audience=payload.audience.model_dump(mode="python"),
+            channels=payload.channels,
+        )
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    return AdminBroadcastEstimateResponse(
+        channels=payload.channels,
+        audience=payload.audience.model_dump(),
+        estimated_total_accounts=estimate.total_accounts,
+        estimated_in_app_recipients=estimate.in_app_recipients,
+        estimated_telegram_recipients=estimate.telegram_recipients,
+    )
+
+
+@router.post("/preview", response_model=AdminBroadcastAudiencePreviewResponse)
+async def preview_admin_broadcast_audience(
+    payload: AdminBroadcastAudiencePreviewRequest,
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastAudiencePreviewResponse:
+    try:
+        preview = await preview_broadcast_audience(
+            session,
+            audience=payload.audience.model_dump(mode="python"),
+            channels=payload.channels,
+            limit=payload.limit,
+        )
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    return AdminBroadcastAudiencePreviewResponse(
+        channels=payload.channels,
+        audience=payload.audience.model_dump(),
+        total_accounts=preview.total_accounts,
+        preview_count=len(preview.items),
+        limit=preview.limit,
+        has_more=preview.has_more,
+        items=[
+            {
+                "account_id": item.account.id,
+                "email": item.account.email,
+                "display_name": item.account.display_name,
+                "username": item.account.username,
+                "telegram_id": item.account.telegram_id,
+                "account_status": item.account.status,
+                "last_seen_at": item.account.last_seen_at,
+                "subscription_expires_at": item.account.subscription_expires_at,
+                "trial_ends_at": item.account.trial_ends_at,
+                "delivery_channels": item.delivery_channels,
+                "delivery_notes": item.delivery_notes,
+                "match_reasons": item.match_reasons,
+            }
+            for item in preview.items
+        ],
+        manual_list_diagnostics=(
+            {
+                "requested_account_ids": preview.manual_list_diagnostics.requested_account_ids,
+                "requested_emails": preview.manual_list_diagnostics.requested_emails,
+                "requested_telegram_ids": preview.manual_list_diagnostics.requested_telegram_ids,
+                "matched_accounts": preview.manual_list_diagnostics.matched_accounts,
+                "final_accounts": preview.manual_list_diagnostics.final_accounts,
+                "unresolved_account_ids_count": len(
+                    preview.manual_list_diagnostics.unresolved_account_ids
+                ),
+                "unresolved_account_ids_sample": preview.manual_list_diagnostics.unresolved_account_ids[
+                    :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
+                ],
+                "unresolved_emails_count": len(
+                    preview.manual_list_diagnostics.unresolved_emails
+                ),
+                "unresolved_emails_sample": preview.manual_list_diagnostics.unresolved_emails[
+                    :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
+                ],
+                "unresolved_telegram_ids_count": len(
+                    preview.manual_list_diagnostics.unresolved_telegram_ids
+                ),
+                "unresolved_telegram_ids_sample": preview.manual_list_diagnostics.unresolved_telegram_ids[
+                    :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
+                ],
+                "excluded_accounts_count": len(
+                    preview.manual_list_diagnostics.excluded_accounts
+                ),
+                "excluded_blocked_count": sum(
+                    1
+                    for item in preview.manual_list_diagnostics.excluded_accounts
+                    if "blocked" in item.reasons
+                ),
+                "excluded_cooldown_count": sum(
+                    1
+                    for item in preview.manual_list_diagnostics.excluded_accounts
+                    if "cooldown" in item.reasons
+                ),
+                "excluded_accounts_sample": [
+                    {
+                        "account_id": item.account.id,
+                        "email": item.account.email,
+                        "display_name": item.account.display_name,
+                        "username": item.account.username,
+                        "telegram_id": item.account.telegram_id,
+                        "account_status": item.account.status,
+                        "matched_by": item.matched_by,
+                        "reasons": item.reasons,
+                    }
+                    for item in preview.manual_list_diagnostics.excluded_accounts[
+                        :MANUAL_LIST_DIAGNOSTIC_SAMPLE_LIMIT
+                    ]
+                ],
+            }
+            if preview.manual_list_diagnostics is not None
+            else None
+        ),
+    )
+
+
+@router.get("/audiences", response_model=AdminBroadcastAudiencePresetListResponse)
+async def list_admin_broadcast_audience_presets(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastAudiencePresetListResponse:
+    items, total = await list_broadcast_audience_presets(
+        session,
+        limit=limit,
+        offset=offset,
+    )
+    return AdminBroadcastAudiencePresetListResponse(
+        items=[_build_broadcast_audience_preset_response(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/audiences",
+    response_model=AdminBroadcastAudiencePresetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_admin_broadcast_audience_preset(
+    payload: AdminBroadcastAudiencePresetUpsertRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> AdminBroadcastAudiencePresetResponse:
+    try:
+        preset = await create_broadcast_audience_preset(
+            session,
+            admin_id=current_admin.id,
+            name=payload.name,
+            description=payload.description,
+            audience=payload.audience.model_dump(mode="python"),
+        )
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    await session.refresh(preset)
+    return _build_broadcast_audience_preset_response(preset)
+
+
+@router.put(
+    "/audiences/{preset_id}", response_model=AdminBroadcastAudiencePresetResponse
+)
+async def update_admin_broadcast_audience_preset(
+    preset_id: int,
+    payload: AdminBroadcastAudiencePresetUpsertRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> AdminBroadcastAudiencePresetResponse:
+    try:
+        preset = await update_broadcast_audience_preset(
+            session,
+            preset_id=preset_id,
+            admin_id=current_admin.id,
+            name=payload.name,
+            description=payload.description,
+            audience=payload.audience.model_dump(mode="python"),
+        )
+    except BroadcastAudiencePresetNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_audience_preset_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_audience_preset_not_found",
+        ) from exc
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    await session.refresh(preset)
+    return _build_broadcast_audience_preset_response(preset)
+
+
+@router.delete("/audiences/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_broadcast_audience_preset(
+    preset_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> Response:
+    try:
+        await delete_broadcast_audience_preset(
+            session,
+            preset_id=preset_id,
+            admin_id=current_admin.id,
+        )
+    except BroadcastAudiencePresetNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_audience_preset_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_audience_preset_not_found",
+        ) from exc
+
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("", response_model=AdminBroadcastListResponse)
+async def list_admin_broadcasts(
+    status_filter: BroadcastStatus | None = Query(default=None, alias="status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastListResponse:
+    items, total = await list_broadcasts(
+        session,
+        limit=limit,
+        offset=offset,
+        status=status_filter,
+    )
+    response_items = [await _build_broadcast_response(session, item) for item in items]
+    return AdminBroadcastListResponse(
+        items=response_items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "", response_model=AdminBroadcastResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_admin_broadcast(
+    payload: AdminBroadcastUpsertRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await create_broadcast_draft(
+            session,
+            admin_id=current_admin.id,
+            name=payload.name,
+            title=payload.title,
+            body_html=payload.body_html,
+            content_type=payload.content_type,
+            image_url=payload.image_url,
+            channels=payload.channels,
+            buttons=[button.model_dump() for button in payload.buttons],
+            audience=payload.audience.model_dump(mode="python"),
+        )
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.get("/runs", response_model=AdminBroadcastRunListResponse)
+async def list_admin_broadcast_runs(
+    broadcast_id: int | None = Query(default=None),
+    status_filter: BroadcastRunStatus | None = Query(default=None, alias="status"),
+    run_type: BroadcastRunType | None = Query(default=None),
+    channel: BroadcastChannel | None = Query(default=None),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastRunListResponse:
+    items, total = await list_broadcast_runs(
+        session,
+        limit=limit,
+        offset=offset,
+        broadcast_id=broadcast_id,
+        status=status_filter,
+        run_type=run_type,
+        channel=channel,
+    )
+    return AdminBroadcastRunListResponse(
+        items=[_build_run_response(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/runs/{run_id}", response_model=AdminBroadcastRunDetailResponse)
+async def read_admin_broadcast_run(
+    run_id: int,
+    status_filter: BroadcastDeliveryStatus | None = Query(default=None, alias="status"),
+    channel: BroadcastChannel | None = Query(default=None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastRunDetailResponse:
+    run = await get_broadcast_run(session, run_id=run_id)
+    if run is None:
+        _admin_broadcast_run_not_found()
+
+    deliveries, total = await list_broadcast_run_deliveries(
+        session,
+        run_id=run_id,
+        limit=limit,
+        offset=offset,
+        status=status_filter,
+        channel=channel,
+    )
+    return AdminBroadcastRunDetailResponse(
+        run=_build_run_response(run),
+        deliveries=[
+            AdminBroadcastRunDeliveryResponse(
+                id=delivery.id,
+                account_id=delivery.account_id,
+                account_email=account.email,
+                account_display_name=account.display_name,
+                account_telegram_id=account.telegram_id,
+                account_username=account.username,
+                channel=delivery.channel,
+                status=delivery.status,
+                provider_message_id=delivery.provider_message_id,
+                notification_id=delivery.notification_id,
+                attempts_count=delivery.attempts_count,
+                last_attempt_at=delivery.last_attempt_at,
+                next_retry_at=delivery.next_retry_at,
+                delivered_at=delivery.delivered_at,
+                error_code=delivery.error_code,
+                error_message=delivery.error_message,
+                created_at=delivery.created_at,
+                updated_at=delivery.updated_at,
+            )
+            for delivery, account in deliveries
+        ],
+        total_deliveries=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{broadcast_id}", response_model=AdminBroadcastResponse)
+async def read_admin_broadcast(
+    broadcast_id: int,
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminBroadcastResponse:
+    broadcast = await get_broadcast(session, broadcast_id=broadcast_id)
+    if broadcast is None:
+        _admin_broadcast_not_found()
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.delete("/{broadcast_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin_broadcast(
+    broadcast_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> Response:
+    try:
+        await delete_broadcast_draft(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{broadcast_id}/test-send", response_model=AdminBroadcastTestSendResponse)
+async def test_send_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastTestSendRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> AdminBroadcastTestSendResponse:
+    try:
+        result = await send_broadcast_test(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            emails=payload.emails,
+            telegram_ids=payload.telegram_ids,
+            comment=payload.comment,
+            idempotency_key=payload.idempotency_key,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    return AdminBroadcastTestSendResponse(
+        broadcast_id=result.broadcast_id,
+        audit_log_id=result.audit_log_id,
+        total_targets=result.total_targets,
+        sent_targets=result.sent_targets,
+        partial_targets=result.partial_targets,
+        failed_targets=result.failed_targets,
+        skipped_targets=result.skipped_targets,
+        resolved_account_targets=result.resolved_account_targets,
+        direct_telegram_targets=result.direct_telegram_targets,
+        in_app_notifications_created=result.in_app_notifications_created,
+        telegram_targets_sent=result.telegram_targets_sent,
+        items=[
+            {
+                "target": item.target,
+                "source": item.source,
+                "resolution": item.resolution,
+                "status": item.status,
+                "account_id": item.account_id,
+                "telegram_id": item.telegram_id,
+                "channels_attempted": item.channels_attempted,
+                "in_app_notification_id": item.in_app_notification_id,
+                "telegram_message_ids": item.telegram_message_ids,
+                "detail": item.detail,
+            }
+            for item in result.items
+        ],
+    )
+
+
+@router.post("/{broadcast_id}/send-now", response_model=AdminBroadcastResponse)
+async def send_now_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastRuntimeActionRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(require_superuser_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await launch_broadcast_now(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            comment=payload.comment,
+            idempotency_key=payload.idempotency_key,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.post("/{broadcast_id}/schedule", response_model=AdminBroadcastResponse)
+async def schedule_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastScheduleRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(require_superuser_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await schedule_broadcast_launch(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            scheduled_at=payload.scheduled_at,
+            comment=payload.comment,
+            idempotency_key=payload.idempotency_key,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.post("/{broadcast_id}/pause", response_model=AdminBroadcastResponse)
+async def pause_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastRuntimeActionRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(require_superuser_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await pause_broadcast(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            comment=payload.comment,
+            idempotency_key=payload.idempotency_key,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.post("/{broadcast_id}/resume", response_model=AdminBroadcastResponse)
+async def resume_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastRuntimeActionRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(require_superuser_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await resume_broadcast(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            comment=payload.comment,
+            idempotency_key=payload.idempotency_key,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.post("/{broadcast_id}/cancel", response_model=AdminBroadcastResponse)
+async def cancel_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastRuntimeActionRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(require_superuser_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await cancel_broadcast(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            comment=payload.comment,
+            idempotency_key=payload.idempotency_key,
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)
+
+
+@router.put("/{broadcast_id}", response_model=AdminBroadcastResponse)
+async def update_admin_broadcast(
+    broadcast_id: int,
+    payload: AdminBroadcastUpsertRequest,
+    session: AsyncSession = Depends(get_session),
+    current_admin: Admin = Depends(get_current_admin),
+) -> AdminBroadcastResponse:
+    try:
+        broadcast = await update_broadcast_draft(
+            session,
+            broadcast_id=broadcast_id,
+            admin_id=current_admin.id,
+            name=payload.name,
+            title=payload.title,
+            body_html=payload.body_html,
+            content_type=payload.content_type,
+            image_url=payload.image_url,
+            channels=payload.channels,
+            buttons=[button.model_dump() for button in payload.buttons],
+            audience=payload.audience.model_dump(mode="python"),
+        )
+    except BroadcastNotFoundError as exc:
+        exc.args = (translate("api.admin.errors.broadcast_not_found"),)
+        raise api_error_from_exception(
+            status.HTTP_404_NOT_FOUND,
+            exc,
+            error_code="admin_broadcast_not_found",
+        ) from exc
+    except BroadcastConflictError as exc:
+        raise _admin_broadcast_service_error(status.HTTP_409_CONFLICT, exc) from exc
+    except BroadcastValidationError as exc:
+        raise _admin_broadcast_service_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, exc
+        ) from exc
+
+    await session.commit()
+    await session.refresh(broadcast)
+    return await _build_broadcast_response(session, broadcast)

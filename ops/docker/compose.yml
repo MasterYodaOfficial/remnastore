@@ -1,48 +1,152 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-images:
+  api: &api-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${API_IMAGE_TAG:-api-latest}
+  bot: &bot-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${BOT_IMAGE_TAG:-bot-latest}
+  web: &web-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${WEB_IMAGE_TAG:-web-latest}
+  admin: &admin-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${ADMIN_IMAGE_TAG:-admin-latest}
+
 services:
   api:
-    build:
-      context: ../../
-      dockerfile: ops/docker/api.Dockerfile
+    image: *api-image
     env_file:
       - ../../.env
+    restart: unless-stopped
     ports:
       - "8000:8000"
+    logging: *default-logging
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5).read()",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   bot:
-    build:
-      context: ../../
-      dockerfile: ops/docker/bot.Dockerfile
+    image: *bot-image
     env_file:
       - ../../.env
-    environment:
-      BOT_USE_WEBHOOK: "true"
-      BOT_WEB_SERVER_HOST: "0.0.0.0"
-      BOT_WEB_SERVER_PORT: "8080"
+    restart: unless-stopped
     ports:
       - "8080:8080"
+    logging: *default-logging
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+
+  worker:
+    image: *api-image
+    env_file:
+      - ../../.env
+    restart: unless-stopped
+    command: ["uv", "run", "--no-sync", "python", "-m", "app.tasks.payments_worker"]
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
+
+  notifications-worker:
+    image: *api-image
+    env_file:
+      - ../../.env
+    restart: unless-stopped
+    command: ["uv", "run", "--no-sync", "python", "-m", "app.tasks.notifications_worker"]
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
+
+  broadcast-worker:
+    image: *api-image
+    env_file:
+      - ../../.env
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Moscow
+    command: ["uv", "run", "--no-sync", "python", "-m", "app.tasks.broadcast_worker"]
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
 
   web:
-    build:
-      context: ../../
-      dockerfile: ops/docker/web.Dockerfile
+    image: *web-image
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+      VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
+      VITE_TELEGRAM_BOT_URL: ${VITE_TELEGRAM_BOT_URL}
+      VITE_SUPPORT_TELEGRAM_URL: ${VITE_SUPPORT_TELEGRAM_URL}
+    restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${WEB_PORT:-5173}:80"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  admin:
+    image: *admin-image
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_PORT:-5174}:80"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   db:
     image: postgres:16
     environment:
-      POSTGRES_DB: remnastore
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-remnastore}
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    restart: unless-stopped
     ports:
       - "5432:5432"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-remnastore}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - db-data:/var/lib/postgresql/data
 
   redis:
     image: redis:7
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:

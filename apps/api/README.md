@@ -1,5 +1,14 @@
 # API
 
-FastAPI сервис: бизнес‑логика, подписки, платежи, интеграции.
+`apps/api` — backend проекта на `FastAPI`.
 
-Точка входа: `app/main.py`.
+Отвечает за:
+
+- аккаунты и авторизацию
+- баланс, рефералов и выводы
+- платежи и webhook
+- подписки и интеграцию с `Remnawave`
+- bootstrap для `web` и `admin`
+
+Основной docker-сервис: `api`  
+Health endpoint: `GET /api/v1/health`

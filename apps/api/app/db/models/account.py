@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    Numeric,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,9 +33,15 @@ class LoginSource(str, enum.Enum):
 
 
 class AuthProvider(str, enum.Enum):
+    SUPABASE = "supabase"
     GOOGLE = "google"
     YANDEX = "yandex"
     VK = "vk"
+
+
+class LinkType(str, enum.Enum):
+    TELEGRAM_FROM_BROWSER = "telegram_from_browser"
+    BROWSER_FROM_TELEGRAM = "browser_from_telegram"
 
 
 class Account(Base):
@@ -57,26 +64,82 @@ class Account(Base):
     last_name: Mapped[Optional[str]] = mapped_column(String(64))
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     locale: Mapped[Optional[str]] = mapped_column(String(16))
+    telegram_bot_blocked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     remnawave_user_uuid: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid(as_uuid=True))
     subscription_url: Mapped[Optional[str]] = mapped_column(String(512))
+    subscription_status: Mapped[Optional[str]] = mapped_column(String(32))
+    subscription_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    subscription_last_synced_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True)
+    )
+    subscription_is_trial: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    trial_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    balance: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_code: Mapped[Optional[str]] = mapped_column(String(64), unique=True)
+    referral_earnings: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    referrals_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    referral_reward_rate: Mapped[float] = mapped_column(
+        Numeric(5, 2), nullable=False, default=0
+    )
+    referred_by_account_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL")
+    )
 
     status: Mapped[AccountStatus] = mapped_column(
-        Enum(AccountStatus), default=AccountStatus.ACTIVE, nullable=False
+        Enum(
+            AccountStatus,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="accountstatus",
+            native_enum=True,
+        ),
+        default=AccountStatus.ACTIVE,
+        nullable=False,
     )
-    last_login_source: Mapped[Optional[LoginSource]] = mapped_column(Enum(LoginSource))
+    last_login_source: Mapped[Optional[LoginSource]] = mapped_column(
+        Enum(
+            LoginSource,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="loginsource",
+            native_enum=True,
+        )
+    )
 
     last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
     auth_accounts: Mapped[list["AuthAccount"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )
+
+    @property
+    def has_used_trial(self) -> bool:
+        return self.trial_used_at is not None
+
+
+provider_enum_kwargs = dict(
+    values_callable=lambda obj: [e.value for e in obj],
+    name="authprovider",
+    native_enum=True,
+)
 
 
 class AuthAccount(Base):
@@ -88,9 +151,13 @@ class AuthAccount(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    provider: Mapped[AuthProvider] = mapped_column(Enum(AuthProvider), nullable=False)
+    provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, **provider_enum_kwargs), nullable=False
+    )
     provider_uid: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
@@ -116,20 +183,35 @@ class AuthLinkToken(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False
+        Uuid(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
     )
 
     link_token: Mapped[str] = mapped_column(String(128), nullable=False)
 
-    provider: Mapped[AuthProvider] = mapped_column(Enum(AuthProvider), nullable=False)
+    provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, **provider_enum_kwargs), nullable=False
+    )
     provider_uid: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[Optional[str]] = mapped_column(String(255))
     display_name: Mapped[Optional[str]] = mapped_column(String(255))
 
-    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     consumed_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
 
     telegram_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+
+    link_type: Mapped[Optional[LinkType]] = mapped_column(
+        Enum(
+            LinkType,
+            values_callable=lambda obj: [e.value for e in obj],
+            name="linktype",
+            native_enum=True,
+        )
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

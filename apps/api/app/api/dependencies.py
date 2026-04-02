@@ -1,0 +1,211 @@
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.errors import api_error
+from app.core.config import settings
+from app.core.security import decode_access_token, TokenError
+from app.db.models import Account, AccountStatus, Admin
+from app.db.session import get_session
+from app.integrations.supabase import (
+    SupabaseAuthClient,
+    SupabaseAuthConfigurationError,
+    SupabaseAuthError,
+    SupabaseAuthInvalidTokenError,
+)
+from app.services.accounts import (
+    AccountIdentityConflictError,
+    get_account_by_id,
+    upsert_supabase_account,
+)
+from app.services.admin_auth import get_admin_by_id
+from app.services.cache import get_cache
+from app.services.i18n import translate
+
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _admin_api_error(status_code: int, key: str, error_code: str):
+    return api_error(
+        status_code,
+        translate(key),
+        error_code=error_code,
+    )
+
+
+def verify_internal_api_token(authorization: str | None) -> None:
+    if not settings.api_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API_TOKEN is not configured",
+        )
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing internal api token",
+        )
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token or token != settings.api_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid internal api token",
+        )
+
+
+async def get_current_account(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> Account:
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="missing credentials"
+        )
+
+    token = credentials.credentials
+    cache = get_cache()
+    try:
+        claims = decode_access_token(token, secret=settings.jwt_secret)
+    except TokenError:
+        claims = None
+
+    if claims is not None:
+        account_id = claims.get("sub")
+        if not account_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="token missing subject",
+            )
+
+        account = await get_account_by_id(session, account_id)
+        if account is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="account not found"
+            )
+
+        if account.status == AccountStatus.BLOCKED:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="account blocked"
+            )
+
+        return account
+
+    cached_account_id = await cache.get_str(cache.auth_token_account_key(token))
+    if cached_account_id:
+        account = await get_account_by_id(session, cached_account_id)
+        if account is not None:
+            if account.status == AccountStatus.BLOCKED:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="account blocked"
+                )
+            return account
+
+        await cache.delete(
+            cache.auth_token_account_key(token),
+            cache.account_response_key(cached_account_id),
+        )
+
+    try:
+        supabase_user = await SupabaseAuthClient().get_user(token)
+    except SupabaseAuthConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except SupabaseAuthInvalidTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
+    except SupabaseAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        account = await upsert_supabase_account(session, supabase_user=supabase_user)
+    except AccountIdentityConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    if account.status == AccountStatus.BLOCKED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="account blocked"
+        )
+
+    await cache.set_str(
+        cache.auth_token_account_key(token),
+        str(account.id),
+        settings.auth_token_cache_ttl_seconds,
+    )
+
+    return account
+
+
+async def get_current_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    session: AsyncSession = Depends(get_session),
+) -> Admin:
+    if credentials is None:
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.missing_credentials",
+            "admin_missing_credentials",
+        )
+
+    try:
+        claims = decode_access_token(
+            credentials.credentials, secret=settings.jwt_secret
+        )
+    except TokenError as exc:
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.invalid_token",
+            "admin_invalid_token",
+        ) from exc
+
+    if claims.get("scope") != "admin":
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.invalid_scope",
+            "admin_invalid_scope",
+        )
+
+    admin_id = claims.get("sub")
+    if not admin_id:
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.token_missing_subject",
+            "admin_token_missing_subject",
+        )
+
+    admin = await get_admin_by_id(session, admin_id)
+    if admin is None:
+        raise _admin_api_error(
+            status.HTTP_401_UNAUTHORIZED,
+            "api.admin.errors.not_found",
+            "admin_not_found",
+        )
+    if not admin.is_active:
+        raise _admin_api_error(
+            status.HTTP_403_FORBIDDEN,
+            "api.admin.errors.disabled",
+            "admin_disabled",
+        )
+    return admin
+
+
+async def require_superuser_admin(
+    current_admin: Admin = Depends(get_current_admin),
+) -> Admin:
+    if not current_admin.is_superuser:
+        raise _admin_api_error(
+            status.HTTP_403_FORBIDDEN,
+            "api.admin.errors.superuser_required",
+            "admin_superuser_required",
+        )
+    return current_admin

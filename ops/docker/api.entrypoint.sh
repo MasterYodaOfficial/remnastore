@@ -3,7 +3,7 @@ set -e
 
 echo "Running migrations..."
 attempt=1
-until alembic -c alembic.ini upgrade head; do
+until uv run --no-sync alembic -c alembic.ini upgrade head; do
   attempt=$((attempt + 1))
   if [ "$attempt" -gt 10 ]; then
     echo "Migrations failed after $((attempt - 1)) attempts, exiting."
@@ -14,4 +14,4 @@ until alembic -c alembic.ini upgrade head; do
 done
 
 echo "Starting API..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+exec uv run --no-sync python -m app.server --host 0.0.0.0 --port 8000

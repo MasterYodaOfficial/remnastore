@@ -10,6 +10,8 @@ RUN uv sync --frozen --no-dev
 # uv creates .venv by default; add it to PATH
 ENV PATH="/app/.venv/bin:${PATH}"
 
+COPY common ./common
+COPY packages/locales ./packages/locales
 COPY alembic.ini ./
 COPY apps/api/alembic ./alembic
 COPY apps/api/app ./app

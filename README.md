@@ -1,25 +1,110 @@
-# remnastore
+# RemnaStore
 
-Коммерческий скелет проекта для продажи VPN.
+GitHub: `https://github.com/MasterYodaOfficial/remnastore`  
+Docker Hub: `masteryodaofficial/remnastorepy`
 
-**Состав:**
-- `apps/api` — backend на FastAPI (бизнес‑логика, биллинг, интеграции)
-- `apps/bot` — Telegram‑бот на aiogram (продажи, поддержка, связь с API)
-- `apps/web` — Telegram WebApp на React (витрина, покупка, управление подпиской)
-- `packages/shared` — общие схемы и типы между ботом и API
-- `ops` — инфраструктура и деплой (docker, конфиги)
-- `docs` — документация и решения
+## Что это
 
-**Ключевая идея:** бизнес‑логика и интеграции живут в API, бот и WebApp — тонкие клиенты.
+RemnaStore состоит из нескольких сервисов:
 
-## Быстрый обзор
-- `apps/api/app/main.py` — точка входа API
-- `apps/bot/bot/main.py` — точка входа бота
-- `apps/web/src/app/App.tsx` — точка входа WebApp
+- `api` — backend на `FastAPI`
+- `bot` — Telegram-бот
+- `web` — пользовательский кабинет и Telegram Mini App
+- `admin` — админка
+- `worker`, `notifications-worker`, `broadcast-worker` — фоновые задачи
 
-## Переменные окружения
-См. `.env.example`.
+## Быстрый запуск на VDS
 
-## UV и Docker
-- Перед сборкой контейнеров нужен `uv.lock`.
-- Создать локально: `UV_CACHE_DIR=.uv-cache uv lock`.
+Для сервера не нужен `git clone`. Достаточно скачать два deployment-файла, заполнить `.env` и запустить `docker compose`.
+
+```bash
+mkdir -p /opt/remnastore && cd /opt/remnastore
+curl -fsSL -o compose.yml https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/compose.yml
+curl -fsSL -o .env.example https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/.env.example
+cp .env.example .env
+nano .env
+docker compose pull
+docker compose up -d
+docker compose logs -f
+```
+
+Что обязательно заполнить в `.env`:
+
+- `BOT_TOKEN`
+- `BOT_USERNAME`
+- `JWT_SECRET`
+- `API_TOKEN`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `REMNAWAVE_API_URL`
+- `REMNAWAVE_API_TOKEN`
+- `REMNAWAVE_WEBHOOK_SECRET`
+
+Подробно: [docs/deploy-vds.md](/home/yoda/PycharmProjects/remnastore/docs/deploy-vds.md)
+
+## Обновление на VDS
+
+```bash
+cd /opt/remnastore
+curl -fsSL -o compose.yml https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/compose.yml
+docker compose pull
+docker compose up -d
+docker compose logs -f --tail=100
+```
+
+Если в новой версии появились дополнительные переменные, скачайте свежий `.env.example` и перенесите недостающие ключи в свой `.env`.
+
+## Локальный запуск из исходников
+
+Этот режим нужен для разработки и проверки текущей ветки.
+
+```bash
+git clone https://github.com/MasterYodaOfficial/remnastore.git
+cd remnastore
+cp .env.example .env
+docker compose --env-file .env \
+  -f ops/docker/compose.yml \
+  -f ops/docker/compose.local.yml \
+  up -d --build
+```
+
+Подробно: [docs/local-run.md](/home/yoda/PycharmProjects/remnastore/docs/local-run.md)
+
+## Локально через CloudPub
+
+CloudPub проксирует локальные порты в публичные HTTPS-адреса. Это удобно для:
+
+- Google OAuth
+- Supabase email redirect
+- Telegram webhook
+- проверки с телефона
+
+Обычно используют такую схему:
+
+- `api-*.cloudpub.ru` -> `8000`
+- `web-*.cloudpub.ru` -> `5173`
+- `admin-*.cloudpub.ru` -> `5174`
+- `bot-*.cloudpub.ru` -> `8080`
+
+Подробно: [docs/local-run.md](/home/yoda/PycharmProjects/remnastore/docs/local-run.md)
+
+## Если на сервере свой nginx
+
+Нормальная схема:
+
+- один IP
+- отдельные домены `api.mydomen.net`, `web.mydomen.net`, `admin.mydomen.net`, `bot.mydomen.net`
+- главный `nginx` на сервере слушает `80/443`
+- `nginx` проксирует на локальные порты Docker-стека `8000/5173/5174/8080`
+
+Готовый пример: [docs/nginx-vhost-example.md](/home/yoda/PycharmProjects/remnastore/docs/nginx-vhost-example.md)
+
+## Полезные документы
+
+- [docs/deploy-vds.md](/home/yoda/PycharmProjects/remnastore/docs/deploy-vds.md) — запуск и обновление на VDS
+- [docs/local-run.md](/home/yoda/PycharmProjects/remnastore/docs/local-run.md) — локальный запуск и CloudPub
+- [docs/nginx-vhost-example.md](/home/yoda/PycharmProjects/remnastore/docs/nginx-vhost-example.md) — пример главного nginx на одном IP
+- [docs/production-env.md](/home/yoda/PycharmProjects/remnastore/docs/production-env.md) — что заполнять в `.env`
+- [docs/architecture.md](/home/yoda/PycharmProjects/remnastore/docs/architecture.md) — краткая схема сервисов

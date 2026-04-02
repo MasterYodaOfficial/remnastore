@@ -3,19 +3,37 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, Update
 from aiogram.exceptions import TelegramRetryAfter
 from fastapi import FastAPI, HTTPException, Request, Response
+from redis.asyncio import Redis
 from uvicorn import Config, Server
 
 from bot.core.config import settings
 from bot.core.logging import configure_logging
-from bot.handlers import start, webapp
+from bot.handlers import menu, payments, start, webapp
+from bot.services.i18n import translate
+from bot.services.media_registry import get_media_registry
+from bot.services.session_store import close_menu_session_store
+
+try:
+    from aiogram.fsm.storage.redis import RedisStorage
+except ImportError:  # pragma: no cover - fallback for minimal environments
+    RedisStorage = None
 
 
 def create_dispatcher() -> Dispatcher:
-    dp = Dispatcher()
+    storage = MemoryStorage()
+    if settings.redis_url.strip() and RedisStorage is not None:
+        storage = RedisStorage(redis=Redis.from_url(settings.redis_url.strip()))
+
+    dp = Dispatcher(storage=storage)
     dp.include_router(start.router)
+    dp.include_router(menu.router)
+    dp.include_router(payments.router)
     dp.include_router(webapp.router)
     return dp
 
@@ -23,14 +41,25 @@ def create_dispatcher() -> Dispatcher:
 async def on_startup(bot: Bot) -> None:
     if settings.bot_use_webhook:
         if not settings.bot_webhook_base_url:
-            raise RuntimeError("BOT_WEBHOOK_BASE_URL is required when BOT_USE_WEBHOOK=true")
+            raise RuntimeError(
+                "BOT_WEBHOOK_BASE_URL is required when BOT_USE_WEBHOOK=true"
+            )
         await ensure_webhook(bot)
-    await bot.set_my_commands([BotCommand(command="start", description="Начать работу")])
+    await bot.set_my_commands(
+        [
+            BotCommand(
+                command="start",
+                description=translate("bot.commands.start_description"),
+            )
+        ]
+    )
 
 
 async def on_shutdown(bot: Bot) -> None:
     if settings.bot_use_webhook:
         await bot.delete_webhook(drop_pending_updates=True)
+    await close_menu_session_store()
+    await get_media_registry().close()
     await bot.session.close()
 
 
@@ -62,13 +91,11 @@ async def ensure_webhook(bot: Bot, max_attempts: int = 5) -> None:
 def create_fastapi_app(bot: Bot, dp: Dispatcher) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        await dp.emit_startup(bot)
-        await on_startup(bot)
+        await dp.emit_startup(bot=bot)
         try:
             yield
         finally:
-            await on_shutdown(bot)
-            await dp.emit_shutdown(bot)
+            await dp.emit_shutdown(bot=bot)
 
     app = FastAPI(title="Bot Webhook", lifespan=lifespan)
 
@@ -92,8 +119,11 @@ def create_fastapi_app(bot: Bot, dp: Dispatcher) -> FastAPI:
 
 
 async def main() -> None:
-    configure_logging()
-    bot = Bot(token=settings.bot_token)
+    configure_logging(component_name="bot")
+    bot = Bot(
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = create_dispatcher()
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)

@@ -4,13 +4,51 @@ __pycache__/
 *.egg-info/
 .venv/
 .uv-cache/
+.coverage
+.coverage.*
+.coverage_html/
 
 # Node
 node_modules/
 dist/
+test-results/
+playwright-report/
 
 # Env
-.env
+.env_old
 
 # OS
 .DS_Store
+/.idea/dataSources/4dc1b4cf-0d43-4610-9059-570c7a10bd6e.xml
+/.idea/dataSources.local.xml
+/.idea/dataSources.xml
+/.idea/dataSources/db89a01e-adc2-4005-bacd-57d786093137.xml
+/.idea/dataSources/4dc1b4cf-0d43-4610-9059-570c7a10bd6e/storage_v2/_src_/database/remnastore.NMmS6Q/schema/information_schema.FNRwLQ.meta
+/.idea/dataSources/db89a01e-adc2-4005-bacd-57d786093137/storage_v2/_src_/database/remnastore.NMmS6Q/schema/information_schema.FNRwLQ.meta
+/.idea/misc.xml
+/.idea/dataSources/4dc1b4cf-0d43-4610-9059-570c7a10bd6e/storage_v2/_src_/database/remnastore.NMmS6Q/schema/pg_catalog.0S1ZNQ.meta
+/.idea/dataSources/db89a01e-adc2-4005-bacd-57d786093137/storage_v2/_src_/database/remnastore.NMmS6Q/schema/pg_catalog.0S1ZNQ.meta
+/.idea/dataSources/4dc1b4cf-0d43-4610-9059-570c7a10bd6e/storage_v2/_src_/database/remnastore.NMmS6Q/schema/public.abK9xQ.meta
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/dataSources/db89a01e-adc2-4005-bacd-57d786093137/storage_v2/_src_/database/remnastore.NMmS6Q/schema/public.abK9xQ.meta
+/.idea/remnastore.iml
+/.idea/dataSources/4dc1b4cf-0d43-4610-9059-570c7a10bd6e/storage_v2/_src_/database/remnastore.NMmS6Q.meta
+/.idea/dataSources/db89a01e-adc2-4005-bacd-57d786093137/storage_v2/_src_/database/remnastore.NMmS6Q.meta
+/.idea/vcs.xml
+/.idea/workspace.xml
+/.idea/webResources.xml
+/.env
+/deploy/.env
+/tests.py
+/apps/subpageexample/
+/old_db/
+/.idea/db-forest-config.xml
+/.idea/dataSources/2c021d54-4b61-40b0-a6c5-d36e8b4873e9.xml
+/.idea/dataSources/2c021d54-4b61-40b0-a6c5-d36e8b4873e9/storage_v2/_src_/schema/main.uQUzAA.meta
+/.idea/dataSources/c7d5556a-be08-4ed6-9c6e-60406972de1f.xml
+/.idea/dataSources/c7d5556a-be08-4ed6-9c6e-60406972de1f/storage_v2/_src_/schema/main.uQUzAA.meta
+/apps/web/.env
+/.idea/.gitignore
+/.idea/modules.xml
+/tasks.txt
+/tasks.md
