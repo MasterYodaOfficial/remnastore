@@ -86,6 +86,21 @@ services:
       api:
         condition: service_healthy
 
+  legacy-migration:
+    image: *api-image
+    profiles: ["tools"]
+    env_file:
+      - ./.env
+    entrypoint: ["uv", "run", "--no-sync", "python", "/app/scripts/legacy_migration.py"]
+    command: ["--help"]
+    logging: *default-logging
+    volumes:
+      - ./old_db:/app/old_db:ro
+      - ./migration-reports:/app/migration-reports
+    depends_on:
+      db:
+        condition: service_healthy
+
   web:
     image: *web-image
     environment:

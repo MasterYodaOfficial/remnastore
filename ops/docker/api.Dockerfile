@@ -15,6 +15,7 @@ COPY packages/locales ./packages/locales
 COPY alembic.ini ./
 COPY apps/api/alembic ./alembic
 COPY apps/api/app ./app
+COPY scripts/legacy_migration.py ./scripts/legacy_migration.py
 COPY ops/docker/api.entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
