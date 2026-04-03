@@ -108,6 +108,24 @@ curl -fsSL -o .env.example https://raw.githubusercontent.com/MasterYodaOfficial/
 
 После этого перенесите недостающие ключи в свой `.env`.
 
+## Перенос старой SQLite
+
+Если нужно перетащить пользователей из старой SQLite базы, исходники проекта на сервере не нужны. В `api`-образ уже встроен migration tool.
+
+Короткий сценарий:
+
+```bash
+cd /opt/remnastore
+mkdir -p old_db migration-reports
+cp /path/to/db_2.sqlite3 old_db/db_2.sqlite3
+docker compose --profile tools run --rm legacy-migration --dry-run \
+  --output-json /app/migration-reports/legacy-dry-run.json
+docker compose --profile tools run --rm legacy-migration --apply-db \
+  --output-json /app/migration-reports/legacy-apply.json
+```
+
+Подробно: [legacy-migration.md](/home/yoda/PycharmProjects/remnastore/docs/legacy-migration.md)
+
 ## Фиксация конкретного релиза
 
 Если не хотите всегда тянуть `latest`, задайте в `.env`:

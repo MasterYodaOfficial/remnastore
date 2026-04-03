@@ -14,12 +14,25 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-API_APP_ROOT = REPO_ROOT / "apps" / "api"
-DEFAULT_LEGACY_DB = REPO_ROOT / "old_db" / "db_2.sqlite3"
-DEFAULT_PLANS_JSON = (
-    REPO_ROOT / "apps" / "api" / "app" / "config" / "subscription-plans.json"
-)
+SCRIPT_ROOT = Path(__file__).resolve().parent
+BASE_ROOT = SCRIPT_ROOT.parent
+
+if (BASE_ROOT / "apps" / "api" / "app").exists():
+    REPO_ROOT = BASE_ROOT
+    API_APP_ROOT = REPO_ROOT / "apps" / "api"
+    DEFAULT_LEGACY_DB = REPO_ROOT / "old_db" / "db_2.sqlite3"
+    DEFAULT_PLANS_JSON = (
+        REPO_ROOT / "apps" / "api" / "app" / "config" / "subscription-plans.json"
+    )
+elif (BASE_ROOT / "app").exists():
+    REPO_ROOT = BASE_ROOT
+    API_APP_ROOT = BASE_ROOT
+    DEFAULT_LEGACY_DB = BASE_ROOT / "old_db" / "db_2.sqlite3"
+    DEFAULT_PLANS_JSON = BASE_ROOT / "app" / "config" / "subscription-plans.json"
+else:
+    raise RuntimeError(
+        "Unsupported legacy migration layout: API sources were not found"
+    )
 TERMINAL_PAYMENT_STATUSES = {"succeeded", "canceled"}
 ACTIVE_SUBSCRIPTION_STATUS = "ACTIVE"
 INACTIVE_SUBSCRIPTION_STATUSES = {"DISABLED", "EXPIRED"}
