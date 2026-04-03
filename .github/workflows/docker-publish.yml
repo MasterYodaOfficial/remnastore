@@ -6,22 +6,28 @@ on:
       - main
     paths:
       - .github/workflows/docker-publish.yml
+      - .dockerignore
+      - alembic.ini
       - pyproject.toml
       - uv.lock
       - apps/**
       - common/**
       - packages/**
+      - scripts/**
       - ops/docker/**
   push:
     branches:
       - main
     paths:
       - .github/workflows/docker-publish.yml
+      - .dockerignore
+      - alembic.ini
       - pyproject.toml
       - uv.lock
       - apps/**
       - common/**
       - packages/**
+      - scripts/**
       - ops/docker/**
   workflow_dispatch:
 
