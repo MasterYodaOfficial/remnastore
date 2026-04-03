@@ -49,6 +49,18 @@ docker compose --profile tools run --rm legacy-migration \
 
 `DATABASE_URL` брать отдельно не нужно: сервис читает его из вашего `.env`.
 
+Для слабого VDS лучше сразу уменьшать размер батча, например до `100`:
+
+```bash
+cd /opt/remnastore
+docker compose --profile tools run --rm legacy-migration \
+  --apply-db \
+  --db-batch-size 100 \
+  --output-json /app/migration-reports/legacy-apply.json
+```
+
+Скрипт печатает прогресс по фазам и батчам прямо в консоль.
+
 ## Проверка состояния Remnawave
 
 Только отчет, без изменений:
@@ -66,6 +78,16 @@ docker compose --profile tools run --rm legacy-migration \
 cd /opt/remnastore
 docker compose --profile tools run --rm legacy-migration \
   --sync-remnawave \
+  --output-json /app/migration-reports/remnawave-sync.json
+```
+
+Если панель большая или сервер слабый, можно уменьшить batch size:
+
+```bash
+cd /opt/remnastore
+docker compose --profile tools run --rm legacy-migration \
+  --sync-remnawave \
+  --remnawave-batch-size 50 \
   --output-json /app/migration-reports/remnawave-sync.json
 ```
 

@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Sequence, TypeVar
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -40,6 +40,10 @@ SKIP_REASON_BLOCKED_BOT = "telegram_bot_blocked_in_legacy"
 LEGACY_SOURCE = "legacy_bot"
 LEGACY_REFERRAL_BALANCE_REFERENCE_TYPE = "legacy_referral_balance_import"
 LEGACY_PAYMENT_REFERENCE_TYPE = "legacy_payment"
+DEFAULT_DB_BATCH_SIZE = 250
+DEFAULT_REMNAWAVE_BATCH_SIZE = 100
+
+T = TypeVar("T")
 
 if str(API_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(API_APP_ROOT))
@@ -90,9 +94,27 @@ def _parse_args() -> argparse.Namespace:
         help="Write imported users, referrals, balances, payments, and grants to the new DB.",
     )
     parser.add_argument(
+        "--db-batch-size",
+        type=int,
+        default=DEFAULT_DB_BATCH_SIZE,
+        help=(
+            "How many imported accounts to process per DB batch. "
+            f"Default: {DEFAULT_DB_BATCH_SIZE}"
+        ),
+    )
+    parser.add_argument(
         "--sync-remnawave",
         action="store_true",
         help="Upsert canonical active subscriptions in Remnawave and delete known redundant legacy users.",
+    )
+    parser.add_argument(
+        "--remnawave-batch-size",
+        type=int,
+        default=DEFAULT_REMNAWAVE_BATCH_SIZE,
+        help=(
+            "How many active accounts to sync to Remnawave per batch. "
+            f"Default: {DEFAULT_REMNAWAVE_BATCH_SIZE}"
+        ),
     )
     parser.add_argument(
         "--report-remnawave",
@@ -100,6 +122,12 @@ def _parse_args() -> argparse.Namespace:
         help="Read current Remnawave inventory and print manual-review candidates without changing the panel.",
     )
     return parser.parse_args()
+
+
+def _ensure_positive_batch_size(value: int, *, name: str) -> int:
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
 
 
 def _normalize_text(value: object) -> str | None:
@@ -165,6 +193,33 @@ def _desired_subscription_status(*, expires_at: datetime | None) -> str | None:
     if expires_at is None:
         return None
     return "ACTIVE" if expires_at > datetime.now(UTC) else "EXPIRED"
+
+
+def _chunked(items: Sequence[T], chunk_size: int) -> Iterator[list[T]]:
+    normalized_chunk_size = _ensure_positive_batch_size(chunk_size, name="chunk_size")
+    for start in range(0, len(items), normalized_chunk_size):
+        yield list(items[start : start + normalized_chunk_size])
+
+
+def _batch_count(total_items: int, chunk_size: int) -> int:
+    normalized_chunk_size = _ensure_positive_batch_size(chunk_size, name="chunk_size")
+    if total_items <= 0:
+        return 0
+    return (total_items + normalized_chunk_size - 1) // normalized_chunk_size
+
+
+def _print_batch_progress(
+    phase: str,
+    *,
+    batch_index: int,
+    total_batches: int,
+    processed: int,
+    total_items: int,
+) -> None:
+    print(
+        f"{phase}: batch {batch_index}/{total_batches} committed "
+        f"({processed}/{total_items})"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -986,9 +1041,9 @@ async def _open_target_session_factory(database_url: str):
 
 
 async def apply_db_import(
-    migration_plan: MigrationPlan, *, database_url: str
+    migration_plan: MigrationPlan, *, database_url: str, batch_size: int
 ) -> dict[str, Any]:
-    from sqlalchemy import select
+    from sqlalchemy import select, tuple_
 
     from app.db.models import (
         Account,
@@ -1002,316 +1057,509 @@ async def apply_db_import(
     from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
     from app.services.ledger import apply_credit_in_transaction
 
+    normalized_batch_size = _ensure_positive_batch_size(
+        batch_size, name="db_batch_size"
+    )
     engine, session_factory = await _open_target_session_factory(database_url)
     summary = Counter[str]()
+    imported_plans = [plan for plan in migration_plan.account_plans if plan.import_user]
+    imported_plans_by_telegram_id = {plan.telegram_id: plan for plan in imported_plans}
+    referral_counts_by_telegram_id: Counter[int] = Counter()
+
+    for plan in imported_plans:
+        if not plan.inviter_importable or plan.legacy_user.inviter_id is None:
+            continue
+        referral_counts_by_telegram_id[plan.legacy_user.inviter_id] += 1
 
     try:
-        async with session_factory() as session:
-            existing_accounts = {
-                account.telegram_id: account
-                for account in (
-                    await session.execute(
-                        select(Account).where(Account.telegram_id.is_not(None))
-                    )
-                )
-                .scalars()
-                .all()
-                if account.telegram_id is not None
-            }
-
-            imported_plans = [
-                plan for plan in migration_plan.account_plans if plan.import_user
-            ]
-            for plan in imported_plans:
-                account = existing_accounts.get(plan.telegram_id)
-                if account is None:
-                    account = Account(
-                        id=plan.account_uuid, telegram_id=plan.telegram_id
-                    )
-                    session.add(account)
-                    existing_accounts[plan.telegram_id] = account
-                    summary["accounts_created"] += 1
-                else:
-                    summary["accounts_updated"] += 1
-
-                account.telegram_id = plan.telegram_id
-                account.username = plan.legacy_user.username
-                account.locale = plan.legacy_user.language_code
-                account.status = AccountStatus.ACTIVE
-                account.referral_code = plan.imported_referral_code
-                account.referral_earnings = plan.referral_balance
-                account.created_at = (
-                    plan.legacy_user.created_at
-                    or account.created_at
-                    or datetime.now(UTC)
-                )
-                if plan.telegram_bot_blocked:
-                    account.telegram_bot_blocked_at = (
-                        account.telegram_bot_blocked_at or datetime.now(UTC)
-                    )
-                    summary["accounts_marked_telegram_bot_blocked"] += 1
-                else:
-                    account.telegram_bot_blocked_at = None
-
-                if plan.canonical_subscription is None:
-                    account.remnawave_user_uuid = None
-                    account.subscription_url = None
-                    account.subscription_status = None
-                    account.subscription_expires_at = None
-                    account.subscription_last_synced_at = None
-                    account.subscription_is_trial = False
-                else:
-                    account.remnawave_user_uuid = plan.target_remnawave_uuid
-                    account.subscription_url = (
-                        plan.canonical_subscription.subscription_url
-                    )
-                    account.subscription_status = _desired_subscription_status(
-                        expires_at=plan.target_subscription_expires_at
-                    )
-                    account.subscription_expires_at = (
-                        plan.target_subscription_expires_at
-                    )
-                    account.subscription_last_synced_at = (
-                        plan.canonical_subscription.updated_at
-                    )
-                    account.subscription_is_trial = False
-
-            await session.flush()
-
-            imported_accounts = {
-                telegram_id: account
-                for telegram_id, account in existing_accounts.items()
-                if any(
-                    plan.telegram_id == telegram_id and plan.import_user
-                    for plan in imported_plans
-                )
-            }
-
-            for account in imported_accounts.values():
-                account.referred_by_account_id = None
-                account.referrals_count = 0
-
-            existing_attributions = {
-                attribution.referred_account_id: attribution
-                for attribution in (await session.execute(select(ReferralAttribution)))
-                .scalars()
-                .all()
-            }
-            referral_counts: Counter[uuid.UUID] = Counter()
-            for plan in imported_plans:
-                if not plan.inviter_importable or plan.legacy_user.inviter_id is None:
-                    continue
-
-                account = imported_accounts[plan.telegram_id]
-                referrer = imported_accounts[plan.legacy_user.inviter_id]
-                account.referred_by_account_id = referrer.id
-                referral_counts[referrer.id] += 1
-
-                attribution = existing_attributions.get(account.id)
-                if attribution is None:
-                    attribution = ReferralAttribution(
-                        referrer_account_id=referrer.id,
-                        referred_account_id=account.id,
-                        referral_code=referrer.referral_code
-                        or referrer.username
-                        or "legacy",
-                        created_at=_as_utc_naive(plan.legacy_user.created_at)
-                        or _as_utc_naive(datetime.now(UTC)),
-                    )
-                    session.add(attribution)
-                    existing_attributions[account.id] = attribution
-                    summary["referral_attributions_created"] += 1
-                else:
-                    attribution.referrer_account_id = referrer.id
-                    attribution.referral_code = (
-                        referrer.referral_code or referrer.username or "legacy"
-                    )
-                    if plan.legacy_user.created_at is not None:
-                        attribution.created_at = _as_utc_naive(
-                            plan.legacy_user.created_at
-                        )
-                    summary["referral_attributions_updated"] += 1
-
-            for account in imported_accounts.values():
-                account.referrals_count = referral_counts[account.id]
-
-            await session.flush()
-
-            existing_payments = {
-                (payment.provider.value, payment.provider_payment_id): payment
-                for payment in (await session.execute(select(Payment))).scalars().all()
-            }
-            existing_grants = {
-                (grant.reference_type, grant.reference_id): grant
-                for grant in (await session.execute(select(SubscriptionGrant)))
-                .scalars()
-                .all()
-            }
-            existing_ledger_idempotency_keys = {
-                key
-                for key in (
-                    await session.execute(
-                        select(LedgerEntry.idempotency_key).where(
-                            LedgerEntry.idempotency_key.is_not(None)
+        total_accounts_batches = _batch_count(
+            len(imported_plans), normalized_batch_size
+        )
+        processed_accounts = 0
+        for batch_index, batch in enumerate(
+            _chunked(imported_plans, normalized_batch_size), start=1
+        ):
+            async with session_factory() as session:
+                batch_telegram_ids = [plan.telegram_id for plan in batch]
+                existing_accounts = {
+                    account.telegram_id: account
+                    for account in (
+                        await session.execute(
+                            select(Account).where(
+                                Account.telegram_id.in_(batch_telegram_ids)
+                            )
                         )
                     )
-                )
-                .scalars()
-                .all()
-                if key is not None
-            }
+                    .scalars()
+                    .all()
+                    if account.telegram_id is not None
+                }
 
-            provider_map = {
-                "yookassa": PaymentProvider.YOOKASSA,
-                "telegram_stars": PaymentProvider.TELEGRAM_STARS,
-            }
-            status_map = {
-                "succeeded": PaymentStatus.SUCCEEDED,
-                "cancelled": PaymentStatus.CANCELLED,
-            }
+                for plan in batch:
+                    account = existing_accounts.get(plan.telegram_id)
+                    if account is None:
+                        account = Account(
+                            id=plan.account_uuid, telegram_id=plan.telegram_id
+                        )
+                        session.add(account)
+                        summary["accounts_created"] += 1
+                    else:
+                        summary["accounts_updated"] += 1
 
-            for plan in imported_plans:
-                account = imported_accounts[plan.telegram_id]
-                for legacy_payment, grant_plan in zip(
-                    plan.terminal_payments, plan.payment_grant_plans
-                ):
-                    provider = provider_map[grant_plan.provider_code]
-                    provider_payment_id = (
-                        legacy_payment.external_payment_id
-                        or f"legacy-payment-{legacy_payment.id}"
+                    account.telegram_id = plan.telegram_id
+                    account.username = plan.legacy_user.username
+                    account.locale = plan.legacy_user.language_code
+                    account.status = AccountStatus.ACTIVE
+                    account.referral_code = plan.imported_referral_code
+                    account.referral_earnings = plan.referral_balance
+                    account.created_at = (
+                        plan.legacy_user.created_at
+                        or account.created_at
+                        or datetime.now(UTC)
                     )
-                    payment_key = (provider.value, provider_payment_id)
-                    payment = existing_payments.get(payment_key)
+                    if plan.telegram_bot_blocked:
+                        account.telegram_bot_blocked_at = (
+                            account.telegram_bot_blocked_at or datetime.now(UTC)
+                        )
+                        summary["accounts_marked_telegram_bot_blocked"] += 1
+                    else:
+                        account.telegram_bot_blocked_at = None
 
-                    if payment is None:
-                        payment = Payment(
-                            account_id=account.id,
-                            provider=provider,
-                            flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
-                            status=status_map[grant_plan.target_payment_status],
-                            amount=legacy_payment.amount,
-                            currency=legacy_payment.currency,
-                            provider_payment_id=provider_payment_id,
-                            external_reference=f"legacy-payment:{legacy_payment.id}",
-                            idempotency_key=f"legacy-payment:{legacy_payment.id}",
-                            plan_code=grant_plan.plan_code,
-                            description=f"Legacy import payment #{legacy_payment.id}",
-                            expires_at=None,
-                            finalized_at=legacy_payment.created_at,
-                            raw_payload={
+                    if plan.canonical_subscription is None:
+                        account.remnawave_user_uuid = None
+                        account.subscription_url = None
+                        account.subscription_status = None
+                        account.subscription_expires_at = None
+                        account.subscription_last_synced_at = None
+                        account.subscription_is_trial = False
+                    else:
+                        account.remnawave_user_uuid = plan.target_remnawave_uuid
+                        account.subscription_url = (
+                            plan.canonical_subscription.subscription_url
+                        )
+                        account.subscription_status = _desired_subscription_status(
+                            expires_at=plan.target_subscription_expires_at
+                        )
+                        account.subscription_expires_at = (
+                            plan.target_subscription_expires_at
+                        )
+                        account.subscription_last_synced_at = (
+                            plan.canonical_subscription.updated_at
+                        )
+                        account.subscription_is_trial = False
+
+                await session.commit()
+
+            processed_accounts += len(batch)
+            _print_batch_progress(
+                "DB import/accounts",
+                batch_index=batch_index,
+                total_batches=total_accounts_batches,
+                processed=processed_accounts,
+                total_items=len(imported_plans),
+            )
+
+        processed_referrals = 0
+        for batch_index, batch in enumerate(
+            _chunked(imported_plans, normalized_batch_size), start=1
+        ):
+            async with session_factory() as session:
+                batch_telegram_ids = [plan.telegram_id for plan in batch]
+                related_telegram_ids = set(batch_telegram_ids)
+                for plan in batch:
+                    if (
+                        plan.inviter_importable
+                        and plan.legacy_user.inviter_id is not None
+                    ):
+                        related_telegram_ids.add(plan.legacy_user.inviter_id)
+
+                accounts_by_telegram_id = {
+                    account.telegram_id: account
+                    for account in (
+                        await session.execute(
+                            select(Account).where(
+                                Account.telegram_id.in_(sorted(related_telegram_ids))
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                    if account.telegram_id is not None
+                }
+                batch_accounts_by_telegram_id = {
+                    telegram_id: accounts_by_telegram_id[telegram_id]
+                    for telegram_id in batch_telegram_ids
+                }
+                account_ids = [
+                    account.id for account in batch_accounts_by_telegram_id.values()
+                ]
+                existing_attributions: dict[uuid.UUID, ReferralAttribution] = {}
+                if account_ids:
+                    existing_attributions = {
+                        attribution.referred_account_id: attribution
+                        for attribution in (
+                            await session.execute(
+                                select(ReferralAttribution).where(
+                                    ReferralAttribution.referred_account_id.in_(
+                                        account_ids
+                                    )
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    }
+
+                for plan in batch:
+                    account = batch_accounts_by_telegram_id[plan.telegram_id]
+                    account.referred_by_account_id = None
+                    account.referrals_count = referral_counts_by_telegram_id[
+                        plan.telegram_id
+                    ]
+
+                for plan in batch:
+                    if (
+                        not plan.inviter_importable
+                        or plan.legacy_user.inviter_id is None
+                    ):
+                        continue
+
+                    account = batch_accounts_by_telegram_id[plan.telegram_id]
+                    referrer_plan = imported_plans_by_telegram_id[
+                        plan.legacy_user.inviter_id
+                    ]
+                    referrer_account = accounts_by_telegram_id[
+                        plan.legacy_user.inviter_id
+                    ]
+                    account.referred_by_account_id = referrer_account.id
+                    referral_code = (
+                        referrer_plan.imported_referral_code
+                        or referrer_plan.legacy_user.username
+                        or "legacy"
+                    )
+                    attribution = existing_attributions.get(account.id)
+                    if attribution is None:
+                        attribution = ReferralAttribution(
+                            referrer_account_id=referrer_account.id,
+                            referred_account_id=account.id,
+                            referral_code=referral_code,
+                            created_at=_as_utc_naive(plan.legacy_user.created_at)
+                            or _as_utc_naive(datetime.now(UTC)),
+                        )
+                        session.add(attribution)
+                        summary["referral_attributions_created"] += 1
+                    else:
+                        attribution.referrer_account_id = referrer_account.id
+                        attribution.referral_code = referral_code
+                        if plan.legacy_user.created_at is not None:
+                            attribution.created_at = _as_utc_naive(
+                                plan.legacy_user.created_at
+                            )
+                        summary["referral_attributions_updated"] += 1
+
+                await session.commit()
+
+            processed_referrals += len(batch)
+            _print_batch_progress(
+                "DB import/referrals",
+                batch_index=batch_index,
+                total_batches=total_accounts_batches,
+                processed=processed_referrals,
+                total_items=len(imported_plans),
+            )
+
+        provider_map = {
+            "yookassa": PaymentProvider.YOOKASSA,
+            "telegram_stars": PaymentProvider.TELEGRAM_STARS,
+        }
+        status_map = {
+            "succeeded": PaymentStatus.SUCCEEDED,
+            "cancelled": PaymentStatus.CANCELLED,
+        }
+        payment_import_plans = [
+            plan for plan in imported_plans if plan.terminal_payments
+        ]
+        total_payment_batches = _batch_count(
+            len(payment_import_plans), normalized_batch_size
+        )
+        processed_payment_accounts = 0
+        for batch_index, batch in enumerate(
+            _chunked(payment_import_plans, normalized_batch_size), start=1
+        ):
+            async with session_factory() as session:
+                batch_telegram_ids = [plan.telegram_id for plan in batch]
+                accounts_by_telegram_id = {
+                    account.telegram_id: account
+                    for account in (
+                        await session.execute(
+                            select(Account).where(
+                                Account.telegram_id.in_(batch_telegram_ids)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                    if account.telegram_id is not None
+                }
+
+                payment_lookup_keys: list[tuple[PaymentProvider, str]] = []
+                grant_reference_ids: list[str] = []
+                for plan in batch:
+                    for legacy_payment, grant_plan in zip(
+                        plan.terminal_payments, plan.payment_grant_plans
+                    ):
+                        provider = provider_map[grant_plan.provider_code]
+                        provider_payment_id = (
+                            legacy_payment.external_payment_id
+                            or f"legacy-payment-{legacy_payment.id}"
+                        )
+                        payment_lookup_keys.append((provider, provider_payment_id))
+                        if grant_plan.grant_importable:
+                            grant_reference_ids.append(str(legacy_payment.id))
+
+                existing_payments: dict[tuple[PaymentProvider, str], Payment] = {}
+                if payment_lookup_keys:
+                    existing_payments = {
+                        (payment.provider, payment.provider_payment_id): payment
+                        for payment in (
+                            await session.execute(
+                                select(Payment).where(
+                                    tuple_(
+                                        Payment.provider,
+                                        Payment.provider_payment_id,
+                                    ).in_(payment_lookup_keys)
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    }
+
+                existing_grants: dict[
+                    tuple[str | None, str | None], SubscriptionGrant
+                ] = {}
+                if grant_reference_ids:
+                    existing_grants = {
+                        (grant.reference_type, grant.reference_id): grant
+                        for grant in (
+                            await session.execute(
+                                select(SubscriptionGrant).where(
+                                    SubscriptionGrant.reference_type
+                                    == LEGACY_PAYMENT_REFERENCE_TYPE,
+                                    SubscriptionGrant.reference_id.in_(
+                                        grant_reference_ids
+                                    ),
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    }
+
+                for plan in batch:
+                    account = accounts_by_telegram_id[plan.telegram_id]
+                    for legacy_payment, grant_plan in zip(
+                        plan.terminal_payments, plan.payment_grant_plans
+                    ):
+                        provider = provider_map[grant_plan.provider_code]
+                        provider_payment_id = (
+                            legacy_payment.external_payment_id
+                            or f"legacy-payment-{legacy_payment.id}"
+                        )
+                        payment_key = (provider, provider_payment_id)
+                        payment = existing_payments.get(payment_key)
+
+                        if payment is None:
+                            payment = Payment(
+                                account_id=account.id,
+                                provider=provider,
+                                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                                status=status_map[grant_plan.target_payment_status],
+                                amount=legacy_payment.amount,
+                                currency=legacy_payment.currency,
+                                provider_payment_id=provider_payment_id,
+                                external_reference=f"legacy-payment:{legacy_payment.id}",
+                                idempotency_key=f"legacy-payment:{legacy_payment.id}",
+                                plan_code=grant_plan.plan_code,
+                                description=f"Legacy import payment #{legacy_payment.id}",
+                                expires_at=None,
+                                finalized_at=legacy_payment.created_at,
+                                raw_payload={
+                                    "source": LEGACY_SOURCE,
+                                    "legacy_payment_id": legacy_payment.id,
+                                    "legacy_user_id": legacy_payment.user_id,
+                                    "legacy_subscription_id": legacy_payment.subscription_id,
+                                    "legacy_tariff_id": legacy_payment.tariff_id,
+                                },
+                                request_metadata={
+                                    "migration_source": LEGACY_SOURCE,
+                                    "legacy_payment_id": legacy_payment.id,
+                                },
+                                created_at=_as_utc_naive(legacy_payment.created_at)
+                                or _as_utc_naive(datetime.now(UTC)),
+                                updated_at=_as_utc_naive(legacy_payment.created_at)
+                                or _as_utc_naive(datetime.now(UTC)),
+                            )
+                            session.add(payment)
+                            existing_payments[payment_key] = payment
+                            summary["payments_created"] += 1
+                        else:
+                            payment.account_id = account.id
+                            payment.status = status_map[
+                                grant_plan.target_payment_status
+                            ]
+                            payment.amount = legacy_payment.amount
+                            payment.currency = legacy_payment.currency
+                            payment.plan_code = grant_plan.plan_code
+                            payment.description = (
+                                f"Legacy import payment #{legacy_payment.id}"
+                            )
+                            payment.finalized_at = legacy_payment.created_at
+                            payment.raw_payload = {
                                 "source": LEGACY_SOURCE,
                                 "legacy_payment_id": legacy_payment.id,
                                 "legacy_user_id": legacy_payment.user_id,
                                 "legacy_subscription_id": legacy_payment.subscription_id,
                                 "legacy_tariff_id": legacy_payment.tariff_id,
-                            },
-                            request_metadata={
+                            }
+                            payment.request_metadata = {
                                 "migration_source": LEGACY_SOURCE,
                                 "legacy_payment_id": legacy_payment.id,
-                            },
-                            created_at=_as_utc_naive(legacy_payment.created_at)
-                            or _as_utc_naive(datetime.now(UTC)),
-                            updated_at=_as_utc_naive(legacy_payment.created_at)
-                            or _as_utc_naive(datetime.now(UTC)),
+                            }
+                            summary["payments_updated"] += 1
+
+                        await session.flush()
+
+                        if not grant_plan.grant_importable:
+                            continue
+
+                        grant_key = (
+                            LEGACY_PAYMENT_REFERENCE_TYPE,
+                            str(legacy_payment.id),
                         )
-                        session.add(payment)
-                        existing_payments[payment_key] = payment
-                        summary["payments_created"] += 1
+                        grant = existing_grants.get(grant_key)
+                        if grant is None:
+                            grant = SubscriptionGrant(
+                                account_id=account.id,
+                                payment_id=payment.id,
+                                purchase_source="direct_payment",
+                                reference_type=LEGACY_PAYMENT_REFERENCE_TYPE,
+                                reference_id=str(legacy_payment.id),
+                                plan_code=grant_plan.plan_code or "plan_1m",
+                                amount=legacy_payment.amount,
+                                currency=legacy_payment.currency,
+                                duration_days=grant_plan.duration_days or 30,
+                                base_expires_at=grant_plan.base_expires_at
+                                or legacy_payment.created_at
+                                or datetime.now(UTC),
+                                target_expires_at=grant_plan.target_expires_at
+                                or legacy_payment.created_at
+                                or datetime.now(UTC),
+                                applied_at=legacy_payment.created_at
+                                or datetime.now(UTC),
+                                created_at=_as_utc_naive(legacy_payment.created_at)
+                                or _as_utc_naive(datetime.now(UTC)),
+                            )
+                            session.add(grant)
+                            existing_grants[grant_key] = grant
+                            summary["subscription_grants_created"] += 1
+                        else:
+                            grant.account_id = account.id
+                            grant.payment_id = payment.id
+                            grant.plan_code = grant_plan.plan_code or grant.plan_code
+                            grant.amount = legacy_payment.amount
+                            grant.currency = legacy_payment.currency
+                            grant.duration_days = (
+                                grant_plan.duration_days or grant.duration_days
+                            )
+                            if grant_plan.base_expires_at is not None:
+                                grant.base_expires_at = grant_plan.base_expires_at
+                            if grant_plan.target_expires_at is not None:
+                                grant.target_expires_at = grant_plan.target_expires_at
+                            grant.applied_at = (
+                                legacy_payment.created_at or grant.applied_at
+                            )
+                            summary["subscription_grants_updated"] += 1
+
+                await session.commit()
+
+            processed_payment_accounts += len(batch)
+            _print_batch_progress(
+                "DB import/payments",
+                batch_index=batch_index,
+                total_batches=total_payment_batches,
+                processed=processed_payment_accounts,
+                total_items=len(payment_import_plans),
+            )
+
+        balance_plans = [plan for plan in imported_plans if plan.referral_balance > 0]
+        total_balance_batches = _batch_count(len(balance_plans), normalized_batch_size)
+        processed_balance_accounts = 0
+        for batch_index, batch in enumerate(
+            _chunked(balance_plans, normalized_batch_size), start=1
+        ):
+            async with session_factory() as session:
+                batch_telegram_ids = [plan.telegram_id for plan in batch]
+                accounts_by_telegram_id = {
+                    account.telegram_id: account
+                    for account in (
+                        await session.execute(
+                            select(Account).where(
+                                Account.telegram_id.in_(batch_telegram_ids)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                    if account.telegram_id is not None
+                }
+                idempotency_keys = [
+                    f"legacy-referral-balance:{plan.telegram_id}" for plan in batch
+                ]
+                existing_ledger_idempotency_keys = {
+                    key
+                    for key in (
+                        await session.execute(
+                            select(LedgerEntry.idempotency_key).where(
+                                LedgerEntry.idempotency_key.in_(idempotency_keys)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                    if key is not None
+                }
+
+                for plan in batch:
+                    account = accounts_by_telegram_id[plan.telegram_id]
+                    idempotency_key = f"legacy-referral-balance:{plan.telegram_id}"
+                    if idempotency_key in existing_ledger_idempotency_keys:
+                        summary["ledger_referral_balance_entries_reused"] += 1
                     else:
-                        payment.account_id = account.id
-                        payment.status = status_map[grant_plan.target_payment_status]
-                        payment.amount = legacy_payment.amount
-                        payment.currency = legacy_payment.currency
-                        payment.plan_code = grant_plan.plan_code
-                        payment.description = (
-                            f"Legacy import payment #{legacy_payment.id}"
-                        )
-                        payment.finalized_at = legacy_payment.created_at
-                        payment.raw_payload = {
-                            "source": LEGACY_SOURCE,
-                            "legacy_payment_id": legacy_payment.id,
-                            "legacy_user_id": legacy_payment.user_id,
-                            "legacy_subscription_id": legacy_payment.subscription_id,
-                            "legacy_tariff_id": legacy_payment.tariff_id,
-                        }
-                        payment.request_metadata = {
-                            "migration_source": LEGACY_SOURCE,
-                            "legacy_payment_id": legacy_payment.id,
-                        }
-                        summary["payments_updated"] += 1
+                        summary["ledger_referral_balance_entries_created"] += 1
+                    entry = await apply_credit_in_transaction(
+                        session,
+                        account_id=account.id,
+                        amount=plan.referral_balance,
+                        entry_type=LedgerEntryType.ADMIN_CREDIT,
+                        reference_type=LEGACY_REFERRAL_BALANCE_REFERENCE_TYPE,
+                        reference_id=str(plan.telegram_id),
+                        comment="Legacy referral balance import",
+                        idempotency_key=idempotency_key,
+                    )
+                    existing_ledger_idempotency_keys.add(idempotency_key)
+                    del entry
 
-                    await session.flush()
+                await session.commit()
 
-                    if not grant_plan.grant_importable:
-                        continue
-
-                    grant_key = (LEGACY_PAYMENT_REFERENCE_TYPE, str(legacy_payment.id))
-                    grant = existing_grants.get(grant_key)
-                    if grant is None:
-                        grant = SubscriptionGrant(
-                            account_id=account.id,
-                            payment_id=payment.id,
-                            purchase_source="direct_payment",
-                            reference_type=LEGACY_PAYMENT_REFERENCE_TYPE,
-                            reference_id=str(legacy_payment.id),
-                            plan_code=grant_plan.plan_code or "plan_1m",
-                            amount=legacy_payment.amount,
-                            currency=legacy_payment.currency,
-                            duration_days=grant_plan.duration_days or 30,
-                            base_expires_at=grant_plan.base_expires_at
-                            or legacy_payment.created_at
-                            or datetime.now(UTC),
-                            target_expires_at=grant_plan.target_expires_at
-                            or legacy_payment.created_at
-                            or datetime.now(UTC),
-                            applied_at=legacy_payment.created_at or datetime.now(UTC),
-                            created_at=_as_utc_naive(legacy_payment.created_at)
-                            or _as_utc_naive(datetime.now(UTC)),
-                        )
-                        session.add(grant)
-                        existing_grants[grant_key] = grant
-                        summary["subscription_grants_created"] += 1
-                    else:
-                        grant.account_id = account.id
-                        grant.payment_id = payment.id
-                        grant.plan_code = grant_plan.plan_code or grant.plan_code
-                        grant.amount = legacy_payment.amount
-                        grant.currency = legacy_payment.currency
-                        grant.duration_days = (
-                            grant_plan.duration_days or grant.duration_days
-                        )
-                        if grant_plan.base_expires_at is not None:
-                            grant.base_expires_at = grant_plan.base_expires_at
-                        if grant_plan.target_expires_at is not None:
-                            grant.target_expires_at = grant_plan.target_expires_at
-                        grant.applied_at = legacy_payment.created_at or grant.applied_at
-                        summary["subscription_grants_updated"] += 1
-
-            await session.flush()
-
-            for plan in imported_plans:
-                if plan.referral_balance <= 0:
-                    continue
-                account = imported_accounts[plan.telegram_id]
-                idempotency_key = f"legacy-referral-balance:{plan.telegram_id}"
-                if idempotency_key in existing_ledger_idempotency_keys:
-                    summary["ledger_referral_balance_entries_reused"] += 1
-                else:
-                    summary["ledger_referral_balance_entries_created"] += 1
-                entry = await apply_credit_in_transaction(
-                    session,
-                    account_id=account.id,
-                    amount=plan.referral_balance,
-                    entry_type=LedgerEntryType.ADMIN_CREDIT,
-                    reference_type=LEGACY_REFERRAL_BALANCE_REFERENCE_TYPE,
-                    reference_id=str(plan.telegram_id),
-                    comment="Legacy referral balance import",
-                    idempotency_key=idempotency_key,
-                )
-                existing_ledger_idempotency_keys.add(idempotency_key)
-                del entry
-
-            await session.commit()
+            processed_balance_accounts += len(batch)
+            _print_batch_progress(
+                "DB import/referral-balances",
+                batch_index=batch_index,
+                total_batches=total_balance_batches,
+                processed=processed_balance_accounts,
+                total_items=len(balance_plans),
+            )
     finally:
         await engine.dispose()
 
@@ -1337,7 +1585,7 @@ async def apply_db_import(
 
 
 async def sync_remnawave_state(
-    migration_plan: MigrationPlan, *, database_url: str
+    migration_plan: MigrationPlan, *, database_url: str, batch_size: int
 ) -> tuple[dict[str, Any], list[RemnawaveManualReviewItem]]:
     from sqlalchemy import select
 
@@ -1345,79 +1593,111 @@ async def sync_remnawave_state(
     from app.integrations.remnawave import get_remnawave_gateway
     from app.services.purchases import apply_remote_subscription_snapshot
 
+    normalized_batch_size = _ensure_positive_batch_size(
+        batch_size, name="remnawave_batch_size"
+    )
     engine, session_factory = await _open_target_session_factory(database_url)
     gateway = get_remnawave_gateway()
     summary = Counter[str]()
+    desired_plans = [
+        plan
+        for plan in migration_plan.account_plans
+        if plan.import_user and plan.canonical_subscription is not None
+    ]
+    summary["desired_active_accounts"] = len(desired_plans)
+    desired_uuid_set: set[uuid.UUID] = set()
 
     try:
-        async with session_factory() as session:
-            accounts_by_telegram_id = {
-                account.telegram_id: account
-                for account in (
-                    await session.execute(
-                        select(Account).where(Account.telegram_id.is_not(None))
+        total_sync_batches = _batch_count(len(desired_plans), normalized_batch_size)
+        processed_sync_accounts = 0
+        for batch_index, batch in enumerate(
+            _chunked(desired_plans, normalized_batch_size), start=1
+        ):
+            async with session_factory() as session:
+                batch_telegram_ids = [plan.telegram_id for plan in batch]
+                accounts_by_telegram_id = {
+                    account.telegram_id: account
+                    for account in (
+                        await session.execute(
+                            select(Account).where(
+                                Account.telegram_id.in_(batch_telegram_ids)
+                            )
+                        )
                     )
-                )
-                .scalars()
-                .all()
-                if account.telegram_id is not None
-            }
+                    .scalars()
+                    .all()
+                    if account.telegram_id is not None
+                }
 
-            desired_plans = [
-                plan
-                for plan in migration_plan.account_plans
-                if plan.import_user and plan.canonical_subscription is not None
-            ]
-            summary["desired_active_accounts"] = len(desired_plans)
-            desired_uuid_set: set[uuid.UUID] = set()
+                for plan in batch:
+                    account = accounts_by_telegram_id.get(plan.telegram_id)
+                    if account is None:
+                        raise RuntimeError(
+                            f"Target account missing in DB for telegram_id={plan.telegram_id}. "
+                            "Run --apply-db first."
+                        )
 
-            for plan in desired_plans:
-                account = accounts_by_telegram_id.get(plan.telegram_id)
-                if account is None:
-                    raise RuntimeError(
-                        f"Target account missing in DB for telegram_id={plan.telegram_id}. "
-                        "Run --apply-db first."
+                    desired_uuid = (
+                        account.remnawave_user_uuid
+                        or plan.target_remnawave_uuid
+                        or account.id
                     )
+                    desired_uuid_set.add(desired_uuid)
+                    remote_user = await gateway.upsert_user(
+                        user_uuid=desired_uuid,
+                        expire_at=account.subscription_expires_at
+                        or plan.target_subscription_expires_at
+                        or datetime.now(UTC),
+                        email=account.email,
+                        telegram_id=account.telegram_id,
+                        status=_desired_subscription_status(
+                            expires_at=account.subscription_expires_at
+                        ),
+                        is_trial=bool(account.subscription_is_trial),
+                        hwid_device_limit=plan.target_hwid_device_limit,
+                    )
+                    apply_remote_subscription_snapshot(account, remote_user)
+                    summary["upserts_completed"] += 1
 
-                desired_uuid = (
-                    account.remnawave_user_uuid
-                    or plan.target_remnawave_uuid
-                    or account.id
-                )
-                desired_uuid_set.add(desired_uuid)
-                remote_user = await gateway.upsert_user(
-                    user_uuid=desired_uuid,
-                    expire_at=account.subscription_expires_at
-                    or plan.target_subscription_expires_at
-                    or datetime.now(UTC),
-                    email=account.email,
-                    telegram_id=account.telegram_id,
-                    status=_desired_subscription_status(
-                        expires_at=account.subscription_expires_at
-                    ),
-                    is_trial=bool(account.subscription_is_trial),
-                    hwid_device_limit=plan.target_hwid_device_limit,
-                )
-                apply_remote_subscription_snapshot(account, remote_user)
-                summary["upserts_completed"] += 1
+                await session.commit()
 
-            await session.flush()
-
-            cleanup_candidates = sorted(
-                uuid_value
-                for uuid_value in migration_plan.removable_legacy_remnawave_uuids
-                if uuid_value not in desired_uuid_set
+            processed_sync_accounts += len(batch)
+            _print_batch_progress(
+                "Remnawave sync/upserts",
+                batch_index=batch_index,
+                total_batches=total_sync_batches,
+                processed=processed_sync_accounts,
+                total_items=len(desired_plans),
             )
-            summary["legacy_cleanup_candidates"] = len(cleanup_candidates)
-            for user_uuid in cleanup_candidates:
+
+        cleanup_candidates = sorted(
+            uuid_value
+            for uuid_value in migration_plan.removable_legacy_remnawave_uuids
+            if uuid_value not in desired_uuid_set
+        )
+        summary["legacy_cleanup_candidates"] = len(cleanup_candidates)
+        total_cleanup_batches = _batch_count(
+            len(cleanup_candidates), normalized_batch_size
+        )
+        processed_cleanup_candidates = 0
+        for batch_index, batch in enumerate(
+            _chunked(cleanup_candidates, normalized_batch_size), start=1
+        ):
+            for user_uuid in batch:
                 remote_user = await gateway.get_user_by_uuid(user_uuid)
                 if remote_user is None:
                     summary["legacy_cleanup_missing"] += 1
                     continue
                 await gateway.delete_user(user_uuid)
                 summary["legacy_cleanup_deleted"] += 1
-
-            await session.commit()
+            processed_cleanup_candidates += len(batch)
+            _print_batch_progress(
+                "Remnawave sync/cleanup",
+                batch_index=batch_index,
+                total_batches=total_cleanup_batches,
+                processed=processed_cleanup_candidates,
+                total_items=len(cleanup_candidates),
+            )
 
         remote_inventory = await gateway.get_all_users()
     finally:
@@ -1516,6 +1796,8 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
         raise SystemExit(f"Legacy DB not found: {args.legacy_db}")
     if not args.plans_json.exists():
         raise SystemExit(f"Plans JSON not found: {args.plans_json}")
+    _ensure_positive_batch_size(args.db_batch_size, name="db_batch_size")
+    _ensure_positive_batch_size(args.remnawave_batch_size, name="remnawave_batch_size")
 
     current_plans_by_duration = _load_current_plans(args.plans_json)
     connection = _connect_legacy_db(args.legacy_db)
@@ -1556,7 +1838,11 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     if args.apply_db:
-        db_summary = await apply_db_import(migration_plan, database_url=database_url)
+        db_summary = await apply_db_import(
+            migration_plan,
+            database_url=database_url,
+            batch_size=args.db_batch_size,
+        )
         report["db_apply_summary"] = db_summary
         _print_apply_db_summary(db_summary)
 
@@ -1590,6 +1876,7 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
         sync_summary, manual_review_items = await sync_remnawave_state(
             migration_plan,
             database_url=database_url,
+            batch_size=args.remnawave_batch_size,
         )
         report["remnawave_sync_summary"] = sync_summary
         report["remnawave_manual_review"] = [

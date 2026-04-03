@@ -52,3 +52,4 @@ playwright-report/
 /.idea/modules.xml
 /tasks.txt
 /tasks.md
+/.env.example2

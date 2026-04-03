@@ -70,6 +70,14 @@ docker compose --profile tools run --rm legacy-migration --apply-db \
   --output-json /app/migration-reports/legacy-apply.json
 ```
 
+Если VDS слабый, запускайте импорт меньшими батчами:
+
+```bash
+docker compose --profile tools run --rm legacy-migration --apply-db \
+  --db-batch-size 100 \
+  --output-json /app/migration-reports/legacy-apply.json
+```
+
 Подробно: [docs/legacy-migration.md](/home/yoda/PycharmProjects/remnastore/docs/legacy-migration.md)
 
 ## Локальный запуск из исходников
