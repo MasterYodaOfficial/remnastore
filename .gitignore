@@ -53,3 +53,4 @@ playwright-report/
 /tasks.txt
 /tasks.md
 /.env.example2
+/logs/
