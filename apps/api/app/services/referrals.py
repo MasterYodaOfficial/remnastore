@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, ROUND_DOWN
 import uuid
+from typing import Literal
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -75,7 +76,18 @@ class ReferralSummary:
     referral_earnings: int
     available_for_withdraw: int
     effective_reward_rate: float
+
+
+ReferralFeedStatus = Literal["all", "active", "pending"]
+
+
+@dataclass(slots=True)
+class ReferralFeedPage:
     items: list[ReferralSummaryItem]
+    total: int
+    limit: int
+    offset: int
+    status_filter: ReferralFeedStatus
 
 
 @dataclass(slots=True)
@@ -135,6 +147,14 @@ def _display_name_for_referral(account: Account | None) -> str:
         or account.email
         or translate("api.referrals.fallback_user_name")
     )
+
+
+def _normalize_referral_feed_status(
+    status_filter: ReferralFeedStatus | None,
+) -> ReferralFeedStatus:
+    if status_filter in {"active", "pending"}:
+        return status_filter
+    return "all"
 
 
 async def _load_account_for_update(
@@ -682,6 +702,70 @@ async def get_referral_summary(
     if account is None:
         raise ReferralServiceError(_referral_error("account_not_found"))
 
+    return ReferralSummary(
+        referral_code=account.referral_code or "",
+        referrals_count=int(account.referrals_count),
+        referral_earnings=int(account.referral_earnings),
+        available_for_withdraw=(
+            await get_withdrawal_availability(session, account=account)
+        ).available_for_withdraw,
+        effective_reward_rate=float(get_effective_referral_reward_rate(account)),
+    )
+
+
+def _build_referral_feed_filters(
+    *,
+    account_id: uuid.UUID,
+    status_filter: ReferralFeedStatus,
+) -> list[object]:
+    filters: list[object] = [ReferralAttribution.referrer_account_id == account_id]
+    if status_filter == "active":
+        filters.append(ReferralReward.id.is_not(None))
+    elif status_filter == "pending":
+        filters.append(ReferralReward.id.is_(None))
+    return filters
+
+
+def _referral_feed_order_by(status_filter: ReferralFeedStatus) -> tuple[object, ...]:
+    if status_filter == "active":
+        return (
+            ReferralReward.created_at.desc(),
+            ReferralAttribution.created_at.desc(),
+            ReferralAttribution.id.desc(),
+        )
+    return (
+        ReferralAttribution.created_at.desc(),
+        ReferralAttribution.id.desc(),
+    )
+
+
+async def get_referral_feed(
+    session: AsyncSession,
+    *,
+    account_id: uuid.UUID,
+    limit: int,
+    offset: int,
+    status_filter: ReferralFeedStatus | None = None,
+) -> ReferralFeedPage:
+    account = await session.get(Account, account_id)
+    if account is None:
+        raise ReferralServiceError(_referral_error("account_not_found"))
+
+    resolved_status_filter = _normalize_referral_feed_status(status_filter)
+    filters = _build_referral_feed_filters(
+        account_id=account.id,
+        status_filter=resolved_status_filter,
+    )
+
+    total = await session.scalar(
+        select(func.count(ReferralAttribution.id))
+        .select_from(ReferralAttribution)
+        .outerjoin(
+            ReferralReward, ReferralReward.attribution_id == ReferralAttribution.id
+        )
+        .where(*filters)
+    )
+
     referred_account = aliased(Account)
     result = await session.execute(
         select(ReferralAttribution, referred_account, ReferralReward)
@@ -692,29 +776,27 @@ async def get_referral_summary(
         .outerjoin(
             ReferralReward, ReferralReward.attribution_id == ReferralAttribution.id
         )
-        .where(ReferralAttribution.referrer_account_id == account.id)
-        .order_by(ReferralAttribution.created_at.desc())
+        .where(*filters)
+        .order_by(*_referral_feed_order_by(resolved_status_filter))
+        .limit(limit)
+        .offset(offset)
     )
 
-    items: list[ReferralSummaryItem] = []
-    for attribution, referred, reward in result.all():
-        items.append(
-            ReferralSummaryItem(
-                referred_account_id=attribution.referred_account_id,
-                display_name=_display_name_for_referral(referred),
-                created_at=attribution.created_at,
-                reward_amount=0 if reward is None else int(reward.reward_amount),
-                status="pending" if reward is None else "active",
-            )
+    items = [
+        ReferralSummaryItem(
+            referred_account_id=attribution.referred_account_id,
+            display_name=_display_name_for_referral(referred),
+            created_at=attribution.created_at,
+            reward_amount=0 if reward is None else int(reward.reward_amount),
+            status="pending" if reward is None else "active",
         )
+        for attribution, referred, reward in result.all()
+    ]
 
-    return ReferralSummary(
-        referral_code=account.referral_code or "",
-        referrals_count=int(account.referrals_count),
-        referral_earnings=int(account.referral_earnings),
-        available_for_withdraw=(
-            await get_withdrawal_availability(session, account=account)
-        ).available_for_withdraw,
-        effective_reward_rate=float(get_effective_referral_reward_rate(account)),
+    return ReferralFeedPage(
         items=items,
+        total=int(total or 0),
+        limit=limit,
+        offset=offset,
+        status_filter=resolved_status_filter,
     )

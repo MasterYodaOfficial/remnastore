@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -94,7 +94,10 @@ async def _load_account_by_remnawave_user_uuid(
         .where(
             or_(
                 Account.remnawave_user_uuid == remnawave_user_uuid,
-                Account.id == remnawave_user_uuid,
+                and_(
+                    Account.remnawave_user_uuid.is_(None),
+                    Account.id == remnawave_user_uuid,
+                ),
             )
         )
         .with_for_update()
