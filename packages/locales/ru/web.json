@@ -121,13 +121,21 @@
       "shareTelegram": "Поделиться в Telegram",
       "withdrawAction": "Вывести {amount} ₽",
       "referralsTitle": "Ваши рефералы ({count})",
+      "filterAll": "Все",
+      "filterActive": "С покупкой",
+      "filterPending": "Ожидают",
       "loading": "Загружаем реферальную статистику...",
+      "loadingMore": "Загружаем еще...",
       "connectedAt": "Подключился {date}",
+      "showingCount": "Показаны {shown} из {total}",
+      "showMore": "Показать еще",
       "rewardPending": "Награда ожидается",
       "rewardConfirmed": "Первая покупка подтверждена",
       "rewardAwaiting": "Ждет первую оплату",
       "emptyTitle": "Рефералов пока нет",
-      "emptySubtitle": "Поделитесь ссылкой с друзьями или в своём канале, чтобы начать получать вознаграждение."
+      "emptySubtitle": "Поделитесь ссылкой с друзьями или в своём канале, чтобы начать получать вознаграждение.",
+      "emptyFilteredTitle": "Для этого фильтра пока ничего нет",
+      "emptyFilteredSubtitle": "Попробуйте переключить фильтр или зайдите позже, когда появятся новые начисления."
     },
     "withdrawals": {
       "title": "Заявки на вывод",

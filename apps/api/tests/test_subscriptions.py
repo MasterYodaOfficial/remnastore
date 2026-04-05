@@ -1088,6 +1088,108 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event_logs[0].payload["remnawave_event"], "user.modified")
         self.assertEqual(event_logs[0].payload["remnawave_scope"], "user")
 
+    async def test_remnawave_webhook_ignores_stale_secondary_uuid_after_merge(
+        self,
+    ) -> None:
+        stale_secondary_uuid = uuid.uuid4()
+        canonical_remote_uuid = uuid.uuid4()
+        account = await self._create_account(
+            id=stale_secondary_uuid,
+            email="webhook-merge@example.com",
+            remnawave_user_uuid=canonical_remote_uuid,
+            subscription_status="ACTIVE",
+            subscription_url="https://panel.test/sub/canonical",
+        )
+        expires_at = datetime.now(UTC) + timedelta(days=5)
+
+        payload = {
+            "scope": "user",
+            "event": "user.modified",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "data": {
+                "uuid": str(stale_secondary_uuid),
+                "status": "EXPIRED",
+                "expireAt": expires_at.isoformat(),
+                "subscriptionUrl": "https://panel.test/sub/stale-secondary",
+                "email": account.email,
+            },
+        }
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(
+            settings.remnawave_webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        response = await self.client.post(
+            "/api/v1/webhooks/remnawave",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Remnawave-Signature": signature,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["handled"], True)
+        self.assertEqual(response.json()["processed"], False)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.remnawave_user_uuid, canonical_remote_uuid)
+        self.assertEqual(
+            stored_account.subscription_url,
+            "https://panel.test/sub/canonical",
+        )
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
+        event_logs = await self._get_account_event_logs(account.id)
+        self.assertEqual(event_logs, [])
+
+    async def test_sync_subscription_by_remnawave_user_uuid_ignores_stale_secondary_uuid(
+        self,
+    ) -> None:
+        stale_secondary_uuid = uuid.uuid4()
+        canonical_remote_uuid = uuid.uuid4()
+        account = await self._create_account(
+            id=stale_secondary_uuid,
+            email="sync-merge@example.com",
+            remnawave_user_uuid=canonical_remote_uuid,
+            subscription_status="ACTIVE",
+            subscription_url="https://panel.test/sub/canonical-sync",
+        )
+
+        self._fake_gateway.users[stale_secondary_uuid] = RemnawaveUser(
+            uuid=stale_secondary_uuid,
+            username=f"acc_{stale_secondary_uuid.hex}",
+            status="EXPIRED",
+            expire_at=datetime.now(UTC) + timedelta(days=5),
+            subscription_url="https://panel.test/sub/stale-sync",
+            telegram_id=None,
+            email=account.email,
+            tag=None,
+        )
+
+        async with self._session_factory() as session:
+            synced_account = (
+                await subscriptions_service.sync_subscription_by_remnawave_user_uuid(
+                    session,
+                    remnawave_user_uuid=stale_secondary_uuid,
+                )
+            )
+
+        self.assertIsNone(synced_account)
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.remnawave_user_uuid, canonical_remote_uuid)
+        self.assertEqual(
+            stored_account.subscription_url,
+            "https://panel.test/sub/canonical-sync",
+        )
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+
     async def test_remnawave_webhook_with_null_tag_clears_trial_flag(self) -> None:
         account = await self._create_account(
             email="webhook-clear-trial@example.com",

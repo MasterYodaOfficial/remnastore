@@ -4,7 +4,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +91,19 @@ class SubscriptionSnapshotCandidate:
     sort_bias: int = 0
 
 
+@dataclass(slots=True)
+class RemnawaveUserSelectionResult:
+    keep_user: RemnawaveUser
+    ranked_users: list[RemnawaveUser]
+    reason: str
+
+
+@dataclass(slots=True)
+class RemnawaveReconcileResult:
+    merged_user: RemnawaveUser
+    audit_payload: dict[str, Any]
+
+
 def _normalize_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -122,6 +135,13 @@ def _earlier_datetime(*values: datetime | None) -> datetime | None:
     if not normalized_values:
         return None
     return min(normalized_values)
+
+
+def _datetime_sort_value(value: datetime | None) -> float:
+    normalized_value = _normalize_datetime(value)
+    if normalized_value is None:
+        return float("-inf")
+    return normalized_value.timestamp()
 
 
 def _account_has_remnawave_state(account: Account) -> bool:
@@ -161,21 +181,118 @@ def _subscription_status_rank(
 
 def _subscription_candidate_sort_key(
     candidate: SubscriptionSnapshotCandidate,
-) -> tuple[int, float, int, int, int, int]:
+) -> tuple[tuple[int, float, int], int, float, int]:
     normalized_expires_at = _normalize_datetime(candidate.subscription_expires_at)
     normalized_url = _normalize_optional_text(candidate.subscription_url)
-    normalized_status = _normalize_optional_text(candidate.subscription_status)
     normalized_synced_at = _normalize_datetime(candidate.subscription_last_synced_at)
     return (
-        1 if normalized_expires_at is not None else 0,
-        normalized_expires_at.timestamp()
-        if normalized_expires_at is not None
-        else float("-inf"),
-        _subscription_status_rank(normalized_status, expires_at=normalized_expires_at),
+        _subscription_strength_sort_key(
+            is_trial=candidate.subscription_is_trial,
+            expires_at=normalized_expires_at,
+            status=candidate.subscription_status,
+        ),
         1 if normalized_url is not None else 0,
-        int(candidate.subscription_is_trial),
-        int(candidate.sort_bias) + (1 if normalized_synced_at is not None else 0),
+        _datetime_sort_value(normalized_synced_at),
+        int(candidate.sort_bias),
     )
+
+
+def _subscription_strength_sort_key(
+    *,
+    is_trial: bool,
+    expires_at: datetime | None,
+    status: str | None,
+) -> tuple[int, float, int]:
+    normalized_expires_at = _normalize_datetime(expires_at)
+    return (
+        0 if is_trial else 1,
+        _datetime_sort_value(normalized_expires_at),
+        _subscription_status_rank(status, expires_at=normalized_expires_at),
+    )
+
+
+def _remnawave_traffic_sort_key(user: RemnawaveUser) -> tuple[int, int, int, int]:
+    used_traffic_bytes = int(user.used_traffic_bytes or 0)
+    lifetime_used_traffic_bytes = int(user.lifetime_used_traffic_bytes or 0)
+    max_traffic_bytes = max(used_traffic_bytes, lifetime_used_traffic_bytes)
+    return (
+        1 if max_traffic_bytes > 0 else 0,
+        max_traffic_bytes,
+        lifetime_used_traffic_bytes,
+        used_traffic_bytes,
+    )
+
+
+def _remnawave_user_sort_key(
+    user: RemnawaveUser,
+) -> tuple[int, float, int, float, int, int, int, int, float, int, str]:
+    return (
+        1 if _normalize_datetime(user.online_at) is not None else 0,
+        _datetime_sort_value(user.online_at),
+        1 if _normalize_datetime(user.first_connected_at) is not None else 0,
+        _datetime_sort_value(user.first_connected_at),
+        *_remnawave_traffic_sort_key(user),
+        *_subscription_strength_sort_key(
+            is_trial=user.tag == "TRIAL",
+            expires_at=user.expire_at,
+            status=user.status,
+        ),
+        user.uuid.hex,
+    )
+
+
+def _select_remnawave_user_reason(
+    *,
+    winner: RemnawaveUser,
+    runner_up: RemnawaveUser | None,
+) -> str:
+    if runner_up is None:
+        return "single_remote_user"
+
+    if _normalize_datetime(winner.online_at) != _normalize_datetime(
+        runner_up.online_at
+    ):
+        return "latest_online_at"
+    if _normalize_datetime(winner.first_connected_at) != _normalize_datetime(
+        runner_up.first_connected_at
+    ):
+        return "latest_first_connected_at"
+    if _remnawave_traffic_sort_key(winner) != _remnawave_traffic_sort_key(runner_up):
+        return "higher_traffic_usage"
+
+    winner_subscription_key = _subscription_strength_sort_key(
+        is_trial=winner.tag == "TRIAL",
+        expires_at=winner.expire_at,
+        status=winner.status,
+    )
+    runner_subscription_key = _subscription_strength_sort_key(
+        is_trial=runner_up.tag == "TRIAL",
+        expires_at=runner_up.expire_at,
+        status=runner_up.status,
+    )
+    if winner_subscription_key[0] != runner_subscription_key[0]:
+        return "paid_over_trial"
+    if winner_subscription_key[1] != runner_subscription_key[1]:
+        return "latest_expires_at"
+    if winner_subscription_key[2] != runner_subscription_key[2]:
+        return "stronger_status"
+    return "deterministic_uuid_tie_breaker"
+
+
+def _serialize_remnawave_user_snapshot(user: RemnawaveUser) -> dict[str, Any]:
+    return {
+        "uuid": user.uuid,
+        "status": user.status,
+        "expire_at": _normalize_datetime(user.expire_at),
+        "subscription_url": _normalize_optional_text(user.subscription_url),
+        "telegram_id": user.telegram_id,
+        "email": _normalize_optional_text(user.email),
+        "tag": _normalize_optional_text(user.tag),
+        "used_traffic_bytes": int(user.used_traffic_bytes or 0),
+        "lifetime_used_traffic_bytes": int(user.lifetime_used_traffic_bytes or 0),
+        "online_at": _normalize_datetime(user.online_at),
+        "first_connected_at": _normalize_datetime(user.first_connected_at),
+    }
 
 
 def _account_snapshot_candidate(
@@ -250,13 +367,13 @@ def _apply_subscription_candidate(
     )
     target_account.subscription_url = (
         None if candidate is None else candidate.subscription_url
-    ) or target_account.subscription_url
+    )
     target_account.subscription_status = (
         None if candidate is None else candidate.subscription_status
-    ) or target_account.subscription_status
+    )
     target_account.subscription_expires_at = (
         None if candidate is None else candidate.subscription_expires_at
-    ) or target_account.subscription_expires_at
+    )
     target_account.subscription_last_synced_at = merged_last_synced_at
     target_account.subscription_is_trial = (
         False if candidate is None else candidate.subscription_is_trial
@@ -828,37 +945,17 @@ async def _collect_remnawave_users_for_merge(
 
 def _select_remnawave_user_to_keep(
     *,
-    target_account: Account,
-    source_account: Account,
     remote_users: list[RemnawaveUser],
-) -> RemnawaveUser:
-    remote_by_uuid = {user.uuid: user for user in remote_users}
-    preferred_uuids = [
-        target_account.remnawave_user_uuid,
-        target_account.id if _account_has_remnawave_state(target_account) else None,
-        source_account.remnawave_user_uuid,
-        source_account.id if _account_has_remnawave_state(source_account) else None,
-    ]
-    for preferred_uuid in preferred_uuids:
-        if preferred_uuid is not None and preferred_uuid in remote_by_uuid:
-            return remote_by_uuid[preferred_uuid]
-
-    preferred_candidate = _select_preferred_subscription_candidate(
-        target_account=target_account,
-        source_account=source_account,
-        remote_users=remote_users,
-    )
-    if (
-        preferred_candidate is not None
-        and preferred_candidate.remnawave_user_uuid is not None
-        and preferred_candidate.remnawave_user_uuid in remote_by_uuid
-    ):
-        return remote_by_uuid[preferred_candidate.remnawave_user_uuid]
-
-    return max(
-        remote_users,
-        key=lambda user: _subscription_candidate_sort_key(
-            _remote_snapshot_candidate(user, sort_bias=0)
+) -> RemnawaveUserSelectionResult:
+    ranked_users = sorted(remote_users, key=_remnawave_user_sort_key, reverse=True)
+    keep_user = ranked_users[0]
+    runner_up = ranked_users[1] if len(ranked_users) > 1 else None
+    return RemnawaveUserSelectionResult(
+        keep_user=keep_user,
+        ranked_users=ranked_users,
+        reason=_select_remnawave_user_reason(
+            winner=keep_user,
+            runner_up=runner_up,
         ),
     )
 
@@ -869,12 +966,11 @@ async def _reconcile_remnawave_users(
     target_account: Account,
     source_account: Account,
     remote_users: list[RemnawaveUser],
-) -> RemnawaveUser:
-    keep_user = _select_remnawave_user_to_keep(
-        target_account=target_account,
-        source_account=source_account,
+) -> RemnawaveReconcileResult:
+    selection = _select_remnawave_user_to_keep(
         remote_users=remote_users,
     )
+    keep_user = selection.keep_user
     preferred_candidate = _select_preferred_subscription_candidate(
         target_account=target_account,
         source_account=source_account,
@@ -906,16 +1002,33 @@ async def _reconcile_remnawave_users(
             status=resolved_status,
             is_trial=resolved_is_trial,
         )
-        for remote_user in remote_users:
+        deleted_user_uuids: list[uuid.UUID] = []
+        for remote_user in selection.ranked_users:
             if remote_user.uuid == keep_user.uuid:
                 continue
             await gateway.delete_user(remote_user.uuid)
+            deleted_user_uuids.append(remote_user.uuid)
     except RemnawaveRequestError as exc:
         raise AccountMergeConflictError(
             _linking_error("remnawave_merge_failed")
         ) from exc
 
-    return merged_user
+    return RemnawaveReconcileResult(
+        merged_user=merged_user,
+        audit_payload={
+            "kept_user_uuid": keep_user.uuid,
+            "deleted_user_uuids": deleted_user_uuids,
+            "selection_reason": selection.reason,
+            "subscription_candidate_user_uuid": None
+            if preferred_candidate is None
+            else preferred_candidate.remnawave_user_uuid,
+            "ranked_remote_users": [
+                _serialize_remnawave_user_snapshot(user)
+                for user in selection.ranked_users
+            ],
+            "merged_user": _serialize_remnawave_user_snapshot(merged_user),
+        },
+    )
 
 
 async def merge_accounts(
@@ -976,12 +1089,13 @@ async def merge_accounts(
     _merge_trial_metadata(target_account, source_account)
 
     if remnawave_gateway is not None and remote_users:
-        merged_remote_user = await _reconcile_remnawave_users(
+        remnawave_reconcile_result = await _reconcile_remnawave_users(
             gateway=remnawave_gateway,
             target_account=target_account,
             source_account=source_account,
             remote_users=remote_users,
         )
+        merged_remote_user = remnawave_reconcile_result.merged_user
         _apply_subscription_candidate(
             target_account,
             candidate=_remote_snapshot_candidate(merged_remote_user, sort_bias=100),
@@ -1020,6 +1134,15 @@ async def merge_accounts(
     )
     target_account.last_login_source = last_login_source
     target_account.last_seen_at = _utcnow()
+
+    merge_audit_payload: dict[str, Any] = {
+        "source_account_id": source_account.id,
+        "target_account_id": target_account.id,
+    }
+    if remnawave_gateway is not None and remote_users:
+        merge_audit_payload["remnawave_reconcile"] = (
+            remnawave_reconcile_result.audit_payload
+        )
 
     await _move_auth_accounts(
         session,
@@ -1070,6 +1193,13 @@ async def merge_accounts(
         session,
         source_account_id=source_account.id,
         target_account_id=target_account.id,
+    )
+    await append_account_event(
+        session,
+        account_id=target_account.id,
+        event_type="account.merge.completed",
+        source="api",
+        payload=merge_audit_payload,
     )
     await session.flush()
     await session.delete(source_account)

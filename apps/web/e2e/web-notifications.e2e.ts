@@ -89,22 +89,30 @@ function buildReferralSummaryResponse(availableForWithdraw: number) {
     referral_earnings: 340,
     available_for_withdraw: availableForWithdraw,
     effective_reward_rate: 20,
-    items: [
-      {
-        referred_account_id: "ref-1",
-        display_name: "bob@example.com",
-        created_at: "2026-03-18T09:00:00Z",
-        reward_amount: 200,
-        status: "active",
-      },
-      {
-        referred_account_id: "ref-2",
-        display_name: "carol@example.com",
-        created_at: "2026-03-19T09:00:00Z",
-        reward_amount: 140,
-        status: "active",
-      },
-    ],
+  };
+}
+
+function buildReferralFeedResponse(
+  items: Array<{
+    referred_account_id: string;
+    display_name: string;
+    created_at: string;
+    reward_amount: number;
+    status: "active" | "pending";
+  }>,
+  options: {
+    total?: number;
+    limit?: number;
+    offset?: number;
+    status?: "all" | "active" | "pending";
+  } = {},
+) {
+  return {
+    items,
+    total: options.total ?? items.length,
+    limit: options.limit ?? 20,
+    offset: options.offset ?? 0,
+    status_filter: options.status ?? "all",
   };
 }
 
@@ -200,6 +208,42 @@ async function mockAuthenticatedMobileSession(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(buildNotificationsResponse(unreadCount)),
+    });
+  });
+
+  await page.route("**/api/v1/referrals/summary", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(buildReferralSummaryResponse(340)),
+    });
+  });
+
+  await page.route("**/api/v1/referrals/feed?**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        buildReferralFeedResponse(
+          [
+            {
+              referred_account_id: "ref-2",
+              display_name: "carol@example.com",
+              created_at: "2026-03-19T09:00:00Z",
+              reward_amount: 140,
+              status: "active",
+            },
+            {
+              referred_account_id: "ref-1",
+              display_name: "bob@example.com",
+              created_at: "2026-03-18T09:00:00Z",
+              reward_amount: 200,
+              status: "active",
+            },
+          ],
+          { total: 2, limit: 20, offset: 0, status: "all" },
+        ),
+      ),
     });
   });
 
@@ -495,6 +539,94 @@ test.describe("web mobile browser smoke", () => {
     await expect(page.getByText("На рассмотрении")).toBeVisible();
     await expect(page.getByText("320 ₽")).toBeVisible();
     await expect(page.getByText("Комментарий: основная карта для выплат")).toBeVisible();
+  });
+
+  test("paginates the referral feed, supports filters, and keeps content inside the viewport", async ({
+    page,
+  }) => {
+    await mockAuthenticatedMobileSession(page, { initialUnreadCount: 0 });
+
+    const feedItems = Array.from({ length: 25 }, (_, index) => {
+      const itemNumber = index + 1;
+      const isActive = index < 13;
+
+      return {
+        referred_account_id: `ref-${itemNumber}`,
+        display_name: `very-long-referral-user-${itemNumber}@example-super-long-domain.test`,
+        created_at: `2026-03-${String(25 - index).padStart(2, "0")}T09:00:00Z`,
+        reward_amount: isActive ? 100 + itemNumber : 0,
+        status: (isActive ? "active" : "pending") as "active" | "pending",
+      };
+    });
+
+    await page.route("**/api/v1/referrals/summary", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...buildReferralSummaryResponse(340),
+          referrals_count: feedItems.length,
+        }),
+      });
+    });
+
+    await page.route("**/api/v1/referrals/feed?**", async (route) => {
+      const url = new URL(route.request().url());
+      const limit = Number(url.searchParams.get("limit") ?? "20");
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      const status = (url.searchParams.get("status") ?? "all") as "all" | "active" | "pending";
+
+      const filteredItems = feedItems.filter((item) => {
+        if (status === "active") {
+          return item.status === "active";
+        }
+        if (status === "pending") {
+          return item.status === "pending";
+        }
+        return true;
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          buildReferralFeedResponse(
+            filteredItems.slice(offset, offset + limit),
+            {
+              total: filteredItems.length,
+              limit,
+              offset,
+              status,
+            },
+          ),
+        ),
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Рефералы" }).click();
+
+    await expect(page.getByRole("heading", { name: "Реферальная программа" })).toBeVisible();
+    await expect(page.getByTestId("referral-feed-item")).toHaveCount(20);
+    await expect(page.getByText("Показаны 20 из 25")).toBeVisible();
+
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      const root = document.documentElement;
+      const body = document.body;
+      return root.scrollWidth > root.clientWidth + 1 || body.scrollWidth > body.clientWidth + 1;
+    });
+    expect(hasHorizontalOverflow).toBeFalsy();
+
+    await page.getByTestId("referral-feed-load-more").click();
+    await expect(page.getByTestId("referral-feed-item")).toHaveCount(25);
+
+    await page.getByRole("button", { name: "С покупкой" }).click();
+    await expect(page.getByTestId("referral-feed-item")).toHaveCount(13);
+    await expect(page.getByText("Показаны 13 из 13")).toBeVisible();
+
+    await page.getByRole("button", { name: "Ожидают" }).click();
+    await expect(page.getByTestId("referral-feed-item")).toHaveCount(12);
+    await expect(page.getByText("Показаны 12 из 12")).toBeVisible();
   });
 
   test("starts Telegram account linking from settings and opens the external link", async ({
