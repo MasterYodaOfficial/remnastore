@@ -15,7 +15,7 @@ RUN npm run build
 
 FROM nginx:1.29-alpine
 ENV RUNTIME_CONFIG_PATH=/usr/share/nginx/html/runtime-config.js
-ENV RUNTIME_CONFIG_KEYS=VITE_API_BASE_URL,VITE_SUPABASE_URL,VITE_SUPABASE_ANON_KEY,VITE_TELEGRAM_BOT_URL,VITE_SUPPORT_TELEGRAM_URL
+ENV RUNTIME_CONFIG_KEYS=VITE_API_BASE_URL,VITE_SUPABASE_URL,VITE_SUPABASE_ANON_KEY,VITE_WEB_BRAND_NAME,VITE_TELEGRAM_BOT_URL,VITE_SUPPORT_TELEGRAM_URL,VITE_TELEGRAM_WEB_APP_FALLBACK_URL
 COPY ops/docker/web.nginx.conf /etc/nginx/conf.d/default.conf
 COPY ops/docker/generate-runtime-config.sh /docker-entrypoint.d/40-runtime-config.sh
 COPY --from=build /app/apps/web/dist /usr/share/nginx/html

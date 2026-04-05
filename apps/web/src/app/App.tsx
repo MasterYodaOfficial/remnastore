@@ -4,9 +4,11 @@ import {
   apiBaseUrl as BACKEND_API,
   supportTelegramUrl as SUPPORT_TELEGRAM_URL,
   telegramBotUrl as TELEGRAM_BOT_URL,
+  webBrandName as WEB_BRAND_NAME,
 } from '../../utils/runtime-config'
 import {
   loadTelegramScript,
+  hasTelegramLaunchParams,
   getTelegramWebApp,
   openTelegramInvoice,
   openTelegramExternalLink,
@@ -104,6 +106,15 @@ type PromoLaunchState = {
   promoCode: string | null;
   planId: string | null;
   tab: AppTab | null;
+};
+
+const formatDocumentTitle = (pageTitle: string | null): string => {
+  const normalizedPageTitle = pageTitle?.trim();
+  if (!normalizedPageTitle || normalizedPageTitle === WEB_BRAND_NAME) {
+    return WEB_BRAND_NAME;
+  }
+
+  return `${normalizedPageTitle} | ${WEB_BRAND_NAME}`;
 };
 
 const APP_THEME_TOKENS = {
@@ -1162,6 +1173,53 @@ export default function App() {
   const authViewRef = useRef<AuthView>('default');
   const promoLaunchAppliedRef = useRef(false);
   const promoLaunchQuoteRequestedRef = useRef(false);
+
+  useEffect(() => {
+    const pageTitle = (() => {
+      if (isLoading) {
+        return t('web.loadingScreen.title');
+      }
+
+      if (!isAuthenticated) {
+        if (authView === 'recovery') {
+          return t('web.login.recoveryTitle');
+        }
+
+        if (authView === 'recovery-expired') {
+          return t('web.login.expiredTitle');
+        }
+
+        return null;
+      }
+
+      switch (activeTab) {
+        case 'home':
+          return t('web.bottomNav.home');
+        case 'plans':
+          return t('web.plans.title');
+        case 'notifications':
+          return t('web.notificationsPage.title');
+        case 'payments':
+          return t('web.pendingPayments.title');
+        case 'balance-history':
+          return t('web.balanceHistory.title');
+        case 'referral':
+          return t('web.referralPage.title');
+        case 'settings':
+          return t('web.settings.title');
+        case 'faq':
+          return t('web.faq.title');
+        case 'privacy':
+          return t('web.legal.privacy.title');
+        case 'terms':
+          return t('web.legal.terms.title');
+        default:
+          return null;
+      }
+    })();
+
+    document.title = formatDocumentTitle(pageTitle);
+  }, [activeTab, authView, isAuthenticated, isLoading]);
   const prefetchedBrowserLinkUrlRef = useRef<string | null>(null);
   const prefetchedBrowserLinkPromiseRef = useRef<Promise<string> | null>(null);
 
@@ -1754,9 +1812,13 @@ export default function App() {
     }
 
     const initApp = async () => {
-      // Load Telegram script first
-      await loadTelegramScript();
-      
+      const shouldInitializeTelegram =
+        typeof window !== 'undefined' && hasTelegramLaunchParams();
+
+      if (shouldInitializeTelegram) {
+        void loadTelegramScript();
+      }
+
       const tg = getTelegramWebApp();
       if (tg && tg.initData) {
         setHasTelegramContext(true);
