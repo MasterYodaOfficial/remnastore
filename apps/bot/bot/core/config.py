@@ -1,5 +1,10 @@
-from pydantic import Field
+import re
+
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_WEBHOOK_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
 
 
 class Settings(BaseSettings):
@@ -26,8 +31,12 @@ class Settings(BaseSettings):
     bot_webhook_base_url: str = ""
     bot_webhook_path: str = "/bot/webhook"
     bot_webhook_secret: str = ""
+    bot_webhook_ip_address: str = ""
     bot_web_server_host: str = "0.0.0.0"
     bot_web_server_port: int = 8080
+    bot_webhook_setup_max_attempts: int = 5
+    bot_webhook_setup_timeout_seconds: int = 20
+    bot_webhook_fallback_to_polling: bool = True
     bot_locales_dir: str = ""
     bot_assets_dir: str = ""
     bot_help_telegram_url: str = ""
@@ -36,6 +45,74 @@ class Settings(BaseSettings):
     )
     bot_menu_session_ttl_seconds: int = 60 * 60 * 24 * 30
     bot_callback_lock_ttl_seconds: int = 5
+
+    @field_validator("bot_webhook_base_url", mode="before")
+    @classmethod
+    def normalize_bot_webhook_base_url(cls, value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        return value.strip().rstrip("/")
+
+    @field_validator("bot_webhook_path", mode="before")
+    @classmethod
+    def normalize_bot_webhook_path(cls, value: object) -> str:
+        if not isinstance(value, str):
+            return "/bot/webhook"
+        normalized = value.strip()
+        if not normalized:
+            return "/bot/webhook"
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        return normalized
+
+    @field_validator("bot_webhook_secret", mode="before")
+    @classmethod
+    def validate_bot_webhook_secret(cls, value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        normalized = value.strip()
+        if not normalized:
+            return ""
+        if not _WEBHOOK_SECRET_RE.fullmatch(normalized):
+            raise ValueError(
+                "BOT_WEBHOOK_SECRET must match Telegram requirements: "
+                "1-256 chars, only letters, digits, underscores, hyphens"
+            )
+        return normalized
+
+    @field_validator("bot_webhook_ip_address", mode="before")
+    @classmethod
+    def normalize_bot_webhook_ip_address(cls, value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        return value.strip()
+
+    @field_validator("bot_webhook_setup_max_attempts")
+    @classmethod
+    def validate_bot_webhook_setup_max_attempts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("BOT_WEBHOOK_SETUP_MAX_ATTEMPTS must be >= 1")
+        return value
+
+    @field_validator("bot_webhook_setup_timeout_seconds")
+    @classmethod
+    def validate_bot_webhook_setup_timeout_seconds(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("BOT_WEBHOOK_SETUP_TIMEOUT_SECONDS must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def validate_webhook_mode(self) -> "Settings":
+        if self.bot_use_webhook:
+            if not self.bot_webhook_base_url:
+                raise ValueError(
+                    "BOT_WEBHOOK_BASE_URL is required when BOT_USE_WEBHOOK=true"
+                )
+            if not self.bot_webhook_base_url.startswith("https://"):
+                raise ValueError(
+                    "BOT_WEBHOOK_BASE_URL must use https:// when BOT_USE_WEBHOOK=true"
+                )
+        return self
 
 
 settings = Settings()
