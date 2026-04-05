@@ -4,12 +4,18 @@
     <head>
       <meta charset="UTF-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Untitled</title>
+      <title>QuickVPN</title>
     </head>
 
     <body>
       <div id="root"></div>
       <script src="/runtime-config.js"></script>
+      <script>
+        const runtimeBrandName = window.__REMNASTORE_RUNTIME_CONFIG__?.VITE_WEB_BRAND_NAME;
+        if (typeof runtimeBrandName === 'string' && runtimeBrandName.trim()) {
+          document.title = runtimeBrandName.trim();
+        }
+      </script>
       <script type="module" src="/src/main.tsx"></script>
     </body>
   </html>
