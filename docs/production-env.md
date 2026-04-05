@@ -18,8 +18,10 @@
 - `VITE_API_BASE_URL` — публичный адрес backend API
 - `VITE_SUPABASE_URL` — URL проекта Supabase
 - `VITE_SUPABASE_ANON_KEY` — публичный ключ Supabase
+- `VITE_WEB_BRAND_NAME` — название сервиса в `document.title`
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота
 - `VITE_SUPPORT_TELEGRAM_URL` — ссылка на поддержку
+- `VITE_TELEGRAM_WEB_APP_FALLBACK_URL` — optional fallback URL для self-hosted копии `telegram-web-app.js`
 
 ### Telegram и внутренняя связка сервисов
 
@@ -95,8 +97,10 @@ BOT_WEBHOOK_PATH=/bot/webhook
 BOT_USE_WEBHOOK=false
 WEBAPP_URL=http://localhost:5173
 VITE_API_BASE_URL=http://localhost:8000
+VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 ```
 
 ## Публичный запуск через CloudPub или через свой nginx
@@ -108,8 +112,10 @@ WEBAPP_URL=https://web.mydomen.net
 VITE_API_BASE_URL=https://api.mydomen.net
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_public_key
+VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 
 BOT_USE_WEBHOOK=true
 BOT_WEBHOOK_BASE_URL=https://bot.mydomen.net

@@ -10,8 +10,10 @@
 BOT_USE_WEBHOOK=false
 WEBAPP_URL=http://localhost:5173
 VITE_API_BASE_URL=http://localhost:8000
+VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 ```
 
 Запуск текущей ветки из исходников:
@@ -60,8 +62,10 @@ WEBAPP_URL=https://web-xxx.cloudpub.ru
 VITE_API_BASE_URL=https://api-xxx.cloudpub.ru
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your_public_key
+VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 
 BOT_USE_WEBHOOK=true
 BOT_WEBHOOK_BASE_URL=https://bot-xxx.cloudpub.ru
@@ -90,4 +94,5 @@ docker compose --env-file .env \
 
 - домены CloudPub должны быть добавлены в `Supabase Auth -> Redirect URLs`
 - `web` и `admin` читают `VITE_*` из `.env` контейнера при старте
+- `web` по умолчанию отдает резервную копию `telegram-web-app.js` с `/vendor/telegram-web-app.js`
 - если используете CloudPub, отдельный nginx с сертификатами для локального стенда не нужен
