@@ -19,7 +19,7 @@ import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
 import { HomePage } from './components/HomePage';
 import { PlansPage } from './components/PlansPage';
-import { ReferralPage } from './components/ReferralPage';
+import { ReferralPage, type ReferralFeedFilter } from './components/ReferralPage';
 import { ReferralCard } from './components/ReferralCard';
 import { PromoRedeemCard, type PromoRedeemMessage } from './components/PromoRedeemCard';
 import { SettingsPage } from './components/SettingsPage';
@@ -316,7 +316,7 @@ interface BackendLedgerHistoryResponse {
   offset: number;
 }
 
-interface BackendReferralSummaryItem {
+interface BackendReferralFeedItem {
   referred_account_id: string;
   display_name: string;
   created_at: string;
@@ -330,7 +330,14 @@ interface BackendReferralSummary {
   referral_earnings: number;
   available_for_withdraw: number;
   effective_reward_rate: number;
-  items: BackendReferralSummaryItem[];
+}
+
+interface BackendReferralFeedResponse {
+  items: BackendReferralFeedItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  status_filter: ReferralFeedFilter;
 }
 
 interface BackendWithdrawalItem {
@@ -427,6 +434,8 @@ interface Subscription {
   subscriptionUrl?: string | null;
   trialEligibilityReason?: string | null;
 }
+
+const REFERRAL_FEED_PAGE_SIZE = 20;
 
 interface Plan {
   id: string;
@@ -1129,6 +1138,10 @@ export default function App() {
   const [referralCopied, setReferralCopied] = useState(false);
   const [referralSummary, setReferralSummary] = useState<BackendReferralSummary | null>(null);
   const [isLoadingReferralSummary, setIsLoadingReferralSummary] = useState(false);
+  const [referralFeedFilter, setReferralFeedFilter] = useState<ReferralFeedFilter>('all');
+  const [referralFeed, setReferralFeed] = useState<BackendReferralFeedResponse | null>(null);
+  const [isLoadingReferralFeed, setIsLoadingReferralFeed] = useState(false);
+  const [isLoadingMoreReferralFeed, setIsLoadingMoreReferralFeed] = useState(false);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequestItemView[]>([]);
   const [withdrawalsTotal, setWithdrawalsTotal] = useState(0);
   const [withdrawalMinimumAmount, setWithdrawalMinimumAmount] = useState(0);
@@ -1165,6 +1178,8 @@ export default function App() {
   const settingsPromoIdempotencyKeyRef = useRef<string | null>(null);
   const attemptedWithdrawalsTokenRef = useRef<string | null>(null);
   const attemptedPlansTokenRef = useRef<string | null>(null);
+  const attemptedReferralFeedKeyRef = useRef<string | null>(null);
+  const referralFeedRequestIdRef = useRef(0);
   const attemptedNotificationsTokenRef = useRef<string | null>(null);
   const attemptedActivePaymentsTokenRef = useRef<string | null>(null);
   const attemptedLedgerEntriesTokenRef = useRef<string | null>(null);
@@ -1411,6 +1426,32 @@ export default function App() {
     }
 
     return await response.json() as BackendReferralSummary;
+  };
+
+  const loadReferralFeedSnapshot = async (
+    token: string,
+    options: {
+      limit?: number;
+      offset?: number;
+      status?: ReferralFeedFilter;
+    } = {}
+  ) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(options.limit ?? REFERRAL_FEED_PAGE_SIZE));
+    params.set('offset', String(options.offset ?? 0));
+    params.set('status', options.status ?? 'all');
+
+    const response = await fetch(`${BACKEND_API}/api/v1/referrals/feed?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to load referral feed from backend');
+    }
+
+    return (await response.json()) as BackendReferralFeedResponse;
   };
 
   const loadWithdrawalsSnapshot = async (
@@ -2138,6 +2179,10 @@ export default function App() {
         setSubscription(null);
         setPlans([]);
         setReferralSummary(null);
+        setReferralFeed(null);
+        setReferralFeedFilter('all');
+        setIsLoadingReferralFeed(false);
+        setIsLoadingMoreReferralFeed(false);
         setWithdrawals([]);
         setWithdrawalsTotal(0);
         setWithdrawalMinimumAmount(0);
@@ -2149,6 +2194,8 @@ export default function App() {
         setLedgerEntriesTotal(0);
         attemptedWithdrawalsTokenRef.current = null;
         attemptedPlansTokenRef.current = null;
+        attemptedReferralFeedKeyRef.current = null;
+        referralFeedRequestIdRef.current += 1;
         attemptedNotificationsTokenRef.current = null;
         attemptedActivePaymentsTokenRef.current = null;
         attemptedLedgerEntriesTokenRef.current = null;
@@ -2165,6 +2212,10 @@ export default function App() {
       setSubscription(null);
       setPlans([]);
       setReferralSummary(null);
+      setReferralFeed(null);
+      setReferralFeedFilter('all');
+      setIsLoadingReferralFeed(false);
+      setIsLoadingMoreReferralFeed(false);
       setWithdrawals([]);
       setWithdrawalsTotal(0);
       setWithdrawalMinimumAmount(0);
@@ -2176,6 +2227,8 @@ export default function App() {
       setLedgerEntriesTotal(0);
       attemptedWithdrawalsTokenRef.current = null;
       attemptedPlansTokenRef.current = null;
+      attemptedReferralFeedKeyRef.current = null;
+      referralFeedRequestIdRef.current += 1;
       attemptedNotificationsTokenRef.current = null;
       attemptedActivePaymentsTokenRef.current = null;
       attemptedLedgerEntriesTokenRef.current = null;
@@ -2270,6 +2323,10 @@ export default function App() {
     setPlanPromoStarsQuote(null);
     setPlanPromoMessage(null);
     setReferralSummary(null);
+    setReferralFeed(null);
+    setReferralFeedFilter('all');
+    setIsLoadingReferralFeed(false);
+    setIsLoadingMoreReferralFeed(false);
     setWithdrawals([]);
     setWithdrawalsTotal(0);
     setWithdrawalMinimumAmount(0);
@@ -2290,6 +2347,8 @@ export default function App() {
     settingsPromoIdempotencyKeyRef.current = null;
     attemptedWithdrawalsTokenRef.current = null;
     attemptedPlansTokenRef.current = null;
+    attemptedReferralFeedKeyRef.current = null;
+    referralFeedRequestIdRef.current += 1;
     attemptedNotificationsTokenRef.current = null;
     attemptedActivePaymentsTokenRef.current = null;
     attemptedLedgerEntriesTokenRef.current = null;
@@ -2393,6 +2452,92 @@ export default function App() {
       return false;
     } finally {
       setIsLoadingReferralSummary(false);
+    }
+  };
+
+  const loadReferralFeed = async (
+    token: string,
+    options: {
+      filter?: ReferralFeedFilter;
+      silent?: boolean;
+    } = {}
+  ) => {
+    const filter = options.filter ?? referralFeedFilter;
+    const requestId = ++referralFeedRequestIdRef.current;
+    if (!options.silent) {
+      setIsLoadingReferralFeed(true);
+    }
+
+    try {
+      const snapshot = await loadReferralFeedSnapshot(token, {
+        limit: REFERRAL_FEED_PAGE_SIZE,
+        offset: 0,
+        status: filter,
+      });
+      if (requestId !== referralFeedRequestIdRef.current) {
+        return null;
+      }
+      setReferralFeed(snapshot);
+      return snapshot;
+    } catch (err) {
+      console.error('Error loading referral feed:', err);
+      if (requestId !== referralFeedRequestIdRef.current) {
+        return null;
+      }
+      setReferralFeed({
+        items: [],
+        total: 0,
+        limit: REFERRAL_FEED_PAGE_SIZE,
+        offset: 0,
+        status_filter: filter,
+      });
+      return null;
+    } finally {
+      if (!options.silent && requestId === referralFeedRequestIdRef.current) {
+        setIsLoadingReferralFeed(false);
+      }
+    }
+  };
+
+  const loadMoreReferralFeed = async (token: string) => {
+    if (!referralFeed || isLoadingMoreReferralFeed) {
+      return null;
+    }
+
+    if (referralFeed.items.length >= referralFeed.total) {
+      return referralFeed;
+    }
+
+    const requestId = ++referralFeedRequestIdRef.current;
+    setIsLoadingMoreReferralFeed(true);
+    try {
+      const snapshot = await loadReferralFeedSnapshot(token, {
+        limit: REFERRAL_FEED_PAGE_SIZE,
+        offset: referralFeed.items.length,
+        status: referralFeedFilter,
+      });
+      if (requestId !== referralFeedRequestIdRef.current) {
+        return null;
+      }
+
+      const mergedItems = [...referralFeed.items, ...snapshot.items];
+      const dedupedItems = mergedItems.filter(
+        (item, index, items) =>
+          index === items.findIndex((candidate) => candidate.referred_account_id === item.referred_account_id)
+      );
+      const nextSnapshot: BackendReferralFeedResponse = {
+        ...snapshot,
+        items: dedupedItems,
+      };
+      setReferralFeed(nextSnapshot);
+      return nextSnapshot;
+    } catch (err) {
+      console.error('Error loading more referral feed items:', err);
+      return null;
+    } finally {
+      if (requestId === referralFeedRequestIdRef.current) {
+        setIsLoadingMoreReferralFeed(false);
+      }
     }
   };
 
@@ -3045,6 +3190,35 @@ export default function App() {
     isDesktopBrowser,
     referralSummary,
     isLoadingReferralSummary,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken || !user || isDesktopBrowser || activeTab !== 'referral') {
+      return;
+    }
+
+    const nextFeedKey = [
+      accessToken,
+      user.id,
+      referralFeedFilter,
+      referralSummary?.referrals_count ?? (user.referralsCount || 0),
+      referralSummary?.referral_earnings ?? (user.referralEarnings || 0),
+    ].join(':');
+
+    if (attemptedReferralFeedKeyRef.current === nextFeedKey) {
+      return;
+    }
+
+    attemptedReferralFeedKeyRef.current = nextFeedKey;
+    void loadReferralFeed(accessToken, { filter: referralFeedFilter });
+  }, [
+    isAuthenticated,
+    accessToken,
+    user,
+    isDesktopBrowser,
+    activeTab,
+    referralFeedFilter,
+    referralSummary,
   ]);
 
   useEffect(() => {
@@ -3738,6 +3912,27 @@ export default function App() {
     }
   };
 
+  const handleChangeReferralFeedFilter = (filter: ReferralFeedFilter) => {
+    if (filter === referralFeedFilter) {
+      return;
+    }
+
+    referralFeedRequestIdRef.current += 1;
+    attemptedReferralFeedKeyRef.current = null;
+    setReferralFeed(null);
+    setIsLoadingReferralFeed(false);
+    setIsLoadingMoreReferralFeed(false);
+    setReferralFeedFilter(filter);
+  };
+
+  const handleLoadMoreReferralFeed = () => {
+    if (!accessToken || !referralFeed || isLoadingMoreReferralFeed) {
+      return;
+    }
+
+    void loadMoreReferralFeed(accessToken);
+  };
+
   const handleShareReferralToTelegram = () => {
     if (!user?.referralCode) {
       return;
@@ -4219,22 +4414,29 @@ export default function App() {
         return (
           <ReferralPage
             referralCode={(referralSummary?.referral_code ?? user.referralCode) || ''}
-            referrals={(referralSummary?.items || []).map((item) => ({
+            referrals={(referralFeed?.items || []).map((item) => ({
               id: item.referred_account_id,
               name: item.display_name,
               date: item.created_at,
               earned: item.reward_amount,
               status: item.status,
             }))}
+            referralsTotal={referralSummary?.referrals_count ?? (user.referralsCount || 0)}
+            filteredTotal={referralFeed?.total ?? 0}
+            activeFilter={referralFeed?.status_filter ?? referralFeedFilter}
             totalEarnings={referralSummary?.referral_earnings ?? (user.referralEarnings || 0)}
             availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
             minimumWithdrawalAmount={withdrawalMinimumAmount}
             rewardRate={referralSummary?.effective_reward_rate ?? 20}
-            isLoading={isLoadingReferralSummary}
+            isLoading={isLoadingReferralFeed || (!referralFeed && isLoadingReferralSummary)}
+            isLoadingMore={isLoadingMoreReferralFeed}
+            hasMore={(referralFeed?.items.length ?? 0) < (referralFeed?.total ?? 0)}
             withdrawals={withdrawals}
             withdrawalsTotal={withdrawalsTotal}
             isLoadingWithdrawals={isLoadingWithdrawals}
             copied={referralCopied}
+            onFilterChange={handleChangeReferralFeedFilter}
+            onLoadMore={handleLoadMoreReferralFeed}
             onCopyLink={handleCopyReferral}
             onShareTelegram={handleShareReferralToTelegram}
             onWithdraw={handleWithdraw}

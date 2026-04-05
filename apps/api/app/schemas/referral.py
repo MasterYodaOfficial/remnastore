@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -40,4 +41,14 @@ class ReferralSummaryResponse(BaseModel):
     referral_earnings: int
     available_for_withdraw: int
     effective_reward_rate: float
+
+
+ReferralFeedStatus = Literal["all", "active", "pending"]
+
+
+class ReferralFeedResponse(BaseModel):
     items: list[ReferralSummaryItemResponse]
+    total: int
+    limit: int
+    offset: int
+    status_filter: ReferralFeedStatus

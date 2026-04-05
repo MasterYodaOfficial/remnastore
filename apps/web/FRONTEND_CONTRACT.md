@@ -340,7 +340,7 @@ Query params:
 `GET /api/v1/referrals/summary`
 
 Назначение:
-- получить реальный referral summary для вкладки рефералов
+- получить агрегаты реферальной программы для карточек и статистики
 
 Ожидаемые поля:
 - `referral_code`
@@ -348,7 +348,27 @@ Query params:
 - `referral_earnings`
 - `available_for_withdraw`
 - `effective_reward_rate`
+
+Примечание:
+- `available_for_withdraw` должен трактоваться как backend-рассчитанный остаток для заявки на вывод
+- frontend не должен пытаться вычислять его сам из `referral_earnings`
+
+`GET /api/v1/referrals/feed`
+
+Назначение:
+- получить paginated feed рефералов для мобильного экрана рефералов без загрузки всей истории одним ответом
+
+Query params:
+- `limit`
+- `offset`
+- `status` (`all`, `active`, `pending`)
+
+Ожидаемые поля:
 - `items`
+- `total`
+- `limit`
+- `offset`
+- `status_filter`
 
 Ожидаемые поля `items[*]`:
 - `referred_account_id`
@@ -358,8 +378,8 @@ Query params:
 - `status`
 
 Примечание:
-- `available_for_withdraw` должен трактоваться как backend-рассчитанный остаток для заявки на вывод
-- frontend не должен пытаться вычислять его сам из `referral_earnings`
+- feed должен поддерживать фильтрацию и дозагрузку страниц
+- frontend не должен пытаться запрашивать всю историю рефералов одним вызовом
 
 ### Выводы
 

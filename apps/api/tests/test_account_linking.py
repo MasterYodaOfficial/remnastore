@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountEventLog,
     AdminActionLog,
     AdminActionType,
     AuthAccount,
@@ -245,6 +246,17 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             result = await session.execute(
                 select(AuthAccount).where(AuthAccount.account_id == account_id)
+            )
+            return list(result.scalars().all())
+
+    async def _get_account_event_logs(
+        self, account_id: uuid.UUID
+    ) -> list[AccountEventLog]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(AccountEventLog)
+                .where(AccountEventLog.account_id == account_id)
+                .order_by(AccountEventLog.id.asc())
             )
             return list(result.scalars().all())
 
@@ -717,6 +729,209 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(admin_logs[0].payload, {"origin": "merge-test"})
             self.assertEqual(admin_logs[0].target_account_id, browser_account.id)
 
+    async def test_merge_accounts_keeps_remote_user_with_latest_online_at(self) -> None:
+        browser_remote_uuid = uuid.uuid4()
+        telegram_remote_uuid = uuid.uuid4()
+        browser_account = await self._create_account(
+            email="browser-online@example.com",
+            display_name="Browser User",
+            remnawave_user_uuid=browser_remote_uuid,
+            subscription_url="https://panel.test/sub/browser-online",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 6, 10, 12, 0),
+            subscription_last_synced_at=datetime(2026, 3, 15, 10, 0),
+        )
+        telegram_account = await self._create_account(
+            telegram_id=777111,
+            first_name="Telegram User",
+            remnawave_user_uuid=telegram_remote_uuid,
+            subscription_url="https://panel.test/sub/telegram-online",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 5, 10, 12, 0),
+            subscription_last_synced_at=datetime(2026, 3, 15, 11, 0),
+        )
+
+        self._fake_gateway.users[browser_remote_uuid] = RemnawaveUser(
+            uuid=browser_remote_uuid,
+            username=f"acc_{browser_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 6, 10, 12, 0),
+            subscription_url="https://panel.test/sub/browser-online",
+            telegram_id=None,
+            email=browser_account.email,
+            tag=None,
+            online_at=datetime(2026, 4, 1, 9, 0, tzinfo=UTC),
+        )
+        self._fake_gateway.users[telegram_remote_uuid] = RemnawaveUser(
+            uuid=telegram_remote_uuid,
+            username=f"acc_{telegram_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 5, 10, 12, 0),
+            subscription_url="https://panel.test/sub/telegram-online",
+            telegram_id=telegram_account.telegram_id,
+            email=None,
+            tag=None,
+            online_at=datetime(2026, 4, 2, 9, 0, tzinfo=UTC),
+        )
+
+        merged_account = await self._merge_accounts_direct(
+            source_account_id=telegram_account.id,
+            target_account_id=browser_account.id,
+        )
+
+        self.assertEqual(merged_account.remnawave_user_uuid, telegram_remote_uuid)
+        self.assertEqual(
+            merged_account.subscription_url,
+            f"https://panel.test/sub/{telegram_remote_uuid.hex[:8]}",
+        )
+        self.assertEqual(
+            merged_account.subscription_expires_at,
+            datetime(2026, 6, 10, 12, 0),
+        )
+        self.assertEqual(self._fake_gateway.deleted_user_ids, [browser_remote_uuid])
+        self.assertNotIn(browser_remote_uuid, self._fake_gateway.users)
+
+        kept_remote_user = self._fake_gateway.users[telegram_remote_uuid]
+        self.assertEqual(
+            kept_remote_user.expire_at,
+            datetime(2026, 6, 10, 12, 0, tzinfo=UTC),
+        )
+        self.assertEqual(kept_remote_user.email, browser_account.email)
+        self.assertEqual(kept_remote_user.telegram_id, telegram_account.telegram_id)
+
+        event_logs = await self._get_account_event_logs(browser_account.id)
+        merge_events = [
+            item for item in event_logs if item.event_type == "account.merge.completed"
+        ]
+        self.assertEqual(len(merge_events), 1)
+        self.assertEqual(
+            merge_events[0].payload["remnawave_reconcile"]["selection_reason"],
+            "latest_online_at",
+        )
+        self.assertEqual(
+            merge_events[0].payload["remnawave_reconcile"]["kept_user_uuid"],
+            str(telegram_remote_uuid),
+        )
+
+    async def test_merge_accounts_keeps_remote_user_with_latest_first_connected_at(
+        self,
+    ) -> None:
+        browser_remote_uuid = uuid.uuid4()
+        telegram_remote_uuid = uuid.uuid4()
+        browser_account = await self._create_account(
+            email="browser-first-connected@example.com",
+            remnawave_user_uuid=browser_remote_uuid,
+            subscription_url="https://panel.test/sub/browser-first",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 4, 10, 12, 0),
+        )
+        telegram_account = await self._create_account(
+            telegram_id=777112,
+            remnawave_user_uuid=telegram_remote_uuid,
+            subscription_url="https://panel.test/sub/telegram-first",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 4, 15, 12, 0),
+        )
+
+        self._fake_gateway.users[browser_remote_uuid] = RemnawaveUser(
+            uuid=browser_remote_uuid,
+            username=f"acc_{browser_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 4, 10, 12, 0),
+            subscription_url="https://panel.test/sub/browser-first",
+            telegram_id=None,
+            email=browser_account.email,
+            tag=None,
+            first_connected_at=datetime(2026, 3, 10, 12, 0, tzinfo=UTC),
+        )
+        self._fake_gateway.users[telegram_remote_uuid] = RemnawaveUser(
+            uuid=telegram_remote_uuid,
+            username=f"acc_{telegram_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 4, 15, 12, 0),
+            subscription_url="https://panel.test/sub/telegram-first",
+            telegram_id=telegram_account.telegram_id,
+            email=None,
+            tag=None,
+            first_connected_at=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+
+        merged_account = await self._merge_accounts_direct(
+            source_account_id=telegram_account.id,
+            target_account_id=browser_account.id,
+        )
+
+        self.assertEqual(merged_account.remnawave_user_uuid, telegram_remote_uuid)
+        event_logs = await self._get_account_event_logs(browser_account.id)
+        merge_events = [
+            item for item in event_logs if item.event_type == "account.merge.completed"
+        ]
+        self.assertEqual(len(merge_events), 1)
+        self.assertEqual(
+            merge_events[0].payload["remnawave_reconcile"]["selection_reason"],
+            "latest_first_connected_at",
+        )
+
+    async def test_merge_accounts_prefers_paid_remote_over_trial_without_usage_signals(
+        self,
+    ) -> None:
+        browser_remote_uuid = uuid.uuid4()
+        telegram_remote_uuid = uuid.uuid4()
+        browser_account = await self._create_account(
+            email="browser-trial@example.com",
+            remnawave_user_uuid=browser_remote_uuid,
+            subscription_url="https://panel.test/sub/browser-trial",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 4, 10, 12, 0),
+            subscription_is_trial=True,
+        )
+        telegram_account = await self._create_account(
+            telegram_id=777113,
+            remnawave_user_uuid=telegram_remote_uuid,
+            subscription_url="https://panel.test/sub/telegram-paid",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 4, 5, 12, 0),
+            subscription_is_trial=False,
+        )
+
+        self._fake_gateway.users[browser_remote_uuid] = RemnawaveUser(
+            uuid=browser_remote_uuid,
+            username=f"acc_{browser_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 4, 10, 12, 0),
+            subscription_url="https://panel.test/sub/browser-trial",
+            telegram_id=None,
+            email=browser_account.email,
+            tag="TRIAL",
+        )
+        self._fake_gateway.users[telegram_remote_uuid] = RemnawaveUser(
+            uuid=telegram_remote_uuid,
+            username=f"acc_{telegram_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 4, 5, 12, 0),
+            subscription_url="https://panel.test/sub/telegram-paid",
+            telegram_id=telegram_account.telegram_id,
+            email=None,
+            tag=None,
+        )
+
+        merged_account = await self._merge_accounts_direct(
+            source_account_id=telegram_account.id,
+            target_account_id=browser_account.id,
+        )
+
+        self.assertEqual(merged_account.remnawave_user_uuid, telegram_remote_uuid)
+        self.assertFalse(merged_account.subscription_is_trial)
+        event_logs = await self._get_account_event_logs(browser_account.id)
+        merge_events = [
+            item for item in event_logs if item.event_type == "account.merge.completed"
+        ]
+        self.assertEqual(len(merge_events), 1)
+        self.assertEqual(
+            merge_events[0].payload["remnawave_reconcile"]["selection_reason"],
+            "paid_over_trial",
+        )
+
     async def test_merge_accounts_reconciles_existing_remnawave_users(self) -> None:
         browser_remote_uuid = uuid.uuid4()
         telegram_remote_uuid = uuid.uuid4()
@@ -765,22 +980,36 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
             target_account_id=browser_account.id,
         )
 
-        self.assertEqual(merged_account.remnawave_user_uuid, browser_remote_uuid)
+        self.assertEqual(merged_account.remnawave_user_uuid, telegram_remote_uuid)
+        self.assertEqual(
+            merged_account.subscription_url,
+            f"https://panel.test/sub/{telegram_remote_uuid.hex[:8]}",
+        )
         self.assertEqual(
             merged_account.subscription_expires_at,
             datetime(2026, 5, 10, 12, 0),
         )
         self.assertEqual(merged_account.telegram_id, telegram_account.telegram_id)
-        self.assertEqual(self._fake_gateway.deleted_user_ids, [telegram_remote_uuid])
-        self.assertNotIn(telegram_remote_uuid, self._fake_gateway.users)
+        self.assertEqual(self._fake_gateway.deleted_user_ids, [browser_remote_uuid])
+        self.assertNotIn(browser_remote_uuid, self._fake_gateway.users)
 
-        kept_remote_user = self._fake_gateway.users[browser_remote_uuid]
+        kept_remote_user = self._fake_gateway.users[telegram_remote_uuid]
         self.assertEqual(
             kept_remote_user.expire_at,
             datetime(2026, 5, 10, 12, 0, tzinfo=UTC),
         )
         self.assertEqual(kept_remote_user.email, browser_account.email)
         self.assertEqual(kept_remote_user.telegram_id, telegram_account.telegram_id)
+
+        event_logs = await self._get_account_event_logs(browser_account.id)
+        merge_events = [
+            item for item in event_logs if item.event_type == "account.merge.completed"
+        ]
+        self.assertEqual(len(merge_events), 1)
+        self.assertEqual(
+            merge_events[0].payload["remnawave_reconcile"]["selection_reason"],
+            "latest_expires_at",
+        )
 
         removed_source_account = await self._get_account(telegram_account.id)
         self.assertIsNone(removed_source_account)

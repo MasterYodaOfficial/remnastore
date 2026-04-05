@@ -372,10 +372,6 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["referral_earnings"], expected_reward)
         self.assertEqual(body["available_for_withdraw"], expected_reward)
         self.assertEqual(body["effective_reward_rate"], 20.0)
-        self.assertEqual(len(body["items"]), 1)
-        self.assertEqual(body["items"][0]["referred_account_id"], str(referred.id))
-        self.assertEqual(body["items"][0]["reward_amount"], expected_reward)
-        self.assertEqual(body["items"][0]["status"], "active")
 
         rewards = await self._get_referral_rewards(referrer.id)
         self.assertEqual(len(rewards), 1)
@@ -387,6 +383,148 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
             item.event_type for item in await self._get_account_event_logs(referrer.id)
         ]
         self.assertIn("referral.reward.granted", event_types)
+
+        feed_response = await self.client.get("/api/v1/referrals/feed")
+        self.assertEqual(feed_response.status_code, 200)
+        feed_body = feed_response.json()
+        self.assertEqual(feed_body["total"], 1)
+        self.assertEqual(feed_body["limit"], 20)
+        self.assertEqual(feed_body["offset"], 0)
+        self.assertEqual(feed_body["status_filter"], "all")
+        self.assertEqual(len(feed_body["items"]), 1)
+        self.assertEqual(feed_body["items"][0]["referred_account_id"], str(referred.id))
+        self.assertEqual(feed_body["items"][0]["reward_amount"], expected_reward)
+        self.assertEqual(feed_body["items"][0]["status"], "active")
+
+    async def test_feed_supports_pagination_and_status_filters(self) -> None:
+        referrer = await self._create_account(referral_code="ref-feed")
+        pending_referred = await self._create_account(display_name="Pending Referral")
+        active_referred_older = await self._create_account(
+            display_name="Older Paid Referral"
+        )
+        active_referred_newer = await self._create_account(
+            display_name="Newer Paid Referral"
+        )
+
+        async with self._session_factory() as session:
+            pending_claim = await referrals_service.claim_referral_code(
+                session,
+                account_id=pending_referred.id,
+                referral_code="ref-feed",
+            )
+            older_claim = await referrals_service.claim_referral_code(
+                session,
+                account_id=active_referred_older.id,
+                referral_code="ref-feed",
+            )
+            newer_claim = await referrals_service.claim_referral_code(
+                session,
+                account_id=active_referred_newer.id,
+                referral_code="ref-feed",
+            )
+
+            older_grant = SubscriptionGrant(
+                account_id=active_referred_older.id,
+                payment_id=None,
+                purchase_source="wallet",
+                reference_type="wallet_purchase",
+                reference_id="feed-grant-older",
+                plan_code="plan_1m",
+                amount=PLAN_1M_PRICE_RUB,
+                currency="RUB",
+                duration_days=30,
+                base_expires_at=datetime.now(UTC),
+                target_expires_at=datetime.now(UTC) + timedelta(days=30),
+                applied_at=datetime.now(UTC),
+            )
+            newer_grant = SubscriptionGrant(
+                account_id=active_referred_newer.id,
+                payment_id=None,
+                purchase_source="wallet",
+                reference_type="wallet_purchase",
+                reference_id="feed-grant-newer",
+                plan_code="plan_1m",
+                amount=PLAN_1M_PRICE_RUB,
+                currency="RUB",
+                duration_days=30,
+                base_expires_at=datetime.now(UTC),
+                target_expires_at=datetime.now(UTC) + timedelta(days=30),
+                applied_at=datetime.now(UTC),
+            )
+            session.add_all([older_grant, newer_grant])
+            await session.flush()
+
+            older_reward = (
+                await referrals_service.apply_first_referral_reward_for_grant(
+                    session,
+                    grant=older_grant,
+                )
+            )
+            newer_reward = (
+                await referrals_service.apply_first_referral_reward_for_grant(
+                    session,
+                    grant=newer_grant,
+                )
+            )
+
+            pending_claim.attribution.created_at = datetime(
+                2026, 4, 1, 12, 0, tzinfo=UTC
+            )
+            older_claim.attribution.created_at = datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+            newer_claim.attribution.created_at = datetime(2026, 4, 3, 12, 0, tzinfo=UTC)
+            assert older_reward is not None
+            assert newer_reward is not None
+            older_reward.created_at = datetime(2026, 4, 4, 12, 0, tzinfo=UTC)
+            newer_reward.created_at = datetime(2026, 4, 5, 12, 0, tzinfo=UTC)
+            await session.commit()
+
+        self._current_account_id = referrer.id
+
+        page_one = await self.client.get("/api/v1/referrals/feed?limit=2&offset=0")
+        self.assertEqual(page_one.status_code, 200)
+        page_one_body = page_one.json()
+        self.assertEqual(page_one_body["total"], 3)
+        self.assertEqual(page_one_body["limit"], 2)
+        self.assertEqual(page_one_body["offset"], 0)
+        self.assertEqual(
+            [item["referred_account_id"] for item in page_one_body["items"]],
+            [str(active_referred_newer.id), str(active_referred_older.id)],
+        )
+
+        page_two = await self.client.get("/api/v1/referrals/feed?limit=2&offset=2")
+        self.assertEqual(page_two.status_code, 200)
+        page_two_body = page_two.json()
+        self.assertEqual(page_two_body["total"], 3)
+        self.assertEqual(
+            [item["referred_account_id"] for item in page_two_body["items"]],
+            [str(pending_referred.id)],
+        )
+
+        active_only = await self.client.get("/api/v1/referrals/feed?status=active")
+        self.assertEqual(active_only.status_code, 200)
+        active_only_body = active_only.json()
+        self.assertEqual(active_only_body["status_filter"], "active")
+        self.assertEqual(active_only_body["total"], 2)
+        self.assertEqual(
+            [item["referred_account_id"] for item in active_only_body["items"]],
+            [str(active_referred_newer.id), str(active_referred_older.id)],
+        )
+        self.assertTrue(
+            all(item["status"] == "active" for item in active_only_body["items"])
+        )
+
+        pending_only = await self.client.get("/api/v1/referrals/feed?status=pending")
+        self.assertEqual(pending_only.status_code, 200)
+        pending_only_body = pending_only.json()
+        self.assertEqual(pending_only_body["status_filter"], "pending")
+        self.assertEqual(pending_only_body["total"], 1)
+        self.assertEqual(
+            [item["referred_account_id"] for item in pending_only_body["items"]],
+            [str(pending_referred.id)],
+        )
+        self.assertTrue(
+            all(item["status"] == "pending" for item in pending_only_body["items"])
+        )
 
     async def test_bot_webhook_records_pending_telegram_referral_intent(self) -> None:
         await self._create_account(referral_code="ref-bot")

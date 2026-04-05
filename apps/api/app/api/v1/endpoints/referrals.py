@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import api_error_from_exception
@@ -9,6 +9,8 @@ from app.db.session import get_session
 from app.schemas.referral import (
     ReferralClaimRequest,
     ReferralClaimResponse,
+    ReferralFeedResponse,
+    ReferralFeedStatus,
     ReferralSummaryResponse,
 )
 from app.services.ledger import clear_account_cache
@@ -18,6 +20,7 @@ from app.services.referrals import (
     ReferralCodeNotFoundError,
     ReferralSelfAttributionError,
     claim_referral_code,
+    get_referral_feed,
     get_referral_summary,
 )
 
@@ -32,6 +35,24 @@ async def read_referral_summary(
 ) -> ReferralSummaryResponse:
     summary = await get_referral_summary(session, account_id=current_account.id)
     return ReferralSummaryResponse.model_validate(summary, from_attributes=True)
+
+
+@router.get("/feed", response_model=ReferralFeedResponse)
+async def read_referral_feed(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    status_filter: ReferralFeedStatus = Query(default="all", alias="status"),
+    session: AsyncSession = Depends(get_session),
+    current_account: Account = Depends(get_current_account),
+) -> ReferralFeedResponse:
+    feed = await get_referral_feed(
+        session,
+        account_id=current_account.id,
+        limit=limit,
+        offset=offset,
+        status_filter=status_filter,
+    )
+    return ReferralFeedResponse.model_validate(feed, from_attributes=True)
 
 
 @router.post("/claim", response_model=ReferralClaimResponse)
