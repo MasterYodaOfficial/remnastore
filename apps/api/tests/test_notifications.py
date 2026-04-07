@@ -66,6 +66,7 @@ class FakeTelegramNotificationClient:
         text: str,
         parse_mode: str | None = None,
         disable_web_page_preview: bool | None = True,
+        message_effect_id: str | None = None,
         reply_markup: dict | None = None,
     ) -> str:
         self.sent_messages.append(
@@ -74,6 +75,7 @@ class FakeTelegramNotificationClient:
                 "text": text,
                 "parse_mode": parse_mode,
                 "disable_web_page_preview": disable_web_page_preview,
+                "message_effect_id": message_effect_id,
                 "reply_markup": reply_markup,
             }
         )
@@ -383,9 +385,10 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "telegram_id": 758107031,
-                    "text": "<b>✅ Оплата прошла</b>\n\nПлатеж успешно завершен.",
+                    "text": "<b>🎉 Оплата прошла</b>\n\n✨ Платеж успешно завершен.",
                     "parse_mode": "HTML",
                     "disable_web_page_preview": True,
+                    "message_effect_id": "5159385139981059251",
                     "reply_markup": None,
                 }
             ],

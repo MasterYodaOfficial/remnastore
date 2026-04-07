@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     api_url: str = ""
     api_token: str = ""
     webapp_url: str = ""
+    telegram_purchase_message_effect_id: str = Field(
+        default="5159385139981059251",
+        validation_alias="TELEGRAM_PURCHASE_MESSAGE_EFFECT_ID",
+    )
     redis_url: str = Field(default="", validation_alias="REDIS_URL")
     bot_use_webhook: bool = False
     bot_webhook_base_url: str = ""

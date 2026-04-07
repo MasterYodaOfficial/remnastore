@@ -666,7 +666,8 @@ Frontend использует такие переменные:
 - `VITE_API_BASE_URL` — base URL backend API
 - `VITE_SUPABASE_URL` — URL проекта Supabase
 - `VITE_SUPABASE_ANON_KEY` — публичный anon key Supabase
-- `VITE_WEB_BRAND_NAME` — название бренда для `document.title`
+- `VITE_WEB_BRAND_NAME` — runtime-бренд внутри интерфейса, если конкретный UI-элемент читает его
+- `VITE_BROWSER_BRAND_NAME` — бренд для `document.title` и названия вкладки браузера
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота для browser login entrypoint
 - `VITE_SUPPORT_TELEGRAM_URL` — ссылка на support chat / support contact action
 - `VITE_TELEGRAM_WEB_APP_FALLBACK_URL` — optional same-origin fallback для `telegram-web-app.js`
