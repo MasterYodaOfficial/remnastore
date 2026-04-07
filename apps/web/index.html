@@ -11,9 +11,10 @@
       <div id="root"></div>
       <script src="/runtime-config.js"></script>
       <script>
-        const runtimeBrandName = window.__REMNASTORE_RUNTIME_CONFIG__?.VITE_WEB_BRAND_NAME;
-        if (typeof runtimeBrandName === 'string' && runtimeBrandName.trim()) {
-          document.title = runtimeBrandName.trim();
+        const runtimeBrowserBrandName =
+          window.__REMNASTORE_RUNTIME_CONFIG__?.VITE_BROWSER_BRAND_NAME;
+        if (typeof runtimeBrowserBrandName === 'string' && runtimeBrowserBrandName.trim()) {
+          document.title = runtimeBrowserBrandName.trim();
         }
       </script>
       <script type="module" src="/src/main.tsx"></script>

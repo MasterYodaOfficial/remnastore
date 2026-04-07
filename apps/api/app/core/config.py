@@ -186,6 +186,10 @@ class Settings(BaseSettings):
         default="",
         validation_alias="BOT_USERNAME",
     )
+    telegram_purchase_message_effect_id: str = Field(
+        default="5159385139981059251",
+        validation_alias="TELEGRAM_PURCHASE_MESSAGE_EFFECT_ID",
+    )
     support_telegram_url: str = Field(
         default="",
         validation_alias=AliasChoices(
