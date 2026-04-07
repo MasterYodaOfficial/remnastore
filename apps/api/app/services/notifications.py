@@ -84,7 +84,7 @@ SUBSCRIPTION_NO_CONNECTION_REMINDER_EVENT_TYPE = (
     "subscription.no_connection_reminder.sent"
 )
 TELEGRAM_NOTIFICATION_TYPE_EMOJI: dict[NotificationType, str] = {
-    NotificationType.PAYMENT_SUCCEEDED: "✅",
+    NotificationType.PAYMENT_SUCCEEDED: "🎉",
     NotificationType.PAYMENT_FAILED: "⚠️",
     NotificationType.REFERRAL_REWARD_RECEIVED: "🎁",
     NotificationType.SUBSCRIPTION_EXPIRING: "⏳",
@@ -98,6 +98,13 @@ TELEGRAM_NOTIFICATION_TYPE_EMOJI: dict[NotificationType, str] = {
 
 def is_telegram_notification_delivery_enabled() -> bool:
     return bool(settings.telegram_bot_token.strip())
+
+
+def _get_payment_success_message_effect_id(notification: Notification) -> str | None:
+    if notification.type != NotificationType.PAYMENT_SUCCEEDED:
+        return None
+    effect_id = settings.telegram_purchase_message_effect_id.strip()
+    return effect_id or None
 
 
 def _normalize_required_text(value: str, *, field_name: str) -> str:
@@ -222,7 +229,10 @@ def _format_telegram_notification_html(notification: Notification) -> str:
         parts.append(f"<b>{escape(title_text, quote=True)}</b>")
 
     if body:
-        parts.append(escape(body, quote=True))
+        escaped_body = escape(body, quote=True)
+        if notification.type == NotificationType.PAYMENT_SUCCEEDED:
+            escaped_body = f"✨ {escaped_body}"
+        parts.append(escaped_body)
 
     if notification.action_url:
         action_url = escape(notification.action_url.strip(), quote=True)
@@ -344,6 +354,7 @@ class TelegramNotificationClient:
         text: str,
         parse_mode: str | None = None,
         disable_web_page_preview: bool | None = True,
+        message_effect_id: str | None = None,
         reply_markup: dict | None = None,
     ) -> str:
         payload: dict[str, object] = {
@@ -354,6 +365,8 @@ class TelegramNotificationClient:
             payload["parse_mode"] = parse_mode
         if disable_web_page_preview is not None:
             payload["disable_web_page_preview"] = disable_web_page_preview
+        if message_effect_id:
+            payload["message_effect_id"] = message_effect_id
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         result = await self._request("sendMessage", json=payload)
@@ -1021,6 +1034,9 @@ async def process_pending_telegram_deliveries(
                     telegram_id=int(account.telegram_id),
                     text=_format_telegram_notification_html(notification),
                     parse_mode="HTML",
+                    message_effect_id=_get_payment_success_message_effect_id(
+                        notification
+                    ),
                 )
             except TelegramNotificationDeliveryError as exc:
                 delivery.status = NotificationDeliveryStatus.FAILED

@@ -13,10 +13,12 @@ from bot.services.menu_renderer import (
     SCREEN_PLAN,
     YOOKASSA_IDEMPOTENCY_KEY_MAX_LENGTH,
     RenderedMenu,
+    _build_home_keyboard,
     _build_bot_payment_idempotency_key,
     _build_help_keyboard,
     _build_plan_detail_keyboard,
     _top_webapp_row,
+    build_browser_link_markup,
     build_rendered_menu,
     create_plan_payment_and_render,
     present_menu,
@@ -114,6 +116,29 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
             back_button.text, translate("common.actions.back", locale="ru")
         )
 
+    def test_home_keyboard_includes_browser_button_when_webapp_url_configured(
+        self,
+    ) -> None:
+        with patch("bot.keyboards.main.settings.webapp_url", "https://example.com/app"):
+            keyboard = _build_home_keyboard(locale="ru", referral_code="ref123")
+
+        buttons = [
+            button for row in keyboard.inline_keyboard for button in row if button.text
+        ]
+        browser_button = next(
+            button
+            for button in buttons
+            if button.text == translate("common.actions.open_in_browser", locale="ru")
+        )
+        self.assertEqual(browser_button.style, BUTTON_STYLE_SUCCESS)
+        self.assertEqual(browser_button.url, "https://example.com/app?ref=ref123")
+
+    def test_build_browser_link_markup_returns_none_without_webapp_url(self) -> None:
+        with patch("bot.keyboards.main.settings.webapp_url", ""):
+            markup = build_browser_link_markup(locale="ru")
+
+        self.assertIsNone(markup)
+
     def test_stars_purchase_button_mentions_telegram_stars(self) -> None:
         keyboard = _build_plan_detail_keyboard(
             locale="ru",
@@ -126,6 +151,18 @@ class PresentMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             stars_button.text,
             translate("common.actions.buy_in_telegram", locale="ru"),
+        )
+
+    def test_help_keyboard_includes_browser_button(self) -> None:
+        with patch("bot.keyboards.main.settings.webapp_url", "https://example.com/app"):
+            keyboard = _build_help_keyboard(locale="ru", referral_code=None)
+
+        buttons = [
+            button for row in keyboard.inline_keyboard for button in row if button.text
+        ]
+        self.assertIn(
+            translate("common.actions.open_in_browser", locale="ru"),
+            [button.text for button in buttons],
         )
 
     async def test_build_rendered_menu_plan_includes_promo_code_and_actions(

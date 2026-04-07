@@ -134,6 +134,39 @@ def _top_webapp_row(
     ]
 
 
+def _browser_button(
+    *,
+    locale: str | None,
+    referral_code: str | None,
+    route_path: str | None = None,
+) -> InlineKeyboardButton | None:
+    browser_url = build_webapp_url(referral_code, route_path=route_path)
+    if not browser_url:
+        return None
+
+    return InlineKeyboardButton(
+        text=translate("common.actions.open_in_browser", locale=locale),
+        style=BUTTON_STYLE_SUCCESS,
+        url=browser_url,
+    )
+
+
+def build_browser_link_markup(
+    *,
+    locale: str | None,
+    referral_code: str | None = None,
+    route_path: str | None = None,
+) -> InlineKeyboardMarkup | None:
+    browser_button = _browser_button(
+        locale=locale,
+        referral_code=referral_code,
+        route_path=route_path,
+    )
+    if browser_button is None:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[browser_button]])
+
+
 def _back_button(*, locale: str | None, callback_data: str) -> InlineKeyboardButton:
     return InlineKeyboardButton(
         text=translate("common.actions.back", locale=locale),
@@ -323,9 +356,16 @@ async def _get_plans_payload(client: ApiClient) -> list[dict[str, Any]]:
 def _build_home_keyboard(
     *, locale: str | None, referral_code: str | None
 ) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            _top_webapp_row(locale=locale, referral_code=referral_code),
+    rows: list[list[InlineKeyboardButton]] = [
+        _top_webapp_row(locale=locale, referral_code=referral_code)
+    ]
+
+    browser_button = _browser_button(locale=locale, referral_code=referral_code)
+    if browser_button is not None:
+        rows.append([browser_button])
+
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text=translate("common.actions.subscription", locale=locale),
@@ -348,6 +388,8 @@ def _build_home_keyboard(
             ],
         ]
     )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _build_subscription_keyboard(
@@ -561,6 +603,10 @@ def _build_help_keyboard(
     rows: list[list[InlineKeyboardButton]] = [
         _top_webapp_row(locale=locale, referral_code=referral_code)
     ]
+
+    browser_button = _browser_button(locale=locale, referral_code=referral_code)
+    if browser_button is not None:
+        rows.append([browser_button])
 
     help_buttons: list[InlineKeyboardButton] = []
     if settings.bot_help_telegram_url.strip():

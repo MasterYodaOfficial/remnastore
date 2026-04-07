@@ -6,7 +6,10 @@ from aiogram.types import Message, PreCheckoutQuery
 
 from bot.core.config import settings
 from bot.services.i18n import translate, translate_html
-from bot.services.menu_renderer import refresh_menu_for_telegram_user
+from bot.services.menu_renderer import (
+    build_browser_link_markup,
+    refresh_menu_for_telegram_user,
+)
 
 router = Router()
 
@@ -117,8 +120,11 @@ async def handle_successful_payment(message: Message) -> None:
         )
 
     locale = message.from_user.language_code if message.from_user is not None else None
+    success_reply_markup = build_browser_link_markup(locale=locale)
     await message.answer(
-        translate_html("bot.payments.subscription_updated", locale=locale)
+        translate_html("bot.payments.subscription_updated", locale=locale),
+        message_effect_id=settings.telegram_purchase_message_effect_id.strip() or None,
+        reply_markup=success_reply_markup,
     )
     if message.from_user is not None:
         await refresh_menu_for_telegram_user(

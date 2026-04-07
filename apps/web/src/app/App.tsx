@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase/client';
 import {
+  browserBrandName as BROWSER_BRAND_NAME,
   apiBaseUrl as BACKEND_API,
   supportTelegramUrl as SUPPORT_TELEGRAM_URL,
   telegramBotUrl as TELEGRAM_BOT_URL,
-  webBrandName as WEB_BRAND_NAME,
 } from '../../utils/runtime-config'
+import browserTabLogoUrl from '../../../bot/bot/assets/menu/logo.jpg';
 import {
   loadTelegramScript,
   hasTelegramLaunchParams,
@@ -46,6 +47,7 @@ import {
   readPendingReferralCode,
   clearPendingReferralCode,
 } from './lib/referrals';
+import { normalizeReferralMetric, resolveReferralAmount } from './lib/referral-metrics';
 import {
   getEffectiveStoredPaymentAttemptStatus,
   getStoredPaymentAttempt,
@@ -110,11 +112,26 @@ type PromoLaunchState = {
 
 const formatDocumentTitle = (pageTitle: string | null): string => {
   const normalizedPageTitle = pageTitle?.trim();
-  if (!normalizedPageTitle || normalizedPageTitle === WEB_BRAND_NAME) {
-    return WEB_BRAND_NAME;
+  if (!normalizedPageTitle || normalizedPageTitle === BROWSER_BRAND_NAME) {
+    return BROWSER_BRAND_NAME;
   }
 
-  return `${normalizedPageTitle} | ${WEB_BRAND_NAME}`;
+  return `${normalizedPageTitle} | ${BROWSER_BRAND_NAME}`;
+};
+
+const applyBrowserTabIcon = (href: string) => {
+  const iconRels = ['icon', 'shortcut icon'] as const;
+
+  for (const rel of iconRels) {
+    let link = document.head.querySelector(`link[rel="${rel}"]`) as HTMLLinkElement | null;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = rel;
+      document.head.appendChild(link);
+    }
+    link.type = 'image/jpeg';
+    link.href = href;
+  }
 };
 
 const APP_THEME_TOKENS = {
@@ -1142,6 +1159,7 @@ export default function App() {
   const [referralFeed, setReferralFeed] = useState<BackendReferralFeedResponse | null>(null);
   const [isLoadingReferralFeed, setIsLoadingReferralFeed] = useState(false);
   const [isLoadingMoreReferralFeed, setIsLoadingMoreReferralFeed] = useState(false);
+  const [referralAvailableForWithdrawValue, setReferralAvailableForWithdrawValue] = useState<number | null>(null);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequestItemView[]>([]);
   const [withdrawalsTotal, setWithdrawalsTotal] = useState(0);
   const [withdrawalMinimumAmount, setWithdrawalMinimumAmount] = useState(0);
@@ -1235,6 +1253,11 @@ export default function App() {
 
     document.title = formatDocumentTitle(pageTitle);
   }, [activeTab, authView, isAuthenticated, isLoading]);
+
+  useEffect(() => {
+    applyBrowserTabIcon(browserTabLogoUrl);
+  }, []);
+
   const prefetchedBrowserLinkUrlRef = useRef<string | null>(null);
   const prefetchedBrowserLinkPromiseRef = useRef<Promise<string> | null>(null);
 
@@ -2179,6 +2202,7 @@ export default function App() {
         setSubscription(null);
         setPlans([]);
         setReferralSummary(null);
+        setReferralAvailableForWithdrawValue(null);
         setReferralFeed(null);
         setReferralFeedFilter('all');
         setIsLoadingReferralFeed(false);
@@ -2212,6 +2236,7 @@ export default function App() {
       setSubscription(null);
       setPlans([]);
       setReferralSummary(null);
+      setReferralAvailableForWithdrawValue(null);
       setReferralFeed(null);
       setReferralFeedFilter('all');
       setIsLoadingReferralFeed(false);
@@ -2323,6 +2348,7 @@ export default function App() {
     setPlanPromoStarsQuote(null);
     setPlanPromoMessage(null);
     setReferralSummary(null);
+    setReferralAvailableForWithdrawValue(null);
     setReferralFeed(null);
     setReferralFeedFilter('all');
     setIsLoadingReferralFeed(false);
@@ -2446,6 +2472,9 @@ export default function App() {
     try {
       const summary = await loadReferralSummarySnapshot(token);
       setReferralSummary(summary);
+      setReferralAvailableForWithdrawValue(
+        normalizeReferralMetric(summary.available_for_withdraw)
+      );
       return true;
     } catch (err) {
       console.error('Error loading referral summary:', err);
@@ -2555,6 +2584,9 @@ export default function App() {
       setWithdrawals(snapshot.items.map(mapBackendWithdrawalToView));
       setWithdrawalsTotal(snapshot.total);
       setWithdrawalMinimumAmount(snapshot.minimum_amount_rub);
+      setReferralAvailableForWithdrawValue(
+        normalizeReferralMetric(snapshot.available_for_withdraw)
+      );
       return snapshot;
     } catch (err) {
       console.error('Error loading withdrawals:', err);
@@ -3163,7 +3195,7 @@ export default function App() {
       return;
     }
 
-    if (!isDesktopBrowser && activeTab !== 'referral') {
+    if (!isDesktopBrowser && activeTab !== 'home' && activeTab !== 'referral') {
       return;
     }
 
@@ -3891,8 +3923,8 @@ export default function App() {
   };
 
   const handleCopyReferral = () => {
-    if (user?.referralCode) {
-      const referralLink = buildBrowserReferralLink(user.referralCode);
+    if (currentReferralCode) {
+      const referralLink = buildBrowserReferralLink(currentReferralCode);
       if (!referralLink) {
         toast.error(t('web.app.toasts.referralPrepareFailed'));
         return;
@@ -3934,11 +3966,11 @@ export default function App() {
   };
 
   const handleShareReferralToTelegram = () => {
-    if (!user?.referralCode) {
+    if (!currentReferralCode) {
       return;
     }
 
-    const shareUrl = buildTelegramShareReferralUrl(user.referralCode);
+    const shareUrl = buildTelegramShareReferralUrl(currentReferralCode);
     if (!shareUrl) {
       toast.error(t('web.app.toasts.botLinkUnavailable'));
       return;
@@ -3960,9 +3992,7 @@ export default function App() {
       return;
     }
 
-    const availableForWithdraw =
-      referralSummary?.available_for_withdraw ?? user?.referralEarnings ?? 0;
-    if (availableForWithdraw <= 0) {
+    if (currentAvailableForWithdraw <= 0) {
       toast.error(t('web.app.toasts.withdrawNoFunds'));
       return;
     }
@@ -4327,6 +4357,15 @@ export default function App() {
     activeTab === 'home' || activeTab === 'plans' || activeTab === 'referral' || activeTab === 'settings'
       ? activeTab
       : lastPrimaryTabRef.current;
+  const currentReferralCode = (referralSummary?.referral_code ?? user?.referralCode ?? '') || '';
+  const currentReferralsCount =
+    referralSummary?.referrals_count ?? (user?.referralsCount || 0);
+  const currentReferralEarnings =
+    referralSummary?.referral_earnings ?? (user?.referralEarnings || 0);
+  const currentAvailableForWithdraw = resolveReferralAmount(
+    referralAvailableForWithdrawValue,
+    referralSummary?.available_for_withdraw
+  );
 
   const renderContent = () => {
     switch (activeTab) {
@@ -4335,11 +4374,10 @@ export default function App() {
           <HomePage
             subscription={subscriptionData}
             referralData={{
-              referralCode: user.referralCode || '',
-              referralsCount: user.referralsCount || 0,
-              referralEarnings: user.referralEarnings || 0,
-              availableForWithdraw:
-                referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0),
+              referralCode: currentReferralCode,
+              referralsCount: currentReferralsCount,
+              referralEarnings: currentReferralEarnings,
+              availableForWithdraw: currentAvailableForWithdraw,
             }}
             onActivateTrial={handleActivateTrial}
             onRenew={() => setActiveTab('plans')}
@@ -4413,7 +4451,7 @@ export default function App() {
       case 'referral':
         return (
           <ReferralPage
-            referralCode={(referralSummary?.referral_code ?? user.referralCode) || ''}
+            referralCode={currentReferralCode}
             referrals={(referralFeed?.items || []).map((item) => ({
               id: item.referred_account_id,
               name: item.display_name,
@@ -4421,11 +4459,11 @@ export default function App() {
               earned: item.reward_amount,
               status: item.status,
             }))}
-            referralsTotal={referralSummary?.referrals_count ?? (user.referralsCount || 0)}
+            referralsTotal={currentReferralsCount}
             filteredTotal={referralFeed?.total ?? 0}
             activeFilter={referralFeed?.status_filter ?? referralFeedFilter}
-            totalEarnings={referralSummary?.referral_earnings ?? (user.referralEarnings || 0)}
-            availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+            totalEarnings={currentReferralEarnings}
+            availableForWithdraw={currentAvailableForWithdraw}
             minimumWithdrawalAmount={withdrawalMinimumAmount}
             rewardRate={referralSummary?.effective_reward_rate ?? 20}
             isLoading={isLoadingReferralFeed || (!referralFeed && isLoadingReferralSummary)}
@@ -4639,7 +4677,7 @@ export default function App() {
         onClose={() => setIsWithdrawalModalOpen(false)}
         onSubmit={handleCreateWithdrawal}
         isSubmitting={isWithdrawalSubmitting}
-        availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+        availableForWithdraw={currentAvailableForWithdraw}
         minimumAmount={withdrawalMinimumAmount}
       />
       <PaymentMethodSheet
@@ -4825,7 +4863,7 @@ export default function App() {
                   <Gift className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
-                  {user.referralsCount || 0}
+                  {currentReferralsCount}
                 </div>
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">
                   {t('web.app.desktop.metrics.referralsBody')}
@@ -4840,7 +4878,7 @@ export default function App() {
                   <Sparkles className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 </div>
                 <div className="mt-4 text-2xl font-semibold text-slate-950 dark:text-slate-50">
-                  {formatRubles(user.referralEarnings)} ₽
+                  {formatRubles(currentReferralEarnings)} ₽
                 </div>
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-300">
                   {t('web.app.desktop.metrics.revenueBody')}
@@ -4924,12 +4962,10 @@ export default function App() {
               <div className="space-y-4 p-6 pt-4">
                 <div className="min-w-0">
                   <ReferralCard
-                    referralCode={user.referralCode || ''}
-                    referralsCount={user.referralsCount || 0}
-                    referralEarnings={user.referralEarnings || 0}
-                    availableForWithdraw={
-                      referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)
-                    }
+                    referralCode={currentReferralCode}
+                    referralsCount={currentReferralsCount}
+                    referralEarnings={currentReferralEarnings}
+                    availableForWithdraw={currentAvailableForWithdraw}
                     onCopy={handleCopyReferral}
                     onShareTelegram={handleShareReferralToTelegram}
                     onWithdraw={handleWithdraw}
@@ -4942,7 +4978,7 @@ export default function App() {
                       {t('web.app.desktop.invitedTitle')}
                     </div>
                     <div className="mt-3 text-3xl font-semibold text-slate-950 dark:text-slate-50">
-                      {user.referralsCount || 0}
+                      {currentReferralsCount}
                     </div>
                   </div>
                   <div className="rounded-[24px] bg-slate-950 p-4 text-white dark:border dark:border-slate-800 dark:bg-slate-900">
@@ -4950,7 +4986,7 @@ export default function App() {
                       {t('web.app.desktop.availableToWithdrawTitle')}
                     </div>
                     <div className="mt-3 text-3xl font-semibold">
-                      {formatRubles(referralSummary?.available_for_withdraw ?? user.referralEarnings)} ₽
+                      {formatRubles(currentAvailableForWithdraw)} ₽
                     </div>
                   </div>
                 </div>
@@ -4959,9 +4995,7 @@ export default function App() {
                     items={withdrawals}
                     total={withdrawalsTotal}
                     isLoading={isLoadingWithdrawals}
-                    availableForWithdraw={
-                      referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)
-                    }
+                    availableForWithdraw={currentAvailableForWithdraw}
                     minimumAmount={withdrawalMinimumAmount}
                     onCreate={handleWithdraw}
                   />
@@ -5257,7 +5291,7 @@ export default function App() {
         onClose={() => setIsWithdrawalModalOpen(false)}
         onSubmit={handleCreateWithdrawal}
         isSubmitting={isWithdrawalSubmitting}
-        availableForWithdraw={referralSummary?.available_for_withdraw ?? (user.referralEarnings || 0)}
+        availableForWithdraw={currentAvailableForWithdraw}
         minimumAmount={withdrawalMinimumAmount}
       />
       <PaymentMethodSheet
