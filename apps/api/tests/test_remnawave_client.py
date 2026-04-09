@@ -92,8 +92,8 @@ class _FakeUsersHttpClient:
             "shortUuid": "shortuuid",
             "username": "updated-user",
             "status": json["status"],
-            "trafficLimitBytes": 0,
-            "trafficLimitStrategy": "NO_RESET",
+            "trafficLimitBytes": json.get("trafficLimitBytes", 0),
+            "trafficLimitStrategy": json.get("trafficLimitStrategy", "NO_RESET"),
             "expireAt": json["expireAt"],
             "telegramId": json.get("telegramId"),
             "email": json.get("email"),
@@ -203,6 +203,8 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
             telegram_id=700001,
             is_trial=False,
             hwid_device_limit=3,
+            traffic_limit_bytes=0,
+            traffic_limit_strategy="NO_RESET",
         )
 
         body = gateway._sdk.users.created_bodies[0]
@@ -212,6 +214,8 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
             body.description,
             "RemnaStore | tg:700001 | uuid:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         )
+        self.assertEqual(body.traffic_limit_bytes, 0)
+        self.assertEqual(body.traffic_limit_strategy.value, "NO_RESET")
         self.assertEqual(user.username, "remna_tg700001")
 
     async def test_provision_user_resolves_internal_squad_by_configured_name(
@@ -297,12 +301,96 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
             telegram_id=700004,
             is_trial=False,
             hwid_device_limit=3,
+            traffic_limit_bytes=0,
+            traffic_limit_strategy="NO_RESET",
         )
 
         patch_call = gateway._sdk.users.client.patch_calls[0]
         self.assertEqual(patch_call["url"], "users")
         self.assertIn("tag", patch_call["json"])
         self.assertIsNone(patch_call["json"]["tag"])
+        self.assertEqual(patch_call["json"]["trafficLimitBytes"], 0)
+        self.assertEqual(patch_call["json"]["trafficLimitStrategy"], "NO_RESET")
+
+    async def test_provision_user_preserves_existing_paid_device_limit_on_update(
+        self,
+    ) -> None:
+        settings.remnawave_default_internal_squad_uuid = ""
+        settings.remnawave_default_internal_squad_name = ""
+        squad_uuid = uuid.UUID("67676767-6767-6767-6767-676767676767")
+        gateway = self._make_gateway(
+            squads=[SimpleNamespace(uuid=squad_uuid, name="DEFAULT")]
+        )
+        existing_uuid = uuid.UUID("68686868-6868-6868-6868-686868686868")
+
+        async def _existing_paid_user(user_uuid):
+            del user_uuid
+            return SimpleNamespace(
+                uuid=existing_uuid,
+                username="existing-paid-user",
+                status="ACTIVE",
+                expire_at=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+                subscription_url="https://panel.test/sub/existing-paid",
+                telegram_id=700104,
+                email="paid@example.com",
+                tag=None,
+                hwid_device_limit=9,
+            )
+
+        gateway.get_user_by_uuid = _existing_paid_user
+
+        await gateway.provision_user(
+            user_uuid=existing_uuid,
+            expire_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
+            email="paid@example.com",
+            telegram_id=700104,
+            is_trial=False,
+            hwid_device_limit=3,
+            traffic_limit_bytes=0,
+            traffic_limit_strategy="NO_RESET",
+        )
+
+        self.assertEqual(gateway._sdk.users.updated_bodies[0].hwid_device_limit, 9)
+
+    async def test_provision_user_sets_default_device_limit_when_existing_paid_limit_missing(
+        self,
+    ) -> None:
+        settings.remnawave_default_internal_squad_uuid = ""
+        settings.remnawave_default_internal_squad_name = ""
+        squad_uuid = uuid.UUID("69696969-6969-6969-6969-696969696969")
+        gateway = self._make_gateway(
+            squads=[SimpleNamespace(uuid=squad_uuid, name="DEFAULT")]
+        )
+        existing_uuid = uuid.UUID("6a6a6a6a-6a6a-6a6a-6a6a-6a6a6a6a6a6a")
+
+        async def _existing_paid_user_without_limit(user_uuid):
+            del user_uuid
+            return SimpleNamespace(
+                uuid=existing_uuid,
+                username="existing-paid-no-limit",
+                status="ACTIVE",
+                expire_at=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+                subscription_url="https://panel.test/sub/existing-paid-no-limit",
+                telegram_id=700105,
+                email="paid-no-limit@example.com",
+                tag=None,
+                hwid_device_limit=None,
+            )
+
+        gateway.get_user_by_uuid = _existing_paid_user_without_limit
+
+        await gateway.provision_user(
+            user_uuid=existing_uuid,
+            expire_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
+            email="paid-no-limit@example.com",
+            telegram_id=700105,
+            is_trial=False,
+            hwid_device_limit=3,
+            traffic_limit_bytes=0,
+            traffic_limit_strategy="NO_RESET",
+        )
+
+        self.assertEqual(gateway._sdk.users.updated_bodies[0].hwid_device_limit, 3)
 
     async def test_provision_user_reuses_existing_remote_user_found_by_username(
         self,

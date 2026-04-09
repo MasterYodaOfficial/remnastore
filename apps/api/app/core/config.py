@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -34,6 +36,27 @@ class Settings(BaseSettings):
     trial_duration_days: int = Field(
         default=3,
         validation_alias="TRIAL_DURATION_DAYS",
+    )
+    trial_traffic_limit_gb: int = Field(
+        default=10,
+        validation_alias="TRIAL_TRAFFIC_LIMIT_GB",
+        ge=0,
+    )
+    trial_traffic_limit_strategy: Literal[
+        "NO_RESET", "DAY", "WEEK", "MONTH", "MONTH_ROLLING"
+    ] = Field(
+        default="WEEK",
+        validation_alias="TRIAL_TRAFFIC_LIMIT_STRATEGY",
+    )
+    trial_device_limit: int = Field(
+        default=3,
+        validation_alias="TRIAL_DEVICE_LIMIT",
+        ge=0,
+    )
+    default_subscription_device_limit: int = Field(
+        default=3,
+        validation_alias="DEFAULT_SUBSCRIPTION_DEVICE_LIMIT",
+        ge=0,
     )
     default_referral_reward_rate: float = Field(
         default=20.0,

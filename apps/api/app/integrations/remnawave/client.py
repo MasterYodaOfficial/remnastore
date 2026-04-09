@@ -143,6 +143,22 @@ def _to_user_snapshot(response: object) -> RemnawaveUser:
     )
 
 
+def _resolve_effective_hwid_device_limit(
+    *,
+    existing_user: RemnawaveUser | None,
+    requested_limit: int | None,
+) -> int | None:
+    if existing_user is None:
+        return requested_limit
+
+    existing_limit = getattr(existing_user, "hwid_device_limit", None)
+    if existing_limit is not None:
+        return existing_limit
+    if requested_limit is not None:
+        return requested_limit
+    return existing_limit
+
+
 def _to_internal_squad_snapshot(response: InternalSquadDto) -> RemnawaveInternalSquad:
     return RemnawaveInternalSquad(
         uuid=response.uuid,
@@ -283,6 +299,8 @@ class RemnawaveGateway:
         telegram_id: int | None,
         is_trial: bool,
         hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
         username = build_remnawave_username(user_uuid, telegram_id)
         description = build_remnawave_description(
@@ -301,36 +319,48 @@ class RemnawaveGateway:
         clear_tag = (
             existing_user is not None and existing_user.tag is not None and tag is None
         )
+        effective_hwid_device_limit = _resolve_effective_hwid_device_limit(
+            existing_user=existing_user,
+            requested_limit=hwid_device_limit,
+        )
+        create_payload = {
+            "uuid": user_uuid,
+            "username": username,
+            "expire_at": expire_at,
+            "status": UserStatus.ACTIVE,
+            "email": email,
+            "telegram_id": telegram_id,
+            "hwid_device_limit": effective_hwid_device_limit,
+            "active_internal_squads": active_internal_squads,
+            "description": description,
+            "tag": tag,
+        }
+        update_payload = {
+            "uuid": existing_user.uuid if existing_user is not None else user_uuid,
+            "expire_at": expire_at,
+            "status": UserStatus.ACTIVE,
+            "email": email,
+            "telegram_id": telegram_id,
+            "hwid_device_limit": effective_hwid_device_limit,
+            "active_internal_squads": active_internal_squads,
+            "description": description,
+            "tag": tag,
+        }
+        if traffic_limit_bytes is not None:
+            create_payload["traffic_limit_bytes"] = traffic_limit_bytes
+            update_payload["traffic_limit_bytes"] = traffic_limit_bytes
+        if traffic_limit_strategy is not None:
+            create_payload["traffic_limit_strategy"] = traffic_limit_strategy
+            update_payload["traffic_limit_strategy"] = traffic_limit_strategy
 
         try:
             if existing_user is None:
                 response = await self._sdk.users.create_user(
-                    CreateUserRequestDto(
-                        uuid=user_uuid,
-                        username=username,
-                        expire_at=expire_at,
-                        status=UserStatus.ACTIVE,
-                        email=email,
-                        telegram_id=telegram_id,
-                        hwid_device_limit=hwid_device_limit,
-                        active_internal_squads=active_internal_squads,
-                        description=description,
-                        tag=tag,
-                    )
+                    CreateUserRequestDto(**create_payload)
                 )
             else:
                 response = await self._update_user(
-                    UpdateUserRequestDto(
-                        uuid=existing_user.uuid,
-                        expire_at=expire_at,
-                        status=UserStatus.ACTIVE,
-                        email=email,
-                        telegram_id=telegram_id,
-                        hwid_device_limit=hwid_device_limit,
-                        active_internal_squads=active_internal_squads,
-                        description=description,
-                        tag=tag,
-                    ),
+                    UpdateUserRequestDto(**update_payload),
                     clear_tag=clear_tag,
                 )
         except (ApiError, httpx.HTTPError) as exc:
@@ -348,6 +378,8 @@ class RemnawaveGateway:
         status: str | None,
         is_trial: bool,
         hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
         username = build_remnawave_username(user_uuid, telegram_id)
         description = build_remnawave_description(
@@ -367,36 +399,48 @@ class RemnawaveGateway:
         clear_tag = (
             existing_user is not None and existing_user.tag is not None and tag is None
         )
+        effective_hwid_device_limit = _resolve_effective_hwid_device_limit(
+            existing_user=existing_user,
+            requested_limit=hwid_device_limit,
+        )
+        create_payload = {
+            "uuid": user_uuid,
+            "username": username,
+            "expire_at": expire_at,
+            "status": resolved_status,
+            "email": email,
+            "telegram_id": telegram_id,
+            "hwid_device_limit": effective_hwid_device_limit,
+            "active_internal_squads": active_internal_squads,
+            "description": description,
+            "tag": tag,
+        }
+        update_payload = {
+            "uuid": existing_user.uuid if existing_user is not None else user_uuid,
+            "expire_at": expire_at,
+            "status": resolved_status,
+            "email": email,
+            "telegram_id": telegram_id,
+            "hwid_device_limit": effective_hwid_device_limit,
+            "active_internal_squads": active_internal_squads,
+            "description": description,
+            "tag": tag,
+        }
+        if traffic_limit_bytes is not None:
+            create_payload["traffic_limit_bytes"] = traffic_limit_bytes
+            update_payload["traffic_limit_bytes"] = traffic_limit_bytes
+        if traffic_limit_strategy is not None:
+            create_payload["traffic_limit_strategy"] = traffic_limit_strategy
+            update_payload["traffic_limit_strategy"] = traffic_limit_strategy
 
         try:
             if existing_user is None:
                 response = await self._sdk.users.create_user(
-                    CreateUserRequestDto(
-                        uuid=user_uuid,
-                        username=username,
-                        expire_at=expire_at,
-                        status=resolved_status,
-                        email=email,
-                        telegram_id=telegram_id,
-                        hwid_device_limit=hwid_device_limit,
-                        active_internal_squads=active_internal_squads,
-                        description=description,
-                        tag=tag,
-                    )
+                    CreateUserRequestDto(**create_payload)
                 )
             else:
                 response = await self._update_user(
-                    UpdateUserRequestDto(
-                        uuid=existing_user.uuid,
-                        expire_at=expire_at,
-                        status=resolved_status,
-                        email=email,
-                        telegram_id=telegram_id,
-                        hwid_device_limit=hwid_device_limit,
-                        active_internal_squads=active_internal_squads,
-                        description=description,
-                        tag=tag,
-                    ),
+                    UpdateUserRequestDto(**update_payload),
                     clear_tag=clear_tag,
                 )
         except (ApiError, httpx.HTTPError) as exc:

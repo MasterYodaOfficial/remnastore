@@ -20,6 +20,8 @@ from app.services.account_events import append_account_event
 from app.services.cache import get_cache
 from app.services.i18n import translate
 from app.services.purchases import (
+    resolve_trial_traffic_limit_bytes,
+    resolve_trial_traffic_limit_strategy,
     PurchaseConflictError,
     RemnawaveSyncError,
     apply_remote_subscription_snapshot,
@@ -279,6 +281,9 @@ async def activate_trial(
             if purchase_result.trial_ends_at is None
             else purchase_result.trial_ends_at.isoformat(),
             "duration_days": settings.trial_duration_days,
+            "traffic_limit_bytes": resolve_trial_traffic_limit_bytes(),
+            "traffic_limit_strategy": resolve_trial_traffic_limit_strategy(),
+            "hwid_device_limit": settings.trial_device_limit,
         },
     )
 

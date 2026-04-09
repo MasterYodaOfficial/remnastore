@@ -1162,7 +1162,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             source,
             target_expires_at: datetime,
+            plan_code: str | None = None,
+            hwid_device_limit: int | None = None,
+            gateway_factory=None,
         ):
+            del plan_code, hwid_device_limit, gateway_factory
             self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
@@ -1272,7 +1276,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             source,
             target_expires_at: datetime,
+            plan_code: str | None = None,
+            hwid_device_limit: int | None = None,
+            gateway_factory=None,
         ):
+            del plan_code, hwid_device_limit, gateway_factory
             self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
@@ -1344,7 +1352,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             source,
             target_expires_at: datetime,
+            plan_code: str | None = None,
+            hwid_device_limit: int | None = None,
+            gateway_factory=None,
         ):
+            del plan_code, hwid_device_limit, gateway_factory
             self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
@@ -1447,7 +1459,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             source,
             target_expires_at: datetime,
+            plan_code: str | None = None,
+            hwid_device_limit: int | None = None,
+            gateway_factory=None,
         ):
+            del plan_code, hwid_device_limit, gateway_factory
             self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
@@ -1632,7 +1648,11 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             source,
             target_expires_at: datetime,
+            plan_code: str | None = None,
+            hwid_device_limit: int | None = None,
+            gateway_factory=None,
         ):
+            del plan_code, hwid_device_limit, gateway_factory
             self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"
