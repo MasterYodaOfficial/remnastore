@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.core.config import settings
 from app.services.i18n import translate
 
 
@@ -21,6 +22,7 @@ class SubscriptionPlan:
     price_stars: int | None
     duration_days: int
     features: tuple[str, ...]
+    device_limit: int | None = None
     popular: bool = False
 
 
@@ -47,6 +49,7 @@ def _validate_plan_payload(item: object, *, index: int) -> SubscriptionPlan:
     price_stars = item.get("price_stars")
     duration_days = item.get("duration_days")
     features = item.get("features")
+    device_limit = item.get("device_limit")
     popular = bool(item.get("popular", False))
 
     if not isinstance(code, str) or not code.strip():
@@ -67,6 +70,10 @@ def _validate_plan_payload(item: object, *, index: int) -> SubscriptionPlan:
         or not all(isinstance(feature, str) and feature.strip() for feature in features)
     ):
         raise _plan_exception("config_unavailable")
+    if device_limit is not None and (
+        not isinstance(device_limit, int) or device_limit < 0
+    ):
+        raise _plan_exception("config_unavailable")
 
     return SubscriptionPlan(
         code=code.strip(),
@@ -75,6 +82,7 @@ def _validate_plan_payload(item: object, *, index: int) -> SubscriptionPlan:
         price_stars=price_stars,
         duration_days=duration_days,
         features=tuple(feature.strip() for feature in features),
+        device_limit=device_limit,
         popular=popular,
     )
 
@@ -109,3 +117,9 @@ def get_subscription_plan(plan_code: str) -> SubscriptionPlan:
         if plan.code == plan_code:
             return plan
     raise _plan_exception("unknown_plan")
+
+
+def resolve_plan_device_limit(plan: SubscriptionPlan | None) -> int:
+    if plan is not None and plan.device_limit is not None:
+        return plan.device_limit
+    return settings.default_subscription_device_limit

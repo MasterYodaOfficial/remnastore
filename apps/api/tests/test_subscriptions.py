@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 import tempfile
@@ -84,6 +84,7 @@ class DummyCache:
 @dataclass
 class FakeRemnawaveGateway:
     users: dict[uuid.UUID, RemnawaveUser]
+    calls: list[dict[str, object]] = field(default_factory=list)
 
     async def get_user_by_uuid(self, user_uuid: uuid.UUID) -> RemnawaveUser | None:
         return self.users.get(user_uuid)
@@ -102,7 +103,22 @@ class FakeRemnawaveGateway:
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
+        self.calls.append(
+            {
+                "user_uuid": user_uuid,
+                "expire_at": expire_at,
+                "email": email,
+                "telegram_id": telegram_id,
+                "is_trial": is_trial,
+                "hwid_device_limit": hwid_device_limit,
+                "traffic_limit_bytes": traffic_limit_bytes,
+                "traffic_limit_strategy": traffic_limit_strategy,
+            }
+        )
         user = RemnawaveUser(
             uuid=user_uuid,
             username=f"acc_{user_uuid.hex}",
@@ -138,8 +154,20 @@ class UnavailableRemnawaveGateway:
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
-        del user_uuid, expire_at, email, telegram_id, is_trial
+        del (
+            user_uuid,
+            expire_at,
+            email,
+            telegram_id,
+            is_trial,
+            hwid_device_limit,
+            traffic_limit_bytes,
+            traffic_limit_strategy,
+        )
         raise RemnawaveRequestError("ConnectError")
 
 
@@ -152,6 +180,9 @@ class MissingSubscriptionUrlGateway(FakeRemnawaveGateway):
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
         user = await super().provision_user(
             user_uuid=user_uuid,
@@ -159,6 +190,9 @@ class MissingSubscriptionUrlGateway(FakeRemnawaveGateway):
             email=email,
             telegram_id=telegram_id,
             is_trial=is_trial,
+            hwid_device_limit=hwid_device_limit,
+            traffic_limit_bytes=traffic_limit_bytes,
+            traffic_limit_strategy=traffic_limit_strategy,
         )
         user.subscription_url = " "
         self.users[user_uuid] = user
@@ -167,7 +201,7 @@ class MissingSubscriptionUrlGateway(FakeRemnawaveGateway):
 
 @dataclass
 class SelectivelyUnavailableRemnawaveGateway(FakeRemnawaveGateway):
-    failing_user_ids: set[uuid.UUID]
+    failing_user_ids: set[uuid.UUID] = field(default_factory=set)
 
     async def provision_user(
         self,
@@ -177,6 +211,9 @@ class SelectivelyUnavailableRemnawaveGateway(FakeRemnawaveGateway):
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
         if user_uuid in self.failing_user_ids:
             raise RemnawaveRequestError("ConnectError")
@@ -186,6 +223,9 @@ class SelectivelyUnavailableRemnawaveGateway(FakeRemnawaveGateway):
             email=email,
             telegram_id=telegram_id,
             is_trial=is_trial,
+            hwid_device_limit=hwid_device_limit,
+            traffic_limit_bytes=traffic_limit_bytes,
+            traffic_limit_strategy=traffic_limit_strategy,
         )
 
 
@@ -208,8 +248,20 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         cache_module._cache = DummyCache()
 
         self._original_trial_duration_days = settings.trial_duration_days
+        self._original_trial_traffic_limit_gb = settings.trial_traffic_limit_gb
+        self._original_trial_traffic_limit_strategy = (
+            settings.trial_traffic_limit_strategy
+        )
+        self._original_trial_device_limit = settings.trial_device_limit
+        self._original_default_subscription_device_limit = (
+            settings.default_subscription_device_limit
+        )
         self._original_api_token = settings.api_token
         settings.trial_duration_days = 3
+        settings.trial_traffic_limit_gb = 10
+        settings.trial_traffic_limit_strategy = "WEEK"
+        settings.trial_device_limit = 3
+        settings.default_subscription_device_limit = 3
         settings.api_token = "internal-token"
         self._original_remnawave_webhook_secret = settings.remnawave_webhook_secret
         settings.remnawave_webhook_secret = "test-remnawave-secret"
@@ -250,6 +302,14 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose()
         self.app.dependency_overrides.clear()
         settings.trial_duration_days = self._original_trial_duration_days
+        settings.trial_traffic_limit_gb = self._original_trial_traffic_limit_gb
+        settings.trial_traffic_limit_strategy = (
+            self._original_trial_traffic_limit_strategy
+        )
+        settings.trial_device_limit = self._original_trial_device_limit
+        settings.default_subscription_device_limit = (
+            self._original_default_subscription_device_limit
+        )
         settings.api_token = self._original_api_token
         settings.remnawave_webhook_secret = self._original_remnawave_webhook_secret
         subscriptions_service.get_remnawave_gateway = self._original_gateway_factory
@@ -334,6 +394,12 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(stored_account.subscription_is_trial)
         self.assertIsNotNone(stored_account.trial_used_at)
         self.assertIsNotNone(stored_account.trial_ends_at)
+        self.assertEqual(len(self._fake_gateway.calls), 1)
+        self.assertEqual(self._fake_gateway.calls[0]["hwid_device_limit"], 3)
+        self.assertEqual(
+            self._fake_gateway.calls[0]["traffic_limit_bytes"], 10 * 1024**3
+        )
+        self.assertEqual(self._fake_gateway.calls[0]["traffic_limit_strategy"], "WEEK")
 
         event_logs = await self._get_account_event_logs(account.id)
         self.assertEqual(

@@ -64,7 +64,11 @@ class FakeRemnawaveGateway:
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
+        del hwid_device_limit, traffic_limit_bytes, traffic_limit_strategy
         user = RemnawaveUser(
             uuid=user_uuid,
             username=f"acc_{user_uuid.hex}",

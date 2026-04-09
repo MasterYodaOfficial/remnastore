@@ -2,6 +2,7 @@ import unittest
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from app.core.config import settings
 from app.db.models import Account
 from app.integrations.remnawave.client import RemnawaveUser
 from app.services.i18n import translate
@@ -26,6 +27,9 @@ class FakeGateway:
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
         self.calls.append(
             {
@@ -34,6 +38,9 @@ class FakeGateway:
                 "email": email,
                 "telegram_id": telegram_id,
                 "is_trial": is_trial,
+                "hwid_device_limit": hwid_device_limit,
+                "traffic_limit_bytes": traffic_limit_bytes,
+                "traffic_limit_strategy": traffic_limit_strategy,
             }
         )
         return RemnawaveUser(
@@ -57,6 +64,9 @@ class MissingSubscriptionUrlGateway(FakeGateway):
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
         user = await super().provision_user(
             user_uuid=user_uuid,
@@ -64,12 +74,39 @@ class MissingSubscriptionUrlGateway(FakeGateway):
             email=email,
             telegram_id=telegram_id,
             is_trial=is_trial,
+            hwid_device_limit=hwid_device_limit,
+            traffic_limit_bytes=traffic_limit_bytes,
+            traffic_limit_strategy=traffic_limit_strategy,
         )
         user.subscription_url = "   "
         return user
 
 
 class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self._original_trial_traffic_limit_gb = settings.trial_traffic_limit_gb
+        self._original_trial_traffic_limit_strategy = (
+            settings.trial_traffic_limit_strategy
+        )
+        self._original_trial_device_limit = settings.trial_device_limit
+        self._original_default_subscription_device_limit = (
+            settings.default_subscription_device_limit
+        )
+        settings.trial_traffic_limit_gb = 12
+        settings.trial_traffic_limit_strategy = "WEEK"
+        settings.trial_device_limit = 4
+        settings.default_subscription_device_limit = 6
+
+    def tearDown(self) -> None:
+        settings.trial_traffic_limit_gb = self._original_trial_traffic_limit_gb
+        settings.trial_traffic_limit_strategy = (
+            self._original_trial_traffic_limit_strategy
+        )
+        settings.trial_device_limit = self._original_trial_device_limit
+        settings.default_subscription_device_limit = (
+            self._original_default_subscription_device_limit
+        )
+
     async def test_apply_trial_purchase_marks_trial_snapshot(self) -> None:
         gateway = FakeGateway()
         now = datetime(2026, 3, 11, 12, 0, tzinfo=UTC)
@@ -90,6 +127,9 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.trial_ends_at, now + timedelta(days=3))
         self.assertEqual(account.remnawave_user_uuid, account.id)
         self.assertEqual(gateway.calls[0]["is_trial"], True)
+        self.assertEqual(gateway.calls[0]["hwid_device_limit"], 4)
+        self.assertEqual(gateway.calls[0]["traffic_limit_bytes"], 12 * 1024**3)
+        self.assertEqual(gateway.calls[0]["traffic_limit_strategy"], "WEEK")
 
     async def test_apply_paid_purchase_clears_active_trial_flag_but_keeps_history(
         self,
@@ -109,6 +149,7 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
             account,
             source=PurchaseSource.DIRECT_PAYMENT,
             target_expires_at=target_expires_at,
+            plan_code="plan_1m",
             gateway_factory=lambda: gateway,
         )
 
@@ -119,6 +160,9 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(account.trial_used_at, purchased_at - timedelta(days=2))
         self.assertEqual(account.trial_ends_at, purchased_at + timedelta(days=1))
         self.assertEqual(gateway.calls[0]["is_trial"], False)
+        self.assertEqual(gateway.calls[0]["hwid_device_limit"], 6)
+        self.assertEqual(gateway.calls[0]["traffic_limit_bytes"], 0)
+        self.assertEqual(gateway.calls[0]["traffic_limit_strategy"], "NO_RESET")
 
     async def test_apply_trial_purchase_requires_subscription_url(self) -> None:
         gateway = MissingSubscriptionUrlGateway()

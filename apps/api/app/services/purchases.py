@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.models import Account
 from app.db.models import LedgerEntryType, SubscriptionGrant
 from app.integrations.remnawave import (
@@ -21,7 +22,7 @@ from app.integrations.remnawave import (
 from app.services.account_events import append_account_event
 from app.services.i18n import translate
 from app.services.ledger import apply_debit_in_transaction, clear_account_cache
-from app.services.plans import get_subscription_plan
+from app.services.plans import get_subscription_plan, resolve_plan_device_limit
 from app.services.referrals import apply_first_referral_reward_for_grant
 
 
@@ -59,6 +60,8 @@ class RemnawaveProvisionGateway(Protocol):
         telegram_id: int | None,
         is_trial: bool,
         hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser: ...
 
 
@@ -82,6 +85,8 @@ class WalletGrantReconcileResult:
 
 
 WALLET_PURCHASE_REFERENCE_TYPE = "wallet_purchase"
+BYTES_IN_GIB = 1024**3
+NO_RESET_TRAFFIC_LIMIT_STRATEGY = "NO_RESET"
 
 
 def _purchase_error(key: str) -> str:
@@ -106,6 +111,14 @@ def normalize_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def resolve_trial_traffic_limit_bytes() -> int:
+    return settings.trial_traffic_limit_gb * BYTES_IN_GIB
+
+
+def resolve_trial_traffic_limit_strategy() -> str:
+    return settings.trial_traffic_limit_strategy
 
 
 def compute_paid_plan_window(
@@ -175,6 +188,9 @@ async def _apply_subscription_purchase(
     source: PurchaseSource,
     target_expires_at: datetime,
     is_trial: bool,
+    hwid_device_limit: int | None = None,
+    traffic_limit_bytes: int | None = None,
+    traffic_limit_strategy: str | None = None,
     trial_used_at: datetime | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> PurchaseResult:
@@ -187,6 +203,9 @@ async def _apply_subscription_purchase(
             email=account.email,
             telegram_id=account.telegram_id,
             is_trial=is_trial,
+            hwid_device_limit=hwid_device_limit,
+            traffic_limit_bytes=traffic_limit_bytes,
+            traffic_limit_strategy=traffic_limit_strategy,
         )
     except RemnawaveRequestError as exc:
         raise _purchase_exception(RemnawaveSyncError, "remnawave_unavailable") from exc
@@ -216,16 +235,31 @@ async def apply_trial_purchase(
     account: Account,
     *,
     trial_duration_days: int,
+    trial_device_limit: int | None = None,
+    trial_traffic_limit_bytes: int | None = None,
     now: datetime | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> PurchaseResult:
     purchased_at = now or utcnow()
     target_expires_at = purchased_at + timedelta(days=trial_duration_days)
+    resolved_trial_device_limit = (
+        settings.trial_device_limit
+        if trial_device_limit is None
+        else trial_device_limit
+    )
+    resolved_trial_traffic_limit_bytes = (
+        resolve_trial_traffic_limit_bytes()
+        if trial_traffic_limit_bytes is None
+        else trial_traffic_limit_bytes
+    )
     return await _apply_subscription_purchase(
         account,
         source=PurchaseSource.TRIAL,
         target_expires_at=target_expires_at,
         is_trial=True,
+        hwid_device_limit=resolved_trial_device_limit,
+        traffic_limit_bytes=resolved_trial_traffic_limit_bytes,
+        traffic_limit_strategy=resolve_trial_traffic_limit_strategy(),
         trial_used_at=purchased_at,
         gateway_factory=gateway_factory,
     )
@@ -236,13 +270,23 @@ async def apply_paid_purchase(
     *,
     source: PurchaseSource,
     target_expires_at: datetime,
+    plan_code: str | None = None,
+    hwid_device_limit: int | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> PurchaseResult:
+    resolved_hwid_device_limit = hwid_device_limit
+    if resolved_hwid_device_limit is None:
+        plan = get_subscription_plan(plan_code) if plan_code is not None else None
+        resolved_hwid_device_limit = resolve_plan_device_limit(plan)
+
     return await _apply_subscription_purchase(
         account,
         source=source,
         target_expires_at=target_expires_at,
         is_trial=False,
+        hwid_device_limit=resolved_hwid_device_limit,
+        traffic_limit_bytes=0,
+        traffic_limit_strategy=NO_RESET_TRAFFIC_LIMIT_STRATEGY,
         gateway_factory=gateway_factory,
     )
 
@@ -491,6 +535,7 @@ async def finalize_wallet_plan_purchase(
             account,
             source=PurchaseSource.WALLET,
             target_expires_at=grant.target_expires_at,
+            plan_code=grant.plan_code,
             gateway_factory=gateway_factory,
         )
         await apply_first_referral_reward_for_grant(
