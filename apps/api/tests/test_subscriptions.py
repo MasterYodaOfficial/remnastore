@@ -396,7 +396,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_account.trial_ends_at)
         self.assertEqual(len(self._fake_gateway.calls), 1)
         self.assertEqual(self._fake_gateway.calls[0]["hwid_device_limit"], 3)
-        self.assertEqual(self._fake_gateway.calls[0]["traffic_limit_bytes"], 10 * 1024**3)
+        self.assertEqual(
+            self._fake_gateway.calls[0]["traffic_limit_bytes"], 10 * 1024**3
+        )
         self.assertEqual(self._fake_gateway.calls[0]["traffic_limit_strategy"], "WEEK")
 
         event_logs = await self._get_account_event_logs(account.id)
