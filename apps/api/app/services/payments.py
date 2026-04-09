@@ -1820,6 +1820,7 @@ async def _finalize_direct_plan_purchase(
             account,
             source=PurchaseSource.DIRECT_PAYMENT,
             target_expires_at=grant.target_expires_at,
+            plan_code=grant.plan_code,
         )
         await apply_first_referral_reward_for_grant(
             session,

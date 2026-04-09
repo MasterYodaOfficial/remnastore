@@ -73,7 +73,11 @@ class FakeRemnawaveGateway:
         email: str | None,
         telegram_id: int | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
+        del hwid_device_limit, traffic_limit_bytes, traffic_limit_strategy
         user = RemnawaveUser(
             uuid=user_uuid,
             username=f"acc_{user_uuid.hex}",
@@ -459,7 +463,11 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
             *,
             source,
             target_expires_at: datetime,
+            plan_code: str | None = None,
+            hwid_device_limit: int | None = None,
+            gateway_factory=None,
         ):
+            del plan_code, hwid_device_limit, gateway_factory
             self.assertEqual(source.value, "direct_payment")
             account_obj.remnawave_user_uuid = account_obj.id
             account_obj.subscription_status = "ACTIVE"

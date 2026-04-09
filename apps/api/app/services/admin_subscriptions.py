@@ -12,7 +12,11 @@ from app.integrations.remnawave import get_remnawave_gateway
 from app.services.account_events import append_account_event
 from app.services.i18n import translate
 from app.services.ledger import clear_account_cache
-from app.services.plans import SubscriptionPlan, get_subscription_plan
+from app.services.plans import (
+    SubscriptionPlan,
+    get_subscription_plan,
+    resolve_plan_device_limit,
+)
 from app.services.purchases import (
     GatewayFactory,
     PurchaseConflictError,
@@ -134,6 +138,7 @@ def _build_audit_payload(
         "subscription_grant_id": grant.id,
         "base_expires_at": grant.base_expires_at.isoformat(),
         "target_expires_at": grant.target_expires_at.isoformat(),
+        "device_limit": resolve_plan_device_limit(plan),
     }
 
 
@@ -297,6 +302,7 @@ async def grant_subscription_manually(
             account,
             source=PurchaseSource.ADMIN,
             target_expires_at=target_expires_at,
+            plan_code=plan.code,
             gateway_factory=gateway_factory or get_remnawave_gateway,
         )
     except RemnawaveSyncError:
@@ -319,6 +325,7 @@ async def grant_subscription_manually(
             "reference_id": normalized_idempotency_key,
             "base_expires_at": grant.base_expires_at,
             "target_expires_at": grant.target_expires_at,
+            "device_limit": resolve_plan_device_limit(plan),
             "comment": normalized_comment,
             "idempotency_key": normalized_idempotency_key,
         },
