@@ -546,6 +546,51 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(intent.account_id)
         self.assertIsNone(intent.consumed_at)
 
+    async def test_record_telegram_referral_intent_reuses_existing_row_without_manual_updated_at_assignment(
+        self,
+    ) -> None:
+        await self._create_account(referral_code="ref-bot")
+
+        async with self._session_factory() as session:
+            existing_intent = TelegramReferralIntent(
+                telegram_id=700099,
+                referral_code="old-code",
+                status="applied",
+                account_id=uuid.uuid4(),
+                consumed_at=datetime.now(UTC),
+            )
+            session.add(existing_intent)
+            await session.commit()
+            await session.refresh(existing_intent)
+            previous_updated_at = existing_intent.updated_at
+
+            stored_intent = await session.scalar(
+                select(TelegramReferralIntent).where(
+                    TelegramReferralIntent.telegram_id == 700099
+                )
+            )
+            self.assertIsNotNone(stored_intent)
+            assert stored_intent is not None
+
+            original_commit = session.commit
+
+            async def checking_commit() -> None:
+                self.assertEqual(stored_intent.updated_at, previous_updated_at)
+                await original_commit()
+
+            session.commit = checking_commit  # type: ignore[method-assign]
+
+            updated_intent = await referrals_service.record_telegram_referral_intent(
+                session,
+                telegram_id=700099,
+                referral_code="ref-bot",
+            )
+
+        self.assertEqual(updated_intent.referral_code, "ref-bot")
+        self.assertEqual(updated_intent.status, "pending")
+        self.assertIsNone(updated_intent.account_id)
+        self.assertIsNone(updated_intent.consumed_at)
+
     async def test_telegram_auth_applies_pending_referral_intent(self) -> None:
         referrer = await self._create_account(referral_code="ref-auth")
 

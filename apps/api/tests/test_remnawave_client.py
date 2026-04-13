@@ -121,7 +121,7 @@ class _FakeUsersHttpClient:
                 "lastConnectedNodeUuid": None,
             },
         }
-        return _FakeUsersHttpResponse(payload)
+        return _FakeUsersHttpResponse({"response": payload})
 
 
 class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):

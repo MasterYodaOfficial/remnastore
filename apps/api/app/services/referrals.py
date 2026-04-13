@@ -407,7 +407,6 @@ async def record_telegram_referral_intent(
         intent.result_reason = None
         intent.account_id = None
         intent.consumed_at = None
-        intent.updated_at = datetime.now(UTC)
 
     await session.commit()
     await session.refresh(intent)
