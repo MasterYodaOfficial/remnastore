@@ -98,10 +98,11 @@ async def confirm_telegram_link(
         )
         raise _link_token_http_error(exc) from exc
 
+    token_account_id = token.account_id
     try:
         account = await link_telegram_to_account(
             session,
-            account_id=token.account_id,
+            account_id=token_account_id,
             telegram_id=payload.telegram_id,
             username=payload.username,
             first_name=payload.first_name,
@@ -115,7 +116,7 @@ async def confirm_telegram_link(
             outcome="failure",
             category="security",
             reason=type(exc).__name__,
-            account_id=token.account_id,
+            account_id=token_account_id,
             telegram_id=payload.telegram_id,
             **request_context,
         )
