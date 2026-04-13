@@ -7,6 +7,7 @@ from typing import Optional
 from uuid import UUID
 
 import httpx
+from pydantic import ValidationError
 from remnawave import RemnawaveSDK
 from remnawave.enums import UserStatus
 from remnawave.exceptions import ApiError, NotFoundError
@@ -196,6 +197,15 @@ def _response_error_message(response: httpx.Response) -> str:
     return f"Remnawave request failed with status {response.status_code}"
 
 
+def _unwrap_response_envelope(payload: object) -> object:
+    if not isinstance(payload, dict):
+        return payload
+    nested_payload = payload.get("response")
+    if nested_payload is None:
+        return payload
+    return nested_payload
+
+
 def _dedupe_users_by_uuid(users: list[RemnawaveUser]) -> list[RemnawaveUser]:
     deduped: dict[UUID, RemnawaveUser] = {}
     for user in users:
@@ -280,11 +290,15 @@ class RemnawaveGateway:
                 response = await self._sdk.users.client.patch("users", json=payload)
                 response.raise_for_status()
                 return _to_user_snapshot(
-                    UpdateUserResponseDto.model_validate(response.json())
+                    UpdateUserResponseDto.model_validate(
+                        _unwrap_response_envelope(response.json())
+                    )
                 )
 
             response = await self._sdk.users.update_user(body)
             return _to_user_snapshot(response)
+        except ValidationError as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
         except httpx.HTTPStatusError as exc:
             raise RemnawaveRequestError(_response_error_message(exc.response)) from exc
         except (ApiError, httpx.HTTPError) as exc:

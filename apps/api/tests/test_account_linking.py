@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -430,6 +431,39 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(moved_withdrawal)
         assert moved_withdrawal is not None
         self.assertEqual(moved_withdrawal.account_id, browser_account.id)
+
+    async def test_browser_to_telegram_returns_merge_conflict_without_masking_error(
+        self,
+    ) -> None:
+        browser_account = await self._create_account(
+            email="browser-conflict@example.com",
+            display_name="Browser User",
+        )
+        self._current_account_id = browser_account.id
+
+        token_response = await self.client.post("/api/v1/accounts/link-telegram")
+        self.assertEqual(token_response.status_code, 200)
+        link_token = token_response.json()["link_token"]
+
+        with patch(
+            "app.api.v1.endpoints.linking.link_telegram_to_account",
+            side_effect=account_linking.AccountMergeConflictError("merge failed"),
+        ):
+            confirm_response = await self.client.post(
+                "/api/v1/accounts/link-telegram-confirm",
+                json={
+                    "link_token": link_token,
+                    "telegram_id": 333444,
+                },
+            )
+
+        self.assertEqual(confirm_response.status_code, 400)
+        self.assertEqual(confirm_response.json()["detail"], "merge failed")
+
+        stored_token = await self._get_link_token(link_token)
+        self.assertIsNotNone(stored_token)
+        assert stored_token is not None
+        self.assertIsNone(stored_token.consumed_at)
 
     async def test_merge_accounts_moves_business_records_and_resolves_duplicates(
         self,
