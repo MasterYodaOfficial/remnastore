@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 export type AccountIdentityLike = {
   account_id?: string | null;
   id?: string | null;
@@ -47,7 +49,7 @@ export function parseOptionalIntegerInput(
 
   const parsed = Number(trimmed);
   if (!Number.isInteger(parsed) || parsed < minimum) {
-    throw new Error(`${fieldLabel} должно быть целым числом не меньше ${minimum}`);
+    throw new Error(t("admin.helpers.integerMin", { fieldLabel, minimum }));
   }
   return parsed;
 }
@@ -92,7 +94,7 @@ export function parseManualAudienceTargetsInput(value: string): ParsedManualAudi
       continue;
     }
     throw new Error(
-      `Не удалось распознать идентификатор из ручного списка: ${token}. Используй account_id, email или telegram_id.`,
+      t("admin.helpers.manualAudienceTokenInvalid", { token }),
     );
   }
 
@@ -110,6 +112,6 @@ export function formatAccountIdentity(account: AccountIdentityLike): string {
     account.email ||
     account.account_id ||
     account.id ||
-    "Безымянный аккаунт"
+    t("admin.helpers.unnamedAccount")
   );
 }

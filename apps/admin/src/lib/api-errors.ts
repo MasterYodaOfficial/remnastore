@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 type AdminApiErrorPayload = {
   detail?: string;
   error_code?: string;
@@ -6,96 +8,96 @@ type AdminApiErrorPayload = {
 function mapAdminErrorCodeToMessage(errorCode: string | null, fallback: string): string {
   switch (errorCode) {
     case "admin_invalid_credentials":
-      return "Неверный логин или пароль.";
+      return t("admin.apiErrors.adminInvalidCredentials");
     case "admin_missing_credentials":
-      return "Требуется авторизация администратора.";
+      return t("admin.apiErrors.adminMissingCredentials");
     case "admin_invalid_token":
     case "admin_invalid_scope":
     case "admin_token_missing_subject":
     case "admin_not_found":
-      return "Сессия администратора недействительна. Войдите заново.";
+      return t("admin.apiErrors.adminSessionInvalid");
     case "admin_disabled":
-      return "Учетная запись администратора отключена.";
+      return t("admin.apiErrors.adminDisabled");
     case "admin_request_validation_failed":
-      return "Проверьте заполнение формы и попробуйте снова.";
+      return t("admin.apiErrors.requestValidationFailed");
     case "admin_superuser_required":
-      return "Для этого действия нужны права суперпользователя.";
+      return t("admin.apiErrors.superuserRequired");
     case "admin_account_not_found":
-      return "Аккаунт не найден.";
+      return t("admin.apiErrors.accountNotFound");
     case "admin_comment_required":
     case "admin_account_status_comment_required":
-      return "Комментарий администратора обязателен.";
+      return t("admin.apiErrors.adminCommentRequired");
     case "insufficient_funds":
-      return "Недостаточно средств.";
+      return t("admin.apiErrors.insufficientFunds");
     case "admin_account_status_conflict":
-      return "Не удалось изменить статус аккаунта из-за конфликта состояния. Обновите данные и попробуйте снова.";
+      return t("admin.apiErrors.accountStatusConflict");
     case "admin_promo_campaign_not_found":
-      return "Промокампания не найдена.";
+      return t("admin.apiErrors.promoCampaignNotFound");
     case "admin_promo_code_not_found":
-      return "Промокод не найден.";
+      return t("admin.apiErrors.promoCodeNotFound");
     case "admin_promo_validation_failed":
-      return "Проверьте параметры промокампании или промокода и попробуйте снова.";
+      return t("admin.apiErrors.promoValidationFailed");
     case "admin_promo_code_conflict":
-      return "Промокод с таким значением уже существует.";
+      return t("admin.apiErrors.promoCodeConflict");
     case "admin_promo_batch_conflict":
-      return "Не удалось выпустить пакет промокодов из-за конфликта значений. Попробуйте еще раз.";
+      return t("admin.apiErrors.promoBatchConflict");
     case "admin_promo_import_conflict":
-      return "Один или несколько импортируемых промокодов уже существуют.";
+      return t("admin.apiErrors.promoImportConflict");
     case "admin_promo_invalid_account_id":
-      return "Некорректный идентификатор аккаунта.";
+      return t("admin.apiErrors.promoInvalidAccountId");
     case "admin_broadcast_not_found":
-      return "Рассылка не найдена.";
+      return t("admin.apiErrors.broadcastNotFound");
     case "admin_broadcast_run_not_found":
-      return "Запуск рассылки не найден.";
+      return t("admin.apiErrors.broadcastRunNotFound");
     case "admin_broadcast_audience_preset_not_found":
-      return "Сохраненная аудитория рассылки не найдена.";
+      return t("admin.apiErrors.broadcastAudiencePresetNotFound");
     case "admin_broadcast_conflict":
-      return "Операцию с рассылкой не удалось выполнить из-за конфликта состояния. Обновите данные и попробуйте снова.";
+      return t("admin.apiErrors.broadcastConflict");
     case "admin_broadcast_validation_failed":
-      return "Проверьте параметры рассылки и попробуйте снова.";
+      return t("admin.apiErrors.broadcastValidationFailed");
     case "broadcast_edit_requires_draft":
-      return "Редактировать можно только черновик рассылки.";
+      return t("admin.apiErrors.broadcastEditRequiresDraft");
     case "broadcast_delete_requires_draft":
-      return "Удалить можно только черновик рассылки.";
+      return t("admin.apiErrors.broadcastDeleteRequiresDraft");
     case "broadcast_launch_requires_draft":
-      return "Запустить сразу можно только черновик рассылки.";
+      return t("admin.apiErrors.broadcastLaunchRequiresDraft");
     case "broadcast_schedule_requires_draft":
-      return "Запланировать можно только черновик рассылки.";
+      return t("admin.apiErrors.broadcastScheduleRequiresDraft");
     case "broadcast_schedule_in_past":
-      return "Дата и время запуска должны быть в будущем.";
+      return t("admin.apiErrors.broadcastScheduleInPast");
     case "broadcast_pause_invalid_state":
-      return "Поставить на паузу можно только запланированную или уже запущенную рассылку.";
+      return t("admin.apiErrors.broadcastPauseInvalidState");
     case "broadcast_resume_invalid_state":
-      return "Возобновить можно только рассылку на паузе.";
+      return t("admin.apiErrors.broadcastResumeInvalidState");
     case "broadcast_resume_missing_run":
-      return "Не удалось возобновить рассылку: активный запуск не найден.";
+      return t("admin.apiErrors.broadcastResumeMissingRun");
     case "broadcast_cancel_invalid_state":
-      return "Отменить можно только запланированную, запущенную или поставленную на паузу рассылку.";
+      return t("admin.apiErrors.broadcastCancelInvalidState");
     case "broadcast_test_send_idempotency_invalid":
-      return "Не удалось повторно использовать test send из-за поврежденного состояния запроса.";
+      return t("admin.apiErrors.broadcastTestSendIdempotencyInvalid");
     case "unknown_plan":
-      return "Тариф не найден.";
+      return t("admin.apiErrors.unknownPlan");
     case "config_unavailable":
-      return "Каталог тарифов временно недоступен.";
+      return t("admin.apiErrors.configUnavailable");
     case "remnawave_not_configured":
     case "remnawave_unavailable":
     case "remnawave_subscription_url_missing":
     case "manual_grant_inconsistent_state":
-      return "Сервис подписки временно недоступен. Попробуйте позже.";
+      return t("admin.apiErrors.subscriptionServiceUnavailable");
     case "idempotency_required":
-      return "Укажите ключ запроса и попробуйте снова.";
+      return t("admin.apiErrors.idempotencyRequired");
     case "idempotency_account_conflict":
-      return "Этот ключ уже используется для другого аккаунта.";
+      return t("admin.apiErrors.idempotencyAccountConflict");
     case "idempotency_plan_conflict":
-      return "Этот ключ уже используется для другого тарифа.";
+      return t("admin.apiErrors.idempotencyPlanConflict");
     case "idempotency_amount_conflict":
-      return "Этот ключ уже используется для другой суммы покупки.";
+      return t("admin.apiErrors.idempotencyAmountConflict");
     case "idempotency_duration_conflict":
-      return "Этот ключ уже используется для другого срока подписки.";
+      return t("admin.apiErrors.idempotencyDurationConflict");
     case "idempotency_admin_conflict":
-      return "Этот ключ уже используется другим администратором.";
+      return t("admin.apiErrors.idempotencyAdminConflict");
     case "idempotency_comment_conflict":
-      return "Этот ключ уже используется с другим комментарием.";
+      return t("admin.apiErrors.idempotencyCommentConflict");
     default:
       return fallback;
   }

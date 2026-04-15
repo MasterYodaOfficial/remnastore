@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -23,6 +24,8 @@ from app.schemas.admin import (
     AdminGlobalAccountEventLogResponse,
     AdminAccountLedgerHistoryResponse,
     AdminAccountLedgerEntryResponse,
+    AdminAccountListItemResponse,
+    AdminAccountListResponse,
     AdminAccountSearchItemResponse,
     AdminAccountSearchResponse,
     AdminSubscriptionGrantRequest,
@@ -32,6 +35,7 @@ from app.schemas.payment import SubscriptionPlanResponse
 from app.services.admin_accounts import (
     get_admin_account_detail,
     get_admin_account_event_logs,
+    list_admin_accounts,
     search_admin_account_event_logs,
     search_admin_accounts,
 )
@@ -56,6 +60,76 @@ from app.services.i18n import translate
 
 
 router = APIRouter()
+
+
+def _build_account_list_item(account: Account) -> AdminAccountListItemResponse:
+    resolved_email = account.email or next(
+        (identity.email for identity in account.auth_accounts if identity.email),
+        None,
+    )
+    return AdminAccountListItemResponse(
+        id=account.id,
+        email=resolved_email,
+        display_name=account.display_name,
+        telegram_id=account.telegram_id,
+        username=account.username,
+        status=account.status,
+        balance=account.balance,
+        subscription_status=account.subscription_status,
+        subscription_expires_at=account.subscription_expires_at,
+        referrals_count=account.referrals_count,
+        last_seen_at=account.last_seen_at,
+        created_at=account.created_at,
+    )
+
+
+@router.get("", response_model=AdminAccountListResponse)
+async def list_accounts(
+    query: str | None = Query(default=None, min_length=1, max_length=255),
+    user_query: str | None = Query(default=None, min_length=1, max_length=255),
+    telegram_query: str | None = Query(default=None, min_length=1, max_length=255),
+    email_query: str | None = Query(default=None, min_length=1, max_length=255),
+    status: Literal["active", "blocked"] | None = Query(default=None),
+    subscription_state: Literal["active", "inactive", "none"] | None = Query(
+        default=None
+    ),
+    telegram_state: Literal["connected", "not_connected"] | None = Query(default=None),
+    sort_by: Literal[
+        "user",
+        "telegram_id",
+        "email",
+        "created_at",
+        "last_seen_at",
+        "balance",
+        "subscription_expires_at",
+        "referrals_count",
+    ] = Query(default="created_at"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> AdminAccountListResponse:
+    accounts, total = await list_admin_accounts(
+        session,
+        query=query,
+        user_query=user_query,
+        telegram_query=telegram_query,
+        email_query=email_query,
+        status=status,
+        subscription_state=subscription_state,
+        telegram_state=telegram_state,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        limit=limit,
+        offset=offset,
+    )
+    return AdminAccountListResponse(
+        items=[_build_account_list_item(account) for account in accounts],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/subscription-plans", response_model=list[SubscriptionPlanResponse])

@@ -222,6 +222,138 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response_by_telegram.status_code, 200)
         self.assertEqual(len(response_by_telegram.json()["items"]), 1)
 
+    async def test_list_accounts_supports_filters_sorting_and_pagination(self) -> None:
+        token = await self._create_admin_token()
+        now = datetime.now(UTC)
+
+        async with self._session_factory() as session:
+            highest_balance = Account(
+                email="highest@example.com",
+                display_name="Highest",
+                telegram_id=111000111,
+                username="highest",
+                status=AccountStatus.ACTIVE,
+                balance=1200,
+                subscription_status="active",
+                referrals_count=5,
+                last_seen_at=now - timedelta(hours=1),
+                created_at=now - timedelta(days=1),
+            )
+            inactive_connected = Account(
+                email="inactive@example.com",
+                display_name="Inactive",
+                telegram_id=222000222,
+                username="inactive",
+                status=AccountStatus.ACTIVE,
+                balance=700,
+                subscription_status="expired",
+                referrals_count=1,
+                last_seen_at=now - timedelta(days=2),
+                created_at=now - timedelta(days=2),
+            )
+            blocked_account = Account(
+                email=None,
+                display_name="Blocked",
+                telegram_id=None,
+                username="blocked",
+                status=AccountStatus.BLOCKED,
+                balance=50,
+                subscription_status=None,
+                referrals_count=0,
+                last_seen_at=None,
+                created_at=now - timedelta(days=3),
+            )
+            session.add_all([highest_balance, inactive_connected, blocked_account])
+            await session.flush()
+            session.add(
+                AuthAccount(
+                    account_id=blocked_account.id,
+                    provider=AuthProvider.GOOGLE,
+                    provider_uid="blocked-google",
+                    email="blocked@example.com",
+                    display_name="Blocked",
+                )
+            )
+            await session.commit()
+
+        response_page_one = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "sort_by": "balance",
+                "sort_order": "desc",
+                "limit": 2,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_page_one.status_code, 200)
+        body_page_one = response_page_one.json()
+        self.assertEqual(body_page_one["total"], 3)
+        self.assertEqual(body_page_one["limit"], 2)
+        self.assertEqual(body_page_one["offset"], 0)
+        self.assertEqual(
+            [item["username"] for item in body_page_one["items"]],
+            ["highest", "inactive"],
+        )
+
+        response_filtered = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "status": "active",
+                "telegram_state": "connected",
+                "subscription_state": "inactive",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "limit": 20,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_filtered.status_code, 200)
+        filtered_body = response_filtered.json()
+        self.assertEqual(filtered_body["total"], 1)
+        self.assertEqual(len(filtered_body["items"]), 1)
+        self.assertEqual(filtered_body["items"][0]["username"], "inactive")
+        self.assertEqual(filtered_body["items"][0]["referrals_count"], 1)
+
+        response_column_filters = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "user_query": "block",
+                "email_query": "blocked@example.com",
+                "sort_by": "email",
+                "sort_order": "asc",
+                "limit": 20,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_column_filters.status_code, 200)
+        column_filtered_body = response_column_filters.json()
+        self.assertEqual(column_filtered_body["total"], 1)
+        self.assertEqual(column_filtered_body["items"][0]["username"], "blocked")
+        self.assertEqual(
+            column_filtered_body["items"][0]["email"], "blocked@example.com"
+        )
+
+        response_telegram_filter = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "telegram_query": "000",
+                "sort_by": "telegram_id",
+                "sort_order": "asc",
+                "limit": 20,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_telegram_filter.status_code, 200)
+        telegram_filtered_body = response_telegram_filter.json()
+        self.assertEqual(
+            [item["username"] for item in telegram_filtered_body["items"]],
+            ["highest", "inactive"],
+        )
+
     async def test_subscription_plans_endpoint_returns_catalog(self) -> None:
         token = await self._create_admin_token()
 

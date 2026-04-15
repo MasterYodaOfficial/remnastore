@@ -8,6 +8,7 @@ import {
   parseManualAudienceTargetsInput,
   parseOptionalIntegerInput,
 } from "./lib/admin-helpers";
+import { t } from "./lib/i18n";
 import { apiBaseUrl as API_BASE_URL } from "./runtime-config";
 
 type AdminProfile = {
@@ -24,6 +25,8 @@ type AdminProfile = {
 type AdminDashboardSummary = {
   total_accounts: number;
   active_subscriptions: number;
+  accounts_with_telegram: number;
+  paying_accounts_last_30d: number;
   pending_withdrawals: number;
   pending_payments: number;
   blocked_accounts: number;
@@ -32,10 +35,13 @@ type AdminDashboardSummary = {
   total_referral_earnings: number;
   pending_withdrawals_amount: number;
   paid_withdrawals_amount_last_30d: number;
-  successful_payments_last_30d: number;
-  successful_payments_amount_last_30d: number;
+  successful_payments_rub_last_30d: number;
+  successful_payments_amount_rub_last_30d: number;
   wallet_topups_amount_last_30d: number;
-  direct_plan_revenue_last_30d: number;
+  direct_plan_purchases_rub_last_30d: number;
+  direct_plan_revenue_rub_last_30d: number;
+  direct_plan_purchases_stars_last_30d: number;
+  direct_plan_revenue_stars_last_30d: number;
 };
 
 type AdminAuthResponse = {
@@ -44,7 +50,7 @@ type AdminAuthResponse = {
   admin: AdminProfile;
 };
 
-type AdminAccountSearchItem = {
+type AdminAccountListItem = {
   id: string;
   email: string | null;
   display_name: string | null;
@@ -54,11 +60,16 @@ type AdminAccountSearchItem = {
   balance: number;
   subscription_status: string | null;
   subscription_expires_at: string | null;
+  referrals_count: number;
+  last_seen_at: string | null;
   created_at: string;
 };
 
-type AdminAccountSearchResponse = {
-  items: AdminAccountSearchItem[];
+type AdminAccountListResponse = {
+  items: AdminAccountListItem[];
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 type AdminAccountAuthIdentity = {
@@ -700,8 +711,33 @@ type GlobalEventSearchFilters = {
   telegramId: string;
 };
 
+type AccountListStatusFilter = "all" | "active" | "blocked";
+type AccountListSubscriptionFilter = "all" | "active" | "inactive" | "none";
+type AccountListSortBy =
+  | "user"
+  | "telegram_id"
+  | "email"
+  | "created_at"
+  | "last_seen_at"
+  | "balance"
+  | "subscription_expires_at"
+  | "referrals_count";
+type AccountListSortOrder = "asc" | "desc";
+
+type AccountListFilters = {
+  userQuery: string;
+  telegramQuery: string;
+  emailQuery: string;
+  status: AccountListStatusFilter;
+  subscription: AccountListSubscriptionFilter;
+  sortBy: AccountListSortBy;
+  sortOrder: AccountListSortOrder;
+};
+
 type AdminView = "dashboard" | "accounts" | "events" | "broadcasts" | "withdrawals" | "promos";
 const TOKEN_KEY = "remnastore_admin_token";
+const ADMIN_ACCOUNT_LIST_PAGE_SIZE = 20;
+const ACCOUNT_LIST_FILTER_DEBOUNCE_MS = 250;
 const ADMIN_LEDGER_HISTORY_PAGE_SIZE = 20;
 const ADMIN_ACCOUNT_EVENT_HISTORY_PAGE_SIZE = 20;
 const BROADCAST_AUDIENCE_SEGMENTS = [
@@ -804,6 +840,45 @@ const EMPTY_GLOBAL_EVENT_SEARCH_FILTERS: GlobalEventSearchFilters = {
   actorAdminId: "",
   telegramId: "",
 };
+const EMPTY_ACCOUNT_LIST_FILTERS: AccountListFilters = {
+  userQuery: "",
+  telegramQuery: "",
+  emailQuery: "",
+  status: "all",
+  subscription: "all",
+  sortBy: "created_at",
+  sortOrder: "desc",
+};
+
+function normalizeAccountListFilters(filters: AccountListFilters): AccountListFilters {
+  return {
+    ...filters,
+    userQuery: filters.userQuery.trim(),
+    telegramQuery: filters.telegramQuery.trim(),
+    emailQuery: filters.emailQuery.trim(),
+  };
+}
+
+function getNextAccountListSortOrder(
+  currentFilters: AccountListFilters,
+  sortBy: AccountListSortBy,
+  defaultOrder: AccountListSortOrder,
+): AccountListSortOrder {
+  if (currentFilters.sortBy !== sortBy) {
+    return defaultOrder;
+  }
+  return currentFilters.sortOrder === "asc" ? "desc" : "asc";
+}
+
+function renderAccountSortIndicator(
+  currentFilters: AccountListFilters,
+  sortBy: AccountListSortBy,
+): string {
+  if (currentFilters.sortBy !== sortBy) {
+    return "\u2195";
+  }
+  return currentFilters.sortOrder === "asc" ? "\u2191" : "\u2193";
+}
 
 function createBroadcastButtonDraft(button?: AdminBroadcastButton): BroadcastButtonDraft {
   const draftId =
@@ -820,12 +895,12 @@ function createBroadcastButtonDraft(button?: AdminBroadcastButton): BroadcastBut
 
 function formatDate(value: string | null): string {
   if (!value) {
-    return "Не было";
+    return t("admin.common.noData");
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Некорректная дата";
+    return t("admin.common.invalidDate");
   }
 
   return new Intl.DateTimeFormat("ru-RU", {
@@ -836,12 +911,12 @@ function formatDate(value: string | null): string {
 
 function formatDateMoscow(value: string | null): string {
   if (!value) {
-    return "Не было";
+    return t("admin.common.noData");
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Некорректная дата";
+    return t("admin.common.invalidDate");
   }
 
   return new Intl.DateTimeFormat("ru-RU", {
@@ -913,62 +988,79 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
 }
 
 function humanizeAccountStatus(status: string): string {
-  return status === "blocked" ? "Полная блокировка" : "Активен";
+  return status === "blocked" ? t("admin.common.blocked") : t("admin.common.active");
+}
+
+function humanizeAccountSubscriptionStatus(status: string | null): string {
+  switch (status) {
+    case null:
+      return t("admin.accounts.table.subscriptionStatuses.none");
+    case "active":
+      return t("admin.accounts.table.subscriptionStatuses.active");
+    case "inactive":
+      return t("admin.accounts.table.subscriptionStatuses.inactive");
+    case "expired":
+      return t("admin.accounts.table.subscriptionStatuses.expired");
+    default:
+      return status;
+  }
 }
 
 function humanizePaymentStatus(status: string): string {
   switch (status) {
     case "created":
-      return "Создан";
+      return t("admin.payments.statuses.created");
     case "pending":
-      return "Ожидает";
+      return t("admin.payments.statuses.pending");
     case "requires_action":
-      return "Ждет действия";
+      return t("admin.payments.statuses.requiresAction");
     case "succeeded":
-      return "Успешен";
+      return t("admin.payments.statuses.succeeded");
     case "failed":
-      return "Ошибка";
+      return t("admin.payments.statuses.failed");
     case "cancelled":
-      return "Отменен";
+      return t("admin.payments.statuses.cancelled");
     case "expired":
-      return "Истек";
+      return t("admin.payments.statuses.expired");
     default:
       return status;
   }
 }
 
 function humanizePaymentFlow(flow: string): string {
-  return flow === "wallet_topup" ? "Пополнение" : "Покупка тарифа";
+  return flow === "wallet_topup"
+    ? t("admin.payments.flows.walletTopup")
+    : t("admin.payments.flows.planPurchase");
 }
 
 function humanizeLedgerType(entryType: string): string {
   switch (entryType) {
     case "topup_manual":
-      return "Ручное пополнение";
+      return t("admin.payments.ledgerTypes.topupManual");
     case "topup_payment":
-      return "Пополнение по платежу";
+      return t("admin.payments.ledgerTypes.topupPayment");
     case "subscription_debit":
-      return "Оплата подписки";
+      return t("admin.payments.ledgerTypes.subscriptionDebit");
     case "referral_reward":
-      return "Реферальное начисление";
+      return t("admin.payments.ledgerTypes.referralReward");
     case "withdrawal_reserve":
-      return "Резерв на вывод";
+      return t("admin.payments.ledgerTypes.withdrawalReserve");
     case "withdrawal_release":
-      return "Возврат резерва";
+      return t("admin.payments.ledgerTypes.withdrawalRelease");
     case "withdrawal_payout":
-      return "Выплата вывода";
+      return t("admin.payments.ledgerTypes.withdrawalPayout");
     case "promo_credit":
-      return "Промо-зачисление";
+      return t("admin.payments.ledgerTypes.promoCredit");
     case "refund":
-      return "Возврат";
+      return t("admin.payments.ledgerTypes.refund");
     case "admin_credit":
-      return "Зачисление админом";
+      return t("admin.payments.ledgerTypes.adminCredit");
     case "admin_debit":
-      return "Списание админом";
+      return t("admin.payments.ledgerTypes.adminDebit");
     case "merge_credit":
-      return "Баланс перенесен в аккаунт";
+      return t("admin.payments.ledgerTypes.mergeCredit");
     case "merge_debit":
-      return "Баланс перенесен из аккаунта";
+      return t("admin.payments.ledgerTypes.mergeDebit");
     default:
       return entryType;
   }
@@ -976,7 +1068,7 @@ function humanizeLedgerType(entryType: string): string {
 
 function humanizeLedgerEntryFilter(entryType: LedgerEntryFilterOption): string {
   if (entryType === "all") {
-    return "Все типы";
+    return t("admin.payments.allTypes");
   }
   return humanizeLedgerType(entryType);
 }
@@ -985,15 +1077,15 @@ function describeLedgerEntryContext(entry: AdminAccountLedgerEntry): string {
   const context: string[] = [];
 
   if (entry.reference_type || entry.reference_id) {
-    context.push(`${entry.reference_type || "reference"} ${entry.reference_id || ""}`.trim());
+    context.push(`${entry.reference_type || t("admin.payments.reference")} ${entry.reference_id || ""}`.trim());
   }
   if (entry.created_by_admin_id) {
-    context.push("инициатор: admin");
+    context.push(t("admin.payments.createdByAdmin"));
   } else if (entry.created_by_account_id) {
-    context.push("инициатор: account");
+    context.push(t("admin.payments.createdByAccount"));
   }
   if (entry.idempotency_key) {
-    context.push(`key ${entry.idempotency_key}`);
+    context.push(`${t("admin.payments.idempotencyKey")} ${entry.idempotency_key}`);
   }
 
   return context.join(" · ");
@@ -1002,51 +1094,51 @@ function describeLedgerEntryContext(entry: AdminAccountLedgerEntry): string {
 function humanizeAccountEventType(eventType: string): string {
   switch (eventType) {
     case "auth.telegram_webapp":
-      return "Вход через Telegram WebApp";
+      return t("admin.payments.eventTypes.authTelegramWebapp");
     case "account.link.telegram_token.created":
-      return "Создан Telegram link token";
+      return t("admin.payments.eventTypes.linkTelegramTokenCreated");
     case "account.link.browser_token.created":
-      return "Создан browser link token";
+      return t("admin.payments.eventTypes.linkBrowserTokenCreated");
     case "account.link.telegram_confirmed":
-      return "Подтвержден Telegram link";
+      return t("admin.payments.eventTypes.linkTelegramConfirmed");
     case "account.link.browser_completed":
-      return "Завершен browser link";
+      return t("admin.payments.eventTypes.linkBrowserCompleted");
     case "admin.account_status_change":
-      return "Смена статуса аккаунта";
+      return t("admin.payments.eventTypes.adminAccountStatusChange");
     case "admin.balance_adjustment":
-      return "Ручная корректировка баланса";
+      return t("admin.payments.eventTypes.adminBalanceAdjustment");
     case "admin.subscription_grant":
-      return "Ручная выдача подписки";
+      return t("admin.payments.eventTypes.adminSubscriptionGrant");
     case "admin.withdrawal.status_change":
-      return "Смена статуса вывода";
+      return t("admin.payments.eventTypes.adminWithdrawalStatusChange");
     case "payment.intent.created":
-      return "Создан payment intent";
+      return t("admin.payments.eventTypes.paymentIntentCreated");
     case "payment.topup.applied":
-      return "Пополнение применено";
+      return t("admin.payments.eventTypes.paymentTopupApplied");
     case "payment.finalized":
-      return "Финализация платежа";
+      return t("admin.payments.eventTypes.paymentFinalized");
     case "subscription.trial.activated":
-      return "Активирован trial";
+      return t("admin.payments.eventTypes.trialActivated");
     case "subscription.remnawave.webhook":
-      return "Обработан Remnawave webhook";
+      return t("admin.payments.eventTypes.remnawaveWebhook");
     case "subscription.wallet_purchase.staged":
-      return "Подготовлена покупка с баланса";
+      return t("admin.payments.eventTypes.walletPurchaseStaged");
     case "subscription.wallet_purchase.applied":
-      return "Покупка с баланса применена";
+      return t("admin.payments.eventTypes.walletPurchaseApplied");
     case "subscription.direct_payment.staged":
-      return "Подготовлена покупка по платежу";
+      return t("admin.payments.eventTypes.directPaymentStaged");
     case "subscription.direct_payment.applied":
-      return "Покупка по платежу применена";
+      return t("admin.payments.eventTypes.directPaymentApplied");
     case "withdrawal.created":
-      return "Создан вывод";
+      return t("admin.payments.eventTypes.withdrawalCreated");
     case "referral.claim":
-      return "Применен referral code";
+      return t("admin.payments.eventTypes.referralClaim");
     case "referral.attributed":
-      return "Начислено referral attribution";
+      return t("admin.payments.eventTypes.referralAttributed");
     case "referral.intent.apply":
-      return "Применение referral intent";
+      return t("admin.payments.eventTypes.referralIntentApply");
     case "referral.reward.granted":
-      return "Выдана referral награда";
+      return t("admin.payments.eventTypes.referralRewardGranted");
     default:
       return eventType;
   }
@@ -1055,13 +1147,13 @@ function humanizeAccountEventType(eventType: string): string {
 function humanizeAccountEventOutcome(outcome: string): string {
   switch (outcome) {
     case "success":
-      return "Успех";
+      return t("admin.payments.eventOutcomes.success");
     case "failure":
-      return "Ошибка";
+      return t("admin.payments.eventOutcomes.failure");
     case "denied":
-      return "Запрещено";
+      return t("admin.payments.eventOutcomes.denied");
     case "error":
-      return "Сбой";
+      return t("admin.payments.eventOutcomes.error");
     default:
       return outcome;
   }
@@ -1070,21 +1162,21 @@ function humanizeAccountEventOutcome(outcome: string): string {
 function humanizeAccountEventSource(source: string | null): string {
   switch (source) {
     case null:
-      return "Не указан";
+      return t("admin.common.notSpecified");
     case "api":
-      return "API";
+      return t("admin.payments.eventSources.api");
     case "bot":
-      return "Bot";
+      return t("admin.payments.eventSources.bot");
     case "admin":
-      return "Admin";
+      return t("admin.payments.eventSources.admin");
     case "system":
-      return "System";
+      return t("admin.payments.eventSources.system");
     case "webhook":
-      return "Webhook";
+      return t("admin.payments.eventSources.webhook");
     case "reconcile":
-      return "Reconcile";
+      return t("admin.payments.eventSources.reconcile");
     case "maintenance":
-      return "Maintenance";
+      return t("admin.payments.eventSources.maintenance");
     default:
       return source;
   }
@@ -1171,12 +1263,12 @@ function summarizeAccountEventPayload(payload: Record<string, unknown> | null): 
 
 function describeAccountEventActor(event: AdminAccountEventLog): string {
   if (event.actor_admin_id) {
-    return `Admin ${formatCompactId(event.actor_admin_id)}`;
+    return t("admin.events.actorAdmin", { id: formatCompactId(event.actor_admin_id) });
   }
   if (event.actor_account_id) {
-    return `Account ${formatCompactId(event.actor_account_id)}`;
+    return t("admin.events.actorAccount", { id: formatCompactId(event.actor_account_id) });
   }
-  return "Actor не указан";
+  return t("admin.common.actorMissing");
 }
 
 function normalizeGlobalEventSearchFilters(filters: GlobalEventSearchFilters): GlobalEventSearchFilters {
@@ -1194,9 +1286,9 @@ function normalizeGlobalEventSearchFilters(filters: GlobalEventSearchFilters): G
 
 function formatAdminIdentity(admin: AdminEventAdminSnapshot | null): string {
   if (!admin) {
-    return "Admin не указан";
+    return t("admin.common.adminMissing");
   }
-  return admin.full_name || admin.username || admin.email || admin.id || "Admin";
+  return admin.full_name || admin.username || admin.email || admin.id || t("admin.common.staff");
 }
 
 function describeGlobalEventTargetAccount(event: AdminGlobalAccountEventLog): string {
@@ -1204,9 +1296,9 @@ function describeGlobalEventTargetAccount(event: AdminGlobalAccountEventLog): st
     return formatAccountIdentity(event.account);
   }
   if (event.account_id) {
-    return `Account ${formatCompactId(event.account_id)}`;
+    return t("admin.events.actorAccount", { id: formatCompactId(event.account_id) });
   }
-  return "Без target account";
+  return t("admin.common.targetAccountMissing");
 }
 
 function describeGlobalEventActor(event: AdminGlobalAccountEventLog): string {
@@ -1217,26 +1309,26 @@ function describeGlobalEventActor(event: AdminGlobalAccountEventLog): string {
     return formatAccountIdentity(event.actor_account);
   }
   if (event.actor_admin_id) {
-    return `Admin ${formatCompactId(event.actor_admin_id)}`;
+    return t("admin.events.actorAdmin", { id: formatCompactId(event.actor_admin_id) });
   }
   if (event.actor_account_id) {
-    return `Account ${formatCompactId(event.actor_account_id)}`;
+    return t("admin.events.actorAccount", { id: formatCompactId(event.actor_account_id) });
   }
-  return "Actor не указан";
+  return t("admin.common.actorMissing");
 }
 
 function humanizeWithdrawalStatus(status: string): string {
   switch (status) {
     case "new":
-      return "Новый";
+      return t("admin.withdrawals.statuses.new");
     case "in_progress":
-      return "В работе";
+      return t("admin.withdrawals.statuses.inProgress");
     case "paid":
-      return "Выплачен";
+      return t("admin.withdrawals.statuses.paid");
     case "rejected":
-      return "Отклонен";
+      return t("admin.withdrawals.statuses.rejected");
     case "cancelled":
-      return "Отменен";
+      return t("admin.withdrawals.statuses.cancelled");
     default:
       return status;
   }
@@ -1245,9 +1337,9 @@ function humanizeWithdrawalStatus(status: string): string {
 function humanizeWithdrawalDestinationType(destinationType: string): string {
   switch (destinationType) {
     case "card":
-      return "Карта";
+      return t("admin.withdrawals.destinations.card");
     case "sbp":
-      return "СБП";
+      return t("admin.withdrawals.destinations.sbp");
     default:
       return destinationType;
   }
@@ -1256,19 +1348,19 @@ function humanizeWithdrawalDestinationType(destinationType: string): string {
 function humanizeBroadcastStatus(status: BroadcastStatus): string {
   switch (status) {
     case "draft":
-      return "Черновик";
+      return t("admin.broadcasts.statuses.draft");
     case "scheduled":
-      return "Запланирована";
+      return t("admin.broadcasts.statuses.scheduled");
     case "running":
-      return "В работе";
+      return t("admin.broadcasts.statuses.running");
     case "paused":
-      return "Пауза";
+      return t("admin.broadcasts.statuses.paused");
     case "completed":
-      return "Завершена";
+      return t("admin.broadcasts.statuses.completed");
     case "failed":
-      return "Ошибка";
+      return t("admin.broadcasts.statuses.failed");
     case "cancelled":
-      return "Отменена";
+      return t("admin.broadcasts.statuses.cancelled");
     default:
       return status;
   }
@@ -1277,29 +1369,29 @@ function humanizeBroadcastStatus(status: BroadcastStatus): string {
 function humanizeBroadcastAudienceSegment(segment: BroadcastAudienceSegment): string {
   switch (segment) {
     case "all":
-      return "Все аккаунты";
+      return t("admin.broadcasts.segments.all");
     case "active":
-      return "Активные аккаунты";
+      return t("admin.broadcasts.segments.active");
     case "with_telegram":
-      return "Только с Telegram";
+      return t("admin.broadcasts.segments.withTelegram");
     case "paid":
-      return "Только платившие";
+      return t("admin.broadcasts.segments.paid");
     case "manual_list":
-      return "Ручной список";
+      return t("admin.broadcasts.segments.manualList");
     case "inactive_accounts":
-      return "Неактивные аккаунты";
+      return t("admin.broadcasts.segments.inactiveAccounts");
     case "inactive_paid_users":
-      return "Платившие, но неактивные";
+      return t("admin.broadcasts.segments.inactivePaidUsers");
     case "expired":
-      return "С истекшей подпиской";
+      return t("admin.broadcasts.segments.expired");
     case "abandoned_checkout":
-      return "Собирались оплатить, но не оплатили";
+      return t("admin.broadcasts.segments.abandonedCheckout");
     case "failed_payment":
-      return "Неуспешная последняя оплата";
+      return t("admin.broadcasts.segments.failedPayment");
     case "trial_ended_no_conversion":
-      return "Trial закончился без конверсии";
+      return t("admin.broadcasts.segments.trialEndedNoConversion");
     case "paid_before_not_active_now":
-      return "Раньше платили, сейчас не активны";
+      return t("admin.broadcasts.segments.paidBeforeNotActiveNow");
     default:
       return segment;
   }
@@ -1310,55 +1402,74 @@ function formatBroadcastAudienceSummary(audience: AdminBroadcastAudience): strin
 
   if (audience.segment === "manual_list") {
     if (audience.manual_account_ids.length > 0) {
-      parts.push(`account_id: ${audience.manual_account_ids.length}`);
+      parts.push(t("admin.broadcasts.summary.manualAccountIds", { count: audience.manual_account_ids.length }));
     }
     if (audience.manual_emails.length > 0) {
-      parts.push(`email: ${audience.manual_emails.length}`);
+      parts.push(t("admin.broadcasts.summary.manualEmails", { count: audience.manual_emails.length }));
     }
     if (audience.manual_telegram_ids.length > 0) {
-      parts.push(`telegram_id: ${audience.manual_telegram_ids.length}`);
+      parts.push(t("admin.broadcasts.summary.manualTelegramIds", { count: audience.manual_telegram_ids.length }));
     }
   } else if (
     audience.segment === "inactive_accounts" ||
     audience.segment === "inactive_paid_users"
   ) {
     if (audience.last_seen_older_than_days !== null) {
-      parts.push(`не заходили ${audience.last_seen_older_than_days}+ дн.`);
+      parts.push(
+        t("admin.broadcasts.summary.inactiveOlderThanDays", { days: audience.last_seen_older_than_days }),
+      );
     }
     if (audience.include_never_seen) {
-      parts.push("включая never seen");
+      parts.push(t("admin.broadcasts.summary.includeNeverSeen"));
     }
   } else if (audience.segment === "abandoned_checkout") {
     if (audience.pending_payment_older_than_minutes !== null) {
-      parts.push(`задержка от ${audience.pending_payment_older_than_minutes} мин`);
+      parts.push(
+        t("admin.broadcasts.summary.pendingFromMinutes", {
+          minutes: audience.pending_payment_older_than_minutes,
+        }),
+      );
     }
     if (audience.pending_payment_within_last_days !== null) {
-      parts.push(`за ${audience.pending_payment_within_last_days} дн.`);
+      parts.push(
+        t("admin.broadcasts.summary.pendingWithinDays", {
+          days: audience.pending_payment_within_last_days,
+        }),
+      );
     }
   } else if (audience.segment === "failed_payment") {
     if (audience.failed_payment_within_last_days !== null) {
-      parts.push(`за ${audience.failed_payment_within_last_days} дн.`);
+      parts.push(
+        t("admin.broadcasts.summary.failedWithinDays", {
+          days: audience.failed_payment_within_last_days,
+        }),
+      );
     }
   } else if (audience.segment === "expired") {
     if (audience.subscription_expired_from_days !== null || audience.subscription_expired_to_days !== null) {
       const fromDays = audience.subscription_expired_from_days;
       const toDays = audience.subscription_expired_to_days;
       if (fromDays !== null && toDays !== null) {
-        parts.push(`${fromDays}-${toDays} дн. после окончания`);
+        parts.push(t("admin.broadcasts.summary.expiredFromToDays", { fromDays, toDays }));
       } else if (fromDays !== null) {
-        parts.push(`от ${fromDays} дн. после окончания`);
+        parts.push(t("admin.broadcasts.summary.expiredFromDays", { days: fromDays }));
       } else if (toDays !== null) {
-        parts.push(`до ${toDays} дн. после окончания`);
+        parts.push(t("admin.broadcasts.summary.expiredToDays", { days: toDays }));
       }
     }
   }
 
   if (audience.cooldown_days !== null && audience.cooldown_key !== null) {
-    parts.push(`cooldown ${audience.cooldown_days} дн.`);
-    parts.push(`family ${audience.cooldown_key}`);
+    parts.push(t("admin.broadcasts.summary.cooldownDays", { days: audience.cooldown_days }));
+    parts.push(t("admin.broadcasts.summary.cooldownFamily", { key: audience.cooldown_key }));
   }
   if (audience.telegram_quiet_hours_start !== null && audience.telegram_quiet_hours_end !== null) {
-    parts.push(`telegram quiet ${audience.telegram_quiet_hours_start}-${audience.telegram_quiet_hours_end}`);
+    parts.push(
+      t("admin.broadcasts.summary.quietHours", {
+        start: audience.telegram_quiet_hours_start,
+        end: audience.telegram_quiet_hours_end,
+      }),
+    );
   }
 
   return parts.join(" · ");
@@ -1368,13 +1479,25 @@ function formatBroadcastAudiencePreviewMeta(item: AdminBroadcastAudiencePreviewI
   const parts: string[] = [];
 
   if (item.subscription_expires_at) {
-    parts.push(`Подписка: ${formatDateMoscow(item.subscription_expires_at)}`);
+    parts.push(
+      t("admin.broadcasts.preview.subscription", {
+        date: formatDateMoscow(item.subscription_expires_at),
+      }),
+    );
   }
   if (item.trial_ends_at) {
-    parts.push(`Trial: ${formatDateMoscow(item.trial_ends_at)}`);
+    parts.push(
+      t("admin.broadcasts.preview.trial", {
+        date: formatDateMoscow(item.trial_ends_at),
+      }),
+    );
   }
   if (item.last_seen_at) {
-    parts.push(`Seen: ${formatDateMoscow(item.last_seen_at)}`);
+    parts.push(
+      t("admin.broadcasts.preview.lastSeen", {
+        date: formatDateMoscow(item.last_seen_at),
+      }),
+    );
   }
 
   return parts.join(" · ");
@@ -1382,13 +1505,19 @@ function formatBroadcastAudiencePreviewMeta(item: AdminBroadcastAudiencePreviewI
 
 function humanizeManualListMatchToken(value: string): string {
   if (value.startsWith("account_id:")) {
-    return `account_id ${value.slice("account_id:".length)}`;
+    return t("admin.broadcasts.manualList.matchAccountId", {
+      value: value.slice("account_id:".length),
+    });
   }
   if (value.startsWith("email:")) {
-    return `email ${value.slice("email:".length)}`;
+    return t("admin.broadcasts.manualList.matchEmail", {
+      value: value.slice("email:".length),
+    });
   }
   if (value.startsWith("telegram_id:")) {
-    return `telegram_id ${value.slice("telegram_id:".length)}`;
+    return t("admin.broadcasts.manualList.matchTelegramId", {
+      value: value.slice("telegram_id:".length),
+    });
   }
   return value;
 }
@@ -1396,16 +1525,18 @@ function humanizeManualListMatchToken(value: string): string {
 function humanizeManualListExclusionReason(value: string): string {
   switch (value) {
     case "blocked":
-      return "исключен: аккаунт заблокирован";
+      return t("admin.broadcasts.manualList.excludeBlocked");
     case "cooldown":
-      return "исключен: cooldown";
+      return t("admin.broadcasts.manualList.excludeCooldown");
     default:
-      return `исключен: ${value}`;
+      return t("admin.broadcasts.manualList.excludeDefault", { value });
   }
 }
 
 function humanizeBroadcastChannel(channel: BroadcastChannel): string {
-  return channel === "telegram" ? "Telegram" : "In-app";
+  return channel === "telegram"
+    ? t("admin.broadcasts.channels.telegram")
+    : t("admin.broadcasts.channels.inApp");
 }
 
 function humanizeBroadcastChannels(channels: BroadcastChannel[]): string {
@@ -1419,40 +1550,44 @@ function formatRewardRate(value: number): string {
 }
 
 function humanizeReferralRewardStatus(status: AdminReferralChainItem["reward_status"]): string {
-  return status === "rewarded" ? "Награда начислена" : "Ждет оплату";
+  return status === "rewarded"
+    ? t("admin.broadcasts.referralRewardStatuses.rewarded")
+    : t("admin.broadcasts.referralRewardStatuses.pending");
 }
 
 function humanizeBroadcastTestSendStatus(status: AdminBroadcastTestSendTargetResult["status"]): string {
   switch (status) {
     case "sent":
-      return "Отправлено";
+      return t("admin.broadcasts.testSendStatuses.sent");
     case "partial":
-      return "Частично";
+      return t("admin.broadcasts.testSendStatuses.partial");
     case "failed":
-      return "Ошибка";
+      return t("admin.broadcasts.testSendStatuses.failed");
     case "skipped":
-      return "Пропущено";
+      return t("admin.broadcasts.testSendStatuses.skipped");
     default:
       return status;
   }
 }
 
 function humanizeBroadcastRunType(runType: BroadcastRunType): string {
-  return runType === "scheduled" ? "По расписанию" : "Сразу";
+  return runType === "scheduled"
+    ? t("admin.broadcasts.runTypes.scheduled")
+    : t("admin.broadcasts.runTypes.immediate");
 }
 
 function humanizeBroadcastRunStatus(status: BroadcastRunStatus): string {
   switch (status) {
     case "running":
-      return "В работе";
+      return t("admin.broadcasts.runStatuses.running");
     case "paused":
-      return "Пауза";
+      return t("admin.broadcasts.runStatuses.paused");
     case "completed":
-      return "Завершен";
+      return t("admin.broadcasts.runStatuses.completed");
     case "failed":
-      return "Ошибка";
+      return t("admin.broadcasts.runStatuses.failed");
     case "cancelled":
-      return "Отменен";
+      return t("admin.broadcasts.runStatuses.cancelled");
     default:
       return status;
   }
@@ -1461,13 +1596,13 @@ function humanizeBroadcastRunStatus(status: BroadcastRunStatus): string {
 function humanizePromoCampaignStatus(status: PromoCampaignStatus): string {
   switch (status) {
     case "draft":
-      return "Черновик";
+      return t("admin.promos.campaignStatuses.draft");
     case "active":
-      return "Активна";
+      return t("admin.promos.campaignStatuses.active");
     case "disabled":
-      return "Отключена";
+      return t("admin.promos.campaignStatuses.disabled");
     case "archived":
-      return "Архив";
+      return t("admin.promos.campaignStatuses.archived");
     default:
       return status;
   }
@@ -1476,17 +1611,17 @@ function humanizePromoCampaignStatus(status: PromoCampaignStatus): string {
 function humanizePromoEffectType(effectType: PromoEffectType): string {
   switch (effectType) {
     case "percent_discount":
-      return "Скидка в процентах";
+      return t("admin.promos.effectTypes.percentDiscount");
     case "fixed_discount":
-      return "Фиксированная скидка";
+      return t("admin.promos.effectTypes.fixedDiscount");
     case "fixed_price":
-      return "Фиксированная цена";
+      return t("admin.promos.effectTypes.fixedPrice");
     case "extra_days":
-      return "Дополнительные дни";
+      return t("admin.promos.effectTypes.extraDays");
     case "free_days":
-      return "Бесплатные дни";
+      return t("admin.promos.effectTypes.freeDays");
     case "balance_credit":
-      return "Зачисление на баланс";
+      return t("admin.promos.effectTypes.balanceCredit");
     default:
       return effectType;
   }
@@ -1514,11 +1649,13 @@ function describePromoEffect(effectType: PromoEffectType, effectValue: number, c
     case "fixed_discount":
       return `-${formatMoney(effectValue, currency)}`;
     case "fixed_price":
-      return `Цена ${formatMoney(effectValue, currency)}`;
+      return t("admin.promos.effectDescriptions.fixedPrice", {
+        price: formatMoney(effectValue, currency),
+      });
     case "extra_days":
-      return `+${effectValue} дн.`;
+      return t("admin.promos.effectDescriptions.extraDays", { days: effectValue });
     case "free_days":
-      return `${effectValue} дн. бесплатно`;
+      return t("admin.promos.effectDescriptions.freeDays", { days: effectValue });
     case "balance_credit":
       return `+${formatMoney(effectValue, currency)}`;
     default:
@@ -1528,27 +1665,27 @@ function describePromoEffect(effectType: PromoEffectType, effectValue: number, c
 
 function describePromoCampaignWindow(campaign: Pick<AdminPromoCampaign, "starts_at" | "ends_at">): string {
   if (!campaign.starts_at && !campaign.ends_at) {
-    return "Без окна активации";
+    return t("admin.promos.window.none");
   }
   if (campaign.starts_at && campaign.ends_at) {
     return `${formatDateMoscow(campaign.starts_at)} - ${formatDateMoscow(campaign.ends_at)}`;
   }
   if (campaign.starts_at) {
-    return `С ${formatDateMoscow(campaign.starts_at)}`;
+    return t("admin.promos.window.from", { date: formatDateMoscow(campaign.starts_at) });
   }
-  return `До ${formatDateMoscow(campaign.ends_at)}`;
+  return t("admin.promos.window.until", { date: formatDateMoscow(campaign.ends_at) });
 }
 
 function humanizePromoRedemptionStatus(status: PromoRedemptionStatus): string {
   switch (status) {
     case "pending":
-      return "В ожидании";
+      return t("admin.promos.redemptionStatuses.pending");
     case "applied":
-      return "Применен";
+      return t("admin.promos.redemptionStatuses.applied");
     case "rejected":
-      return "Отклонен";
+      return t("admin.promos.redemptionStatuses.rejected");
     case "canceled":
-      return "Отменен";
+      return t("admin.promos.redemptionStatuses.canceled");
     default:
       return status;
   }
@@ -1571,13 +1708,13 @@ function promoRedemptionStatusPillClass(status: PromoRedemptionStatus): string {
 function humanizePromoRedemptionContext(context: PromoRedemptionContext): string {
   switch (context) {
     case "direct":
-      return "Прямое применение";
+      return t("admin.promos.redemptionContexts.direct");
     case "plan_purchase":
-      return "Покупка тарифа";
+      return t("admin.promos.redemptionContexts.planPurchase");
     case "subscription_grant":
-      return "Выдача подписки";
+      return t("admin.promos.redemptionContexts.subscriptionGrant");
     case "balance_credit":
-      return "Зачисление на баланс";
+      return t("admin.promos.redemptionContexts.balanceCredit");
     default:
       return context;
   }
@@ -1587,15 +1724,21 @@ function describePromoRedemptionOutcome(redemption: AdminPromoRedemption): strin
   if (redemption.final_amount !== null && redemption.original_amount !== null) {
     const discountPart =
       redemption.discount_amount !== null && redemption.discount_amount > 0
-        ? ` · скидка ${formatMoney(redemption.discount_amount, redemption.currency)}`
+        ? t("admin.promos.redemptionOutcome.discountPart", {
+            discount: formatMoney(redemption.discount_amount, redemption.currency),
+          })
         : "";
     return `${formatMoney(redemption.original_amount, redemption.currency)} -> ${formatMoney(redemption.final_amount, redemption.currency)}${discountPart}`;
   }
   if (redemption.granted_duration_days !== null) {
-    return `Выдано ${redemption.granted_duration_days} дн.`;
+    return t("admin.promos.redemptionOutcome.grantedDays", {
+      days: redemption.granted_duration_days,
+    });
   }
   if (redemption.balance_credit_amount !== null) {
-    return `Начислено ${formatMoney(redemption.balance_credit_amount, redemption.currency)}`;
+    return t("admin.promos.redemptionOutcome.balanceCredit", {
+      amount: formatMoney(redemption.balance_credit_amount, redemption.currency),
+    });
   }
   return describePromoEffect(redemption.effect_type, redemption.effect_value, redemption.currency);
 }
@@ -1603,13 +1746,13 @@ function describePromoRedemptionOutcome(redemption: AdminPromoRedemption): strin
 function humanizeBroadcastDeliveryStatus(status: AdminBroadcastRunDelivery["status"]): string {
   switch (status) {
     case "pending":
-      return "Ожидает";
+      return t("admin.broadcasts.deliveryStatuses.pending");
     case "delivered":
-      return "Доставлено";
+      return t("admin.broadcasts.deliveryStatuses.delivered");
     case "failed":
-      return "Ошибка";
+      return t("admin.broadcasts.deliveryStatuses.failed");
     case "skipped":
-      return "Пропущено";
+      return t("admin.broadcasts.deliveryStatuses.skipped");
     default:
       return status;
   }
@@ -1638,9 +1781,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<AdminView>("dashboard");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<AdminAccountSearchItem[]>([]);
+  const [accountItems, setAccountItems] = useState<AdminAccountListItem[]>([]);
+  const [accountTotal, setAccountTotal] = useState(0);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsLoadingMore, setAccountsLoadingMore] = useState(false);
+  const [accountListDraftFilters, setAccountListDraftFilters] =
+    useState<AccountListFilters>({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+  const [accountListFilters, setAccountListFilters] =
+    useState<AccountListFilters>({ ...EMPTY_ACCOUNT_LIST_FILTERS });
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<AdminAccountDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -1821,24 +1969,24 @@ export default function App() {
     }
     return [
       {
-        label: "Пользователи",
+        label: t("admin.cards.accountsLabel"),
         value: summary.total_accounts,
-        hint: "всего локальных аккаунтов",
+        hint: t("admin.cards.accountsHint"),
       },
       {
-        label: "Активные подписки",
+        label: t("admin.cards.activeSubscriptionsLabel"),
         value: summary.active_subscriptions,
-        hint: "текущий рабочий пул",
+        hint: t("admin.cards.activeSubscriptionsHint"),
       },
       {
-        label: "Выводы",
-        value: summary.pending_withdrawals,
-        hint: "очередь к обработке",
+        label: t("admin.cards.payingCustomersLast30dLabel"),
+        value: summary.paying_accounts_last_30d,
+        hint: t("admin.cards.payingCustomersLast30dHint"),
       },
       {
-        label: "Платежи",
-        value: summary.pending_payments,
-        hint: "незавершенные попытки",
+        label: t("admin.cards.telegramLinkedLabel"),
+        value: summary.accounts_with_telegram,
+        hint: t("admin.cards.telegramLinkedHint"),
       },
     ];
   }, [summary]);
@@ -1848,24 +1996,40 @@ export default function App() {
     }
     return [
       {
-        label: "Баланс кошельков",
+        label: t("admin.cards.walletBalanceLabel"),
         value: formatMoney(summary.total_wallet_balance),
-        hint: "суммарный snapshot по аккаунтам",
+        hint: t("admin.cards.walletBalanceHint"),
       },
       {
-        label: "Резерв выводов",
+        label: t("admin.cards.withdrawalReserveLabel"),
         value: formatMoney(summary.pending_withdrawals_amount),
-        hint: "сейчас висит в pending и in_progress",
+        hint: t("admin.cards.withdrawalReserveHint"),
       },
       {
-        label: "Платежи 30д",
-        value: formatMoney(summary.successful_payments_amount_last_30d),
-        hint: `${summary.successful_payments_last_30d} успешных оплат за 30 дней`,
+        label: t("admin.cards.pendingWithdrawalsLabel"),
+        value: summary.pending_withdrawals,
+        hint: t("admin.cards.pendingWithdrawalsHint", {
+          count: summary.pending_withdrawals,
+        }),
       },
       {
-        label: "Выводы 30д",
+        label: t("admin.cards.paymentsRubLast30dLabel"),
+        value: formatMoney(summary.successful_payments_amount_rub_last_30d),
+        hint: t("admin.cards.paymentsRubLast30dHint", {
+          count: summary.successful_payments_rub_last_30d,
+        }),
+      },
+      {
+        label: t("admin.cards.starsRevenueLast30dLabel"),
+        value: formatMoney(summary.direct_plan_revenue_stars_last_30d, "XTR"),
+        hint: t("admin.cards.starsRevenueLast30dHint", {
+          count: summary.direct_plan_purchases_stars_last_30d,
+        }),
+      },
+      {
+        label: t("admin.cards.withdrawalsLast30dLabel"),
         value: formatMoney(summary.paid_withdrawals_amount_last_30d),
-        hint: "фактически выплаченные заявки",
+        hint: t("admin.cards.withdrawalsLast30dHint"),
       },
     ];
   }, [summary]);
@@ -1875,29 +2039,36 @@ export default function App() {
     }
     return [
       {
-        label: "Новые аккаунты 7д",
+        label: t("admin.cards.newAccountsLast7dLabel"),
         value: summary.new_accounts_last_7d,
-        hint: "свежий приток пользователей",
+        hint: t("admin.cards.newAccountsLast7dHint"),
       },
       {
-        label: "Заблокированные",
+        label: t("admin.cards.blockedAccountsLabel"),
         value: summary.blocked_accounts,
-        hint: "аккаунты на полном стопе",
+        hint: t("admin.cards.blockedAccountsHint"),
       },
       {
-        label: "Пополнения 30д",
+        label: t("admin.cards.pendingPaymentsLabel"),
+        value: summary.pending_payments,
+        hint: t("admin.cards.pendingPaymentsHint"),
+      },
+      {
+        label: t("admin.cards.topupsLast30dLabel"),
         value: formatMoney(summary.wallet_topups_amount_last_30d),
-        hint: "wallet_topup через провайдеров",
+        hint: t("admin.cards.topupsLast30dHint"),
       },
       {
-        label: "Покупки тарифов 30д",
-        value: formatMoney(summary.direct_plan_revenue_last_30d),
-        hint: "direct plan purchase",
+        label: t("admin.cards.planRevenueRubLast30dLabel"),
+        value: formatMoney(summary.direct_plan_revenue_rub_last_30d),
+        hint: t("admin.cards.planRevenueRubLast30dHint", {
+          count: summary.direct_plan_purchases_rub_last_30d,
+        }),
       },
       {
-        label: "Реферальные начисления",
+        label: t("admin.cards.referralEarningsLabel"),
         value: formatMoney(summary.total_referral_earnings),
-        hint: "накоплено по всем аккаунтам",
+        hint: t("admin.cards.referralEarningsHint"),
       },
     ];
   }, [summary]);
@@ -1916,6 +2087,16 @@ export default function App() {
       inProgressCount: withdrawalItems.filter((item) => item.status === "in_progress").length,
     }),
     [withdrawalItems],
+  );
+  const hasMoreAccounts = accountItems.length < accountTotal;
+  const accountListFiltersActive = Boolean(
+    accountListDraftFilters.userQuery.trim() ||
+      accountListDraftFilters.telegramQuery.trim() ||
+      accountListDraftFilters.emailQuery.trim() ||
+      accountListDraftFilters.status !== EMPTY_ACCOUNT_LIST_FILTERS.status ||
+      accountListDraftFilters.subscription !== EMPTY_ACCOUNT_LIST_FILTERS.subscription ||
+      accountListDraftFilters.sortBy !== EMPTY_ACCOUNT_LIST_FILTERS.sortBy ||
+      accountListDraftFilters.sortOrder !== EMPTY_ACCOUNT_LIST_FILTERS.sortOrder,
   );
   const hasMoreLedgerHistory = ledgerHistoryItems.length < ledgerHistoryTotal;
   const hasMoreAccountEventHistory = accountEventHistoryItems.length < accountEventHistoryTotal;
@@ -2199,6 +2380,73 @@ export default function App() {
       setSummary(dashboard);
     },
     [],
+  );
+
+  const loadAccounts = useCallback(
+    async (
+      activeToken: string,
+      options?: {
+        offset?: number;
+        append?: boolean;
+        filters?: AccountListFilters;
+      },
+    ): Promise<AdminAccountListResponse | null> => {
+      const offset = options?.offset ?? 0;
+      const append = options?.append ?? false;
+      const filters = normalizeAccountListFilters(options?.filters ?? accountListFilters);
+      const searchParams = new URLSearchParams({
+        limit: String(ADMIN_ACCOUNT_LIST_PAGE_SIZE),
+        offset: String(offset),
+        sort_by: filters.sortBy,
+        sort_order: filters.sortOrder,
+      });
+
+      if (filters.userQuery) {
+        searchParams.set("user_query", filters.userQuery);
+      }
+      if (filters.telegramQuery) {
+        searchParams.set("telegram_query", filters.telegramQuery);
+      }
+      if (filters.emailQuery) {
+        searchParams.set("email_query", filters.emailQuery);
+      }
+      if (filters.status !== "all") {
+        searchParams.set("status", filters.status);
+      }
+      if (filters.subscription !== "all") {
+        searchParams.set("subscription_state", filters.subscription);
+      }
+
+      if (append) {
+        setAccountsLoadingMore(true);
+      } else {
+        setAccountsLoading(true);
+      }
+
+      try {
+        const response = await adminFetch<AdminAccountListResponse>(
+          `/api/v1/admin/accounts?${searchParams.toString()}`,
+          activeToken,
+        );
+        setAccountItems((currentItems) => (append ? [...currentItems, ...response.items] : response.items));
+        setAccountTotal(response.total);
+        return response;
+      } catch (fetchError) {
+        if (!append) {
+          setAccountItems([]);
+          setAccountTotal(0);
+        }
+        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить список пользователей");
+        return null;
+      } finally {
+        if (append) {
+          setAccountsLoadingMore(false);
+        } else {
+          setAccountsLoading(false);
+        }
+      }
+    },
+    [accountListFilters],
   );
 
   const loadAccountDetail = useCallback(
@@ -2754,8 +3002,10 @@ export default function App() {
     [],
   );
 
-  function updateSearchResultSnapshot(account: Pick<AdminAccountDetail, "id" | "balance" | "status" | "subscription_status" | "subscription_expires_at">) {
-    setSearchResults((items) =>
+  function updateAccountListSnapshot(
+    account: Pick<AdminAccountDetail, "id" | "balance" | "status" | "subscription_status" | "subscription_expires_at">,
+  ) {
+    setAccountItems((items) =>
       items.map((item) =>
         item.id === account.id
           ? {
@@ -2776,7 +3026,13 @@ export default function App() {
       setProfile(null);
       setSummary(null);
       setSubscriptionPlans([]);
-      setSearchResults([]);
+      setAccountItems([]);
+      setAccountTotal(0);
+      setAccountsLoading(false);
+      setAccountsLoadingMore(false);
+      setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+      setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+      setSelectedAccountId(null);
       setSelectedAccount(null);
       setLedgerHistoryItems([]);
       setLedgerHistoryTotal(0);
@@ -2907,7 +3163,11 @@ export default function App() {
         setToken("");
         setProfile(null);
         setSummary(null);
-        setSearchResults([]);
+        setAccountItems([]);
+        setAccountTotal(0);
+        setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+        setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+        setSelectedAccountId(null);
         setSelectedAccount(null);
         setLedgerHistoryItems([]);
         setLedgerHistoryTotal(0);
@@ -2939,6 +3199,32 @@ export default function App() {
 
     void loadSubscriptionPlans(token);
   }, [activeView, loadSubscriptionPlans, subscriptionPlans.length, token]);
+
+  useEffect(() => {
+    if (!token || activeView !== "accounts") {
+      return;
+    }
+
+    void loadAccounts(token, {
+      offset: 0,
+      append: false,
+      filters: accountListFilters,
+    });
+  }, [activeView, accountListFilters, loadAccounts, token]);
+
+  useEffect(() => {
+    if (activeView !== "accounts") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAccountListFilters(normalizeAccountListFilters(accountListDraftFilters));
+    }, ACCOUNT_LIST_FILTER_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [accountListDraftFilters, activeView]);
 
   useEffect(() => {
     if (!token || activeView !== "withdrawals") {
@@ -3322,7 +3608,13 @@ export default function App() {
     setProfile(null);
     setSummary(null);
     setSubscriptionPlans([]);
-    setSearchResults([]);
+    setAccountItems([]);
+    setAccountTotal(0);
+    setAccountsLoading(false);
+    setAccountsLoadingMore(false);
+    setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+    setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+    setSelectedAccountId(null);
     setSelectedAccount(null);
     setLedgerHistoryItems([]);
     setLedgerHistoryTotal(0);
@@ -3445,6 +3737,13 @@ export default function App() {
       if (activeView === "accounts" && subscriptionPlans.length === 0) {
         await loadSubscriptionPlans(token);
       }
+      if (activeView === "accounts") {
+        await loadAccounts(token, {
+          offset: 0,
+          append: false,
+          filters: accountListFilters,
+        });
+      }
       if (activeView === "accounts" && selectedAccountId) {
         await loadLedgerHistory(selectedAccountId, token, {
           offset: 0,
@@ -3477,7 +3776,7 @@ export default function App() {
       if (activeView === "promos") {
         await loadPromoCampaigns(token);
       }
-      if (selectedAccountId) {
+      if (activeView === "accounts" && selectedAccountId) {
         await loadAccountDetail(selectedAccountId, token);
       }
       if (activeView === "broadcasts" && selectedBroadcastId !== null) {
@@ -3502,36 +3801,6 @@ export default function App() {
     }
   }
 
-  async function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!token || !searchQuery.trim()) {
-      return;
-    }
-
-    setSearching(true);
-    setError(null);
-    setNotice(null);
-    setSelectedAccount(null);
-    try {
-      const response = await adminFetch<AdminAccountSearchResponse>(
-        `/api/v1/admin/accounts/search?query=${encodeURIComponent(searchQuery.trim())}`,
-        token,
-      );
-      setSearchResults(response.items);
-      if (response.items[0]) {
-        await loadAccountDetail(response.items[0].id, token);
-      } else {
-        setSelectedAccountId(null);
-      }
-    } catch (searchError) {
-      setSearchResults([]);
-      setSelectedAccountId(null);
-      setError(searchError instanceof Error ? searchError.message : "Не удалось выполнить поиск");
-    } finally {
-      setSearching(false);
-    }
-  }
-
   async function handleSelectAccount(accountId: string) {
     if (!token) {
       return;
@@ -3539,6 +3808,67 @@ export default function App() {
     setError(null);
     setNotice(null);
     await loadAccountDetail(accountId, token);
+  }
+
+  function handleCloseAccountDetail() {
+    setSelectedAccountId(null);
+    setSelectedAccount(null);
+  }
+
+  function handleAccountListTextFilterChange(
+    field: "userQuery" | "telegramQuery" | "emailQuery",
+    value: string,
+  ) {
+    setAccountListDraftFilters((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function handleAccountListSelectFilterChange(
+    field: "status" | "subscription",
+    value: AccountListStatusFilter | AccountListSubscriptionFilter,
+  ) {
+    setAccountListDraftFilters((current) => {
+      const nextFilters = {
+        ...current,
+        [field]: value,
+      };
+      setAccountListFilters(normalizeAccountListFilters(nextFilters));
+      return nextFilters;
+    });
+  }
+
+  function handleAccountListSortChange(
+    sortBy: AccountListSortBy,
+    defaultOrder: AccountListSortOrder,
+  ) {
+    setAccountListDraftFilters((current) => {
+      const nextFilters = {
+        ...current,
+        sortBy,
+        sortOrder: getNextAccountListSortOrder(current, sortBy, defaultOrder),
+      };
+      setAccountListFilters(normalizeAccountListFilters(nextFilters));
+      return nextFilters;
+    });
+  }
+
+  function handleResetAccountListFilters() {
+    setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+    setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
+  }
+
+  async function handleLoadMoreAccounts() {
+    if (!token || !hasMoreAccounts || accountsLoadingMore) {
+      return;
+    }
+
+    await loadAccounts(token, {
+      offset: accountItems.length,
+      append: true,
+      filters: accountListFilters,
+    });
   }
 
   async function handleOpenWithdrawalAccount(accountId: string) {
@@ -4672,9 +5002,9 @@ export default function App() {
 
       const refreshedAccount = await loadAccountDetail(selectedAccount.id, token);
       if (refreshedAccount) {
-        updateSearchResultSnapshot(refreshedAccount);
+        updateAccountListSnapshot(refreshedAccount);
       } else {
-        setSearchResults((items) =>
+        setAccountItems((items) =>
           items.map((item) =>
             item.id === response.account_id
               ? {
@@ -4761,9 +5091,9 @@ export default function App() {
 
       const refreshedAccount = await loadAccountDetail(selectedAccount.id, token);
       if (refreshedAccount) {
-        updateSearchResultSnapshot(refreshedAccount);
+        updateAccountListSnapshot(refreshedAccount);
       } else {
-        setSearchResults((items) =>
+        setAccountItems((items) =>
           items.map((item) =>
             item.id === response.account_id
               ? {
@@ -4841,9 +5171,9 @@ export default function App() {
 
       const refreshedAccount = await loadAccountDetail(selectedAccount.id, token);
       if (refreshedAccount) {
-        updateSearchResultSnapshot(refreshedAccount);
+        updateAccountListSnapshot(refreshedAccount);
       } else {
-        setSearchResults((items) =>
+        setAccountItems((items) =>
           items.map((item) =>
             item.id === response.account_id
               ? {
@@ -5023,62 +5353,34 @@ export default function App() {
   if (!token) {
     return (
       <main className="admin-shell admin-shell--auth">
-        <section className="auth-panel">
-          <div className="auth-copy">
-            <span className="eyebrow">Remnastore Admin</span>
-            <h1>Операционная панель проекта</h1>
-            <p>
-              Светлая админка для поддержки, платежей, выводов и рассылок. Для первого входа задай
-              `ADMIN_BOOTSTRAP_USERNAME` и `ADMIN_BOOTSTRAP_PASSWORD` в `.env`.
-            </p>
-            <div className="scene-panel">
-              <div className="sage-portrait" aria-hidden="true">
-                <span className="sage-aura" />
-                <span className="sage-head" />
-                <span className="sage-ears sage-ears--left" />
-                <span className="sage-ears sage-ears--right" />
-                <span className="sage-robe" />
-                <span className="energy-blade" />
-                <span className="energy-hilt" />
-              </div>
-              <div className="scene-copy">
-                <span className="scene-label">Рабочий контур</span>
-                <strong>Одна панель для пользователей, финансовых действий и кампаний.</strong>
-                <p>
-                  Сначала безопасный вход, затем единый интерфейс для ежедневной операционной работы.
-                </p>
-              </div>
-            </div>
-          </div>
-          <form className="auth-form" onSubmit={handleLogin}>
+          <form className="auth-form auth-form--standalone" onSubmit={handleLogin}>
             <label>
-              <span>Логин или email</span>
+              <span>{t("admin.auth.loginLabel")}</span>
               <input
                 autoComplete="username"
                 value={login}
                 onChange={(event) => setLogin(event.target.value)}
-                placeholder="root или root@example.com"
+                placeholder={t("admin.auth.loginPlaceholder")}
                 required
               />
             </label>
             <label>
-              <span>Пароль</span>
+              <span>{t("admin.auth.passwordLabel")}</span>
               <input
                 autoComplete="current-password"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Введите пароль"
+                placeholder={t("admin.auth.passwordPlaceholder")}
                 required
               />
             </label>
             {error ? <div className="form-error">{error}</div> : null}
             <button type="submit" disabled={submitting}>
-              {submitting ? "Входим..." : "Войти"}
+              {submitting ? t("admin.auth.submitting") : t("admin.auth.submit")}
             </button>
           </form>
-        </section>
-      </main>
+        </main>
     );
   }
 
@@ -5086,12 +5388,9 @@ export default function App() {
     <main className="admin-shell">
       <section className="dashboard-hero">
         <div className="hero-copy">
-          <span className="eyebrow">Remnastore Admin</span>
-          <h1>Единая операционная панель</h1>
-          <p>
-            Здесь собраны сводка, пользователи, выводы и runtime рассылок. Приоритет интерфейса:
-            быстро читать состояние системы, безопасно выполнять действия и не терять контекст при работе.
-          </p>
+          <span className="eyebrow">{t("admin.dashboard.heroEyebrow")}</span>
+          <h1>{t("admin.dashboard.heroTitle")}</h1>
+          <p>{t("admin.dashboard.heroDescription")}</p>
         </div>
         <div className="hero-side">
           <div className="hero-blade" aria-hidden="true">
@@ -5100,36 +5399,36 @@ export default function App() {
           </div>
           <div className="hero-actions">
             <button className="ghost-button" type="button" onClick={handleRefresh} disabled={loading}>
-              {loading ? "Обновляем..." : "Обновить"}
+              {loading ? t("admin.actions.refreshing") : t("admin.actions.refresh")}
             </button>
             <button className="ghost-button" type="button" onClick={handleLogout}>
-              Выйти
+              {t("admin.actions.logout")}
             </button>
           </div>
         </div>
       </section>
 
-      <nav className="module-nav" aria-label="Модули админки">
+      <nav className="module-nav" aria-label={t("admin.navigation.modulesAriaLabel")}>
         <button
           type="button"
           className={activeView === "dashboard" ? "module-nav__button module-nav__button--active" : "module-nav__button"}
           onClick={() => setActiveView("dashboard")}
         >
-          Сводка
+          {t("admin.navigation.dashboard")}
         </button>
         <button
           type="button"
           className={activeView === "accounts" ? "module-nav__button module-nav__button--active" : "module-nav__button"}
           onClick={() => setActiveView("accounts")}
         >
-          Пользователи
+          {t("admin.navigation.accounts")}
         </button>
         <button
           type="button"
           className={activeView === "events" ? "module-nav__button module-nav__button--active" : "module-nav__button"}
           onClick={() => setActiveView("events")}
         >
-          События
+          {t("admin.navigation.events")}
         </button>
         <button
           type="button"
@@ -5140,7 +5439,7 @@ export default function App() {
           }
           onClick={() => setActiveView("broadcasts")}
         >
-          Рассылки
+          {t("admin.navigation.broadcasts")}
         </button>
         <button
           type="button"
@@ -5151,7 +5450,7 @@ export default function App() {
           }
           onClick={() => setActiveView("promos")}
         >
-          Промокоды
+          {t("admin.navigation.promos")}
         </button>
         <button
           type="button"
@@ -5162,7 +5461,7 @@ export default function App() {
           }
           onClick={() => setActiveView("withdrawals")}
         >
-          Выводы
+          {t("admin.navigation.withdrawals")}
         </button>
       </nav>
 
@@ -5173,23 +5472,27 @@ export default function App() {
         <>
           <section className="dashboard-grid">
             <article className="profile-card">
-              <span className="eyebrow">Профиль оператора</span>
-              <h2>{profile?.full_name || profile?.username || "Администратор"}</h2>
+              <span className="eyebrow">{t("admin.dashboard.profileEyebrow")}</span>
+              <h2>{profile?.full_name || profile?.username || t("admin.dashboard.profileFallbackName")}</h2>
               <dl className="profile-list">
                 <div>
-                  <dt>Логин</dt>
+                  <dt>{t("admin.dashboard.profileLogin")}</dt>
                   <dd>{profile?.username}</dd>
                 </div>
                 <div>
-                  <dt>Email</dt>
-                  <dd>{profile?.email || "Не задан"}</dd>
+                  <dt>{t("admin.dashboard.profileEmail")}</dt>
+                  <dd>{profile?.email || t("admin.dashboard.profileEmailMissing")}</dd>
                 </div>
                 <div>
-                  <dt>Роль</dt>
-                  <dd>{profile?.is_superuser ? "Суперадмин" : "Оператор"}</dd>
+                  <dt>{t("admin.dashboard.profileRole")}</dt>
+                  <dd>
+                    {profile?.is_superuser
+                      ? t("admin.dashboard.profileRoleSuperuser")
+                      : t("admin.dashboard.profileRoleOperator")}
+                  </dd>
                 </div>
                 <div>
-                  <dt>Последний вход</dt>
+                  <dt>{t("admin.dashboard.profileLastLogin")}</dt>
                   <dd>{formatDate(profile?.last_login_at || null)}</dd>
                 </div>
               </dl>
@@ -5206,10 +5509,10 @@ export default function App() {
             <article className="dashboard-panel">
               <div className="dashboard-panel__header">
                 <div>
-                  <span className="eyebrow">Финансовый срез</span>
-                  <h2>Деньги и очереди</h2>
+                  <span className="eyebrow">{t("admin.dashboard.financeEyebrow")}</span>
+                  <h2>{t("admin.dashboard.financeTitle")}</h2>
                 </div>
-                <p>Snapshot на сейчас и агрегаты за последние 30 дней.</p>
+                <p>{t("admin.dashboard.financeDescription")}</p>
               </div>
               <div className="metrics-grid metrics-grid--dense">
                 {financeCards.map((card) => (
@@ -5221,10 +5524,10 @@ export default function App() {
             <article className="dashboard-panel">
               <div className="dashboard-panel__header">
                 <div>
-                  <span className="eyebrow">Операционный срез</span>
-                  <h2>Поток пользователей и продаж</h2>
+                  <span className="eyebrow">{t("admin.dashboard.activityEyebrow")}</span>
+                  <h2>{t("admin.dashboard.activityTitle")}</h2>
                 </div>
-                <p>Здесь виден приток, блокировки, топапы, direct purchase и общий referral хвост.</p>
+                <p>{t("admin.dashboard.activityDescription")}</p>
               </div>
               <div className="metrics-grid metrics-grid--dense">
                 {activityCards.map((card) => (
@@ -5233,72 +5536,304 @@ export default function App() {
               </div>
             </article>
           </section>
-
-          <section className="roadmap-card">
-            <span className="eyebrow">Следующий сектор</span>
-            <ul>
-              <li>Рассылки</li>
-              <li>Довести audit trail до всех admin actions</li>
-              <li>Фильтры и экспорт для очереди выводов</li>
-            </ul>
-          </section>
         </>
       ) : activeView === "accounts" ? (
-        <section className="search-shell">
-          <aside className="search-column">
-            <form className="search-panel" onSubmit={handleSearch}>
-              <span className="eyebrow">Поиск пользователя</span>
-              <h2>telegram_id, email или username</h2>
-              <div className="search-bar">
-                <input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Например: 777000111 или user@example.com"
-                  required
-                />
-                <button type="submit" disabled={searching}>
-                  {searching ? "Ищем..." : "Найти"}
+        <section className="accounts-layout">
+          <section className="accounts-panel">
+            <div className="dashboard-panel__header accounts-panel__header">
+              <div>
+                <span className="eyebrow">{t("admin.accounts.directoryEyebrow")}</span>
+                <h2>{t("admin.accounts.directoryTitle")}</h2>
+              </div>
+              <div className="accounts-panel__actions">
+                <p>{t("admin.accounts.directoryDescription")}</p>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={handleResetAccountListFilters}
+                  disabled={!accountListFiltersActive}
+                >
+                  {t("admin.accounts.table.resetFilters")}
                 </button>
               </div>
-            </form>
-
-            <div className="results-list">
-              {searchResults.length === 0 ? (
-                <div className="empty-state">Список пуст. Сначала выполни поиск.</div>
-              ) : (
-                searchResults.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={selectedAccountId === item.id ? "result-card result-card--active" : "result-card"}
-                    onClick={() => void handleSelectAccount(item.id)}
-                  >
-                    <div className="result-card__top">
-                      <strong>{item.display_name || item.username || item.email || item.id}</strong>
-                      <span className={`status-pill status-pill--${item.status}`}>{humanizeAccountStatus(item.status)}</span>
-                    </div>
-                    <span>{item.email || item.username || "Без email и username"}</span>
-                    <span>Баланс: {formatMoney(item.balance)}</span>
-                    <span>Telegram: {item.telegram_id ? item.telegram_id : "не привязан"}</span>
-                  </button>
-                ))
-              )}
             </div>
-          </aside>
 
-          <div className="detail-column">
-            {detailLoading ? <div className="detail-skeleton">Загружаем карточку пользователя...</div> : null}
-            {!detailLoading && !selectedAccount ? (
-              <div className="detail-skeleton">Выбери пользователя из результата поиска.</div>
+            <div className="accounts-table__meta">
+              <span>{t("admin.accounts.list.summary", { count: accountItems.length, total: accountTotal })}</span>
+              <span>{t("admin.accounts.table.filterHint")}</span>
+            </div>
+
+            <div className="accounts-table__wrap">
+              <table className="accounts-table">
+                <thead>
+                  <tr>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.user")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("user", "asc")}
+                          aria-label={t("admin.accounts.table.sortButtons.user")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "user")}
+                        </button>
+                      </div>
+                      <input
+                        value={accountListDraftFilters.userQuery}
+                        onChange={(event) =>
+                          handleAccountListTextFilterChange("userQuery", event.target.value)
+                        }
+                        placeholder={t("admin.accounts.table.filters.user")}
+                      />
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.telegram")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("telegram_id", "asc")}
+                          aria-label={t("admin.accounts.table.sortButtons.telegram")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "telegram_id")}
+                        </button>
+                      </div>
+                      <input
+                        value={accountListDraftFilters.telegramQuery}
+                        onChange={(event) =>
+                          handleAccountListTextFilterChange("telegramQuery", event.target.value)
+                        }
+                        placeholder={t("admin.accounts.table.filters.telegram")}
+                        inputMode="numeric"
+                      />
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.email")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("email", "asc")}
+                          aria-label={t("admin.accounts.table.sortButtons.email")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "email")}
+                        </button>
+                      </div>
+                      <input
+                        value={accountListDraftFilters.emailQuery}
+                        onChange={(event) =>
+                          handleAccountListTextFilterChange("emailQuery", event.target.value)
+                        }
+                        placeholder={t("admin.accounts.table.filters.email")}
+                      />
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.balance")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("balance", "desc")}
+                          aria-label={t("admin.accounts.table.sortButtons.balance")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "balance")}
+                        </button>
+                      </div>
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.status")}</span>
+                      </div>
+                      <select
+                        value={accountListDraftFilters.status}
+                        onChange={(event) =>
+                          handleAccountListSelectFilterChange(
+                            "status",
+                            event.target.value as AccountListStatusFilter,
+                          )
+                        }
+                      >
+                        <option value="all">{t("admin.accounts.table.statusOptions.all")}</option>
+                        <option value="active">{t("admin.common.active")}</option>
+                        <option value="blocked">{t("admin.common.blocked")}</option>
+                      </select>
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.subscription")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("subscription_expires_at", "desc")}
+                          aria-label={t("admin.accounts.table.sortButtons.subscription")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "subscription_expires_at")}
+                        </button>
+                      </div>
+                      <select
+                        value={accountListDraftFilters.subscription}
+                        onChange={(event) =>
+                          handleAccountListSelectFilterChange(
+                            "subscription",
+                            event.target.value as AccountListSubscriptionFilter,
+                          )
+                        }
+                      >
+                        <option value="all">{t("admin.accounts.table.subscriptionOptions.all")}</option>
+                        <option value="active">{t("admin.accounts.table.subscriptionOptions.active")}</option>
+                        <option value="inactive">{t("admin.accounts.table.subscriptionOptions.inactive")}</option>
+                        <option value="none">{t("admin.accounts.table.subscriptionOptions.none")}</option>
+                      </select>
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.referrals")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("referrals_count", "desc")}
+                          aria-label={t("admin.accounts.table.sortButtons.referrals")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "referrals_count")}
+                        </button>
+                      </div>
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.lastSeen")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("last_seen_at", "desc")}
+                          aria-label={t("admin.accounts.table.sortButtons.lastSeen")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "last_seen_at")}
+                        </button>
+                      </div>
+                    </th>
+                    <th scope="col">
+                      <div className="accounts-table__column-head">
+                        <span>{t("admin.accounts.table.columns.created")}</span>
+                        <button
+                          className="table-sort-button"
+                          type="button"
+                          onClick={() => handleAccountListSortChange("created_at", "desc")}
+                          aria-label={t("admin.accounts.table.sortButtons.created")}
+                        >
+                          {renderAccountSortIndicator(accountListDraftFilters, "created_at")}
+                        </button>
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accountsLoading && accountItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="accounts-table__empty">
+                        {t("admin.accounts.list.loading")}
+                      </td>
+                    </tr>
+                  ) : accountItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="accounts-table__empty">
+                        {t("admin.accounts.list.empty")}
+                      </td>
+                    </tr>
+                  ) : (
+                    accountItems.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={
+                          selectedAccountId === item.id
+                            ? "accounts-table__row accounts-table__row--active"
+                            : "accounts-table__row"
+                        }
+                        onClick={() => void handleSelectAccount(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            void handleSelectAccount(item.id);
+                          }
+                        }}
+                        tabIndex={0}
+                      >
+                        <td>
+                          <div className="accounts-table__identity">
+                            <strong>{formatAccountIdentity(item)}</strong>
+                            <small>{formatCompactId(item.id)}</small>
+                          </div>
+                        </td>
+                        <td>{item.telegram_id ?? t("admin.accounts.telegramMissing")}</td>
+                        <td>{item.email || t("admin.accounts.emailMissing")}</td>
+                        <td>{formatMoney(item.balance)}</td>
+                        <td>
+                          <span className={`status-pill status-pill--${item.status}`}>
+                            {humanizeAccountStatus(item.status)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="accounts-table__subscription">
+                            <strong>{humanizeAccountSubscriptionStatus(item.subscription_status)}</strong>
+                            <small>
+                              {item.subscription_expires_at
+                                ? formatDate(item.subscription_expires_at)
+                                : t("admin.accounts.table.subscriptionDateMissing")}
+                            </small>
+                          </div>
+                        </td>
+                        <td>{item.referrals_count}</td>
+                        <td>{formatDate(item.last_seen_at)}</td>
+                        <td>{formatDate(item.created_at)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {hasMoreAccounts ? (
+              <div className="accounts-table__footer">
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => void handleLoadMoreAccounts()}
+                  disabled={accountsLoading || accountsLoadingMore}
+                >
+                  {accountsLoadingMore
+                    ? t("admin.accounts.list.loadingMore")
+                    : t("admin.accounts.list.loadMore")}
+                </button>
+              </div>
             ) : null}
-            {!detailLoading && selectedAccount ? (
+          </section>
+
+          {detailLoading || selectedAccount ? (
+            <div
+              className="accounts-detail-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("admin.accounts.detailEyebrow")}
+              onClick={handleCloseAccountDetail}
+            >
+              <div className="accounts-detail-modal__panel" onClick={(event) => event.stopPropagation()}>
+                <div className="accounts-detail-modal__toolbar">
+                  <button className="ghost-button" type="button" onClick={handleCloseAccountDetail}>
+                    {t("admin.accounts.closeDetail")}
+                  </button>
+                </div>
+                {detailLoading ? <div className="detail-skeleton">{t("admin.accounts.detailLoading")}</div> : null}
+                {!detailLoading && selectedAccount ? (
               <>
                 <section className="detail-header">
                   <div>
-                    <span className="eyebrow">Карточка пользователя</span>
+                    <span className="eyebrow">{t("admin.accounts.detailEyebrow")}</span>
                     <h2>{selectedAccount.display_name || selectedAccount.username || selectedAccount.email || selectedAccount.id}</h2>
                     <p>
-                      {selectedAccount.email || "Без email"} · {selectedAccount.telegram_id ? `Telegram ${selectedAccount.telegram_id}` : "Telegram не привязан"}
+                      {selectedAccount.email || t("admin.accounts.emailMissing")} ·{" "}
+                      {selectedAccount.telegram_id
+                        ? `${t("admin.accounts.telegramLabel")} ${selectedAccount.telegram_id}`
+                        : t("admin.accounts.telegramNotLinked")}
                     </p>
                   </div>
                   <span className={`status-pill status-pill--${selectedAccount.status}`}>
@@ -5307,67 +5842,66 @@ export default function App() {
                 </section>
 
                 <section className="detail-facts-grid">
-                  <DetailFact label="Баланс" value={formatMoney(selectedAccount.balance)} />
-                  <DetailFact label="Реферальный доход" value={formatMoney(selectedAccount.referral_earnings)} />
-                  <DetailFact label="Подписка" value={selectedAccount.subscription_status || "нет"} />
-                  <DetailFact label="Создан" value={formatDate(selectedAccount.created_at)} />
+                  <DetailFact label={t("admin.accounts.detailFacts.balance")} value={formatMoney(selectedAccount.balance)} />
+                  <DetailFact
+                    label={t("admin.accounts.detailFacts.referralEarnings")}
+                    value={formatMoney(selectedAccount.referral_earnings)}
+                  />
+                  <DetailFact
+                    label={t("admin.accounts.detailFacts.subscription")}
+                    value={selectedAccount.subscription_status || t("admin.accounts.detailFacts.subscriptionMissing")}
+                  />
+                  <DetailFact label={t("admin.accounts.detailFacts.created")} value={formatDate(selectedAccount.created_at)} />
                 </section>
 
                 <section className="detail-section detail-section--action">
-                  <span className="eyebrow">Ручная корректировка баланса</span>
+                  <span className="eyebrow">{t("admin.accounts.balanceAdjustment.eyebrow")}</span>
                   <div className="detail-section__intro">
-                    <h3>Зачисление или списание без захода в БД</h3>
-                    <p>
-                      Положительная сумма делает `admin_credit`, отрицательная делает `admin_debit`.
-                      Комментарий обязателен и попадет в ledger.
-                    </p>
+                    <h3>{t("admin.accounts.balanceAdjustment.title")}</h3>
+                    <p>{t("admin.accounts.balanceAdjustment.description")}</p>
                   </div>
                   <form className="adjustment-form" onSubmit={handleBalanceAdjustment}>
                     <label className="form-field">
-                      <span>Сумма, RUB</span>
+                      <span>{t("admin.accounts.balanceAdjustment.amountLabel")}</span>
                       <input
                         type="number"
                         step="1"
                         value={balanceAdjustmentAmount}
                         onChange={(event) => setBalanceAdjustmentAmount(event.target.value)}
-                        placeholder="Например: 500 или -300"
+                        placeholder={t("admin.accounts.balanceAdjustment.amountPlaceholder")}
                         required
                       />
                     </label>
                     <label className="form-field form-field--wide">
-                      <span>Комментарий</span>
+                      <span>{t("admin.accounts.balanceAdjustment.commentLabel")}</span>
                       <textarea
                         value={balanceAdjustmentComment}
                         onChange={(event) => setBalanceAdjustmentComment(event.target.value)}
-                        placeholder="Почему меняем баланс и на каком основании"
+                        placeholder={t("admin.accounts.balanceAdjustment.commentPlaceholder")}
                         rows={3}
                         required
                       />
                     </label>
                     <div className="adjustment-form__footer">
-                      <span className="form-hint">
-                        `+500` зачислит средства, `-300` спишет. Повторный клик не должен заменять
-                        комментарий вроде "поправить баланс".
-                      </span>
+                      <span className="form-hint">{t("admin.accounts.balanceAdjustment.hint")}</span>
                       <button className="action-button" type="submit" disabled={balanceSubmitting}>
-                        {balanceSubmitting ? "Проводим..." : "Провести корректировку"}
+                        {balanceSubmitting
+                          ? t("admin.accounts.balanceAdjustment.submitting")
+                          : t("admin.accounts.balanceAdjustment.submit")}
                       </button>
                     </div>
                   </form>
                 </section>
 
                 <section className="detail-section detail-section--action">
-                  <span className="eyebrow">Ручная выдача подписки</span>
+                  <span className="eyebrow">{t("admin.accounts.subscriptionGrant.eyebrow")}</span>
                   <div className="detail-section__intro">
-                    <h3>Продление доступа без платежного flow</h3>
-                    <p>
-                      Выбор тарифа идет из backend-каталога. Комментарий обязателен, а операция
-                      фиксируется в audit trail как admin action.
-                    </p>
+                    <h3>{t("admin.accounts.subscriptionGrant.title")}</h3>
+                    <p>{t("admin.accounts.subscriptionGrant.description")}</p>
                   </div>
                   <form className="adjustment-form" onSubmit={handleSubscriptionGrant}>
                     <label className="form-field">
-                      <span>Тариф</span>
+                      <span>{t("admin.accounts.subscriptionGrant.planLabel")}</span>
                       <select
                         value={subscriptionGrantPlanCode}
                         onChange={(event) => setSubscriptionGrantPlanCode(event.target.value)}
@@ -5376,7 +5910,9 @@ export default function App() {
                       >
                         {subscriptionPlans.length === 0 ? (
                           <option value="">
-                            {plansLoading ? "Загружаем тарифы..." : "Тарифы недоступны"}
+                            {plansLoading
+                              ? t("admin.accounts.subscriptionGrant.plansLoading")
+                              : t("admin.accounts.subscriptionGrant.plansUnavailable")}
                           </option>
                         ) : null}
                         {subscriptionPlans.map((plan) => (
@@ -5387,11 +5923,11 @@ export default function App() {
                       </select>
                     </label>
                     <label className="form-field form-field--wide">
-                      <span>Комментарий</span>
+                      <span>{t("admin.accounts.subscriptionGrant.commentLabel")}</span>
                       <textarea
                         value={subscriptionGrantComment}
                         onChange={(event) => setSubscriptionGrantComment(event.target.value)}
-                        placeholder="Почему выдаем подписку вручную и что это компенсирует"
+                        placeholder={t("admin.accounts.subscriptionGrant.commentPlaceholder")}
                         rows={3}
                         required
                       />
@@ -5399,8 +5935,11 @@ export default function App() {
                     <div className="adjustment-form__footer">
                       <span className="form-hint">
                         {selectedGrantPlan
-                          ? `Будет выдан тариф ${selectedGrantPlan.name} на ${selectedGrantPlan.duration_days} дней. Повторный клик защищен idempotency key.`
-                          : "Сначала загрузим тарифы из backend-каталога."}
+                          ? t("admin.accounts.subscriptionGrant.selectedPlanHint", {
+                              name: selectedGrantPlan.name,
+                              days: selectedGrantPlan.duration_days,
+                            })
+                          : t("admin.accounts.subscriptionGrant.plansUnavailableHint")}
                       </span>
                       <button
                         className="action-button"
@@ -5409,7 +5948,9 @@ export default function App() {
                           plansLoading || subscriptionPlans.length === 0 || subscriptionSubmitting
                         }
                       >
-                        {subscriptionSubmitting ? "Выдаем..." : "Выдать подписку"}
+                        {subscriptionSubmitting
+                          ? t("admin.accounts.subscriptionGrant.submitting")
+                          : t("admin.accounts.subscriptionGrant.submit")}
                       </button>
                     </div>
                   </form>
@@ -5417,13 +5958,13 @@ export default function App() {
 
                 <section className="detail-sections-grid">
                   <article className="detail-section">
-                    <span className="eyebrow">Идентичность</span>
+                    <span className="eyebrow">{t("admin.accounts.identity.eyebrow")}</span>
                     <div className="detail-kv">
-                      <div><span>Username</span><strong>{selectedAccount.username || "-"}</strong></div>
-                      <div><span>Имя</span><strong>{[selectedAccount.first_name, selectedAccount.last_name].filter(Boolean).join(" ") || "-"}</strong></div>
-                      <div><span>Locale</span><strong>{selectedAccount.locale || "-"}</strong></div>
-                      <div><span>Referral code</span><strong>{selectedAccount.referral_code || "-"}</strong></div>
-                      <div><span>Referrals</span><strong>{selectedAccount.referrals_count}</strong></div>
+                      <div><span>{t("admin.accounts.identity.username")}</span><strong>{selectedAccount.username || "-"}</strong></div>
+                      <div><span>{t("admin.accounts.identity.name")}</span><strong>{[selectedAccount.first_name, selectedAccount.last_name].filter(Boolean).join(" ") || "-"}</strong></div>
+                      <div><span>{t("admin.accounts.identity.locale")}</span><strong>{selectedAccount.locale || "-"}</strong></div>
+                      <div><span>{t("admin.accounts.identity.referralCode")}</span><strong>{selectedAccount.referral_code || "-"}</strong></div>
+                      <div><span>{t("admin.accounts.identity.referrals")}</span><strong>{selectedAccount.referrals_count}</strong></div>
                       <div><span>Last seen</span><strong>{formatDate(selectedAccount.last_seen_at)}</strong></div>
                     </div>
                   </article>
@@ -5559,17 +6100,21 @@ export default function App() {
                                 <strong>
                                   {referral.reward_amount > 0
                                     ? `+${formatMoney(referral.reward_amount)}`
-                                    : "Награды нет"}
+                                    : t("admin.accounts.referrals.noReward")}
                                 </strong>
                                 <span>
                                   {referral.reward_created_at
-                                    ? `Начислено ${formatDate(referral.reward_created_at)}`
-                                    : "Ждет первую успешную оплату"}
+                                    ? t("admin.accounts.referrals.rewardedAt", {
+                                        date: formatDate(referral.reward_created_at),
+                                      })
+                                    : t("admin.accounts.referrals.waitingFirstPayment")}
                                 </span>
                                 {referral.purchase_amount !== null && referral.reward_rate !== null ? (
                                   <span>
-                                    Покупка {formatMoney(referral.purchase_amount)} · ставка{" "}
-                                    {formatRewardRate(referral.reward_rate)}
+                                    {t("admin.accounts.referrals.purchaseRate", {
+                                      amount: formatMoney(referral.purchase_amount),
+                                      rate: formatRewardRate(referral.reward_rate),
+                                    })}
                                   </span>
                                 ) : null}
                               </div>
@@ -5582,10 +6127,10 @@ export default function App() {
                 </section>
 
                 <section className="detail-section">
-                  <span className="eyebrow">Auth identities</span>
+                  <span className="eyebrow">{t("admin.accounts.authIdentities.eyebrow")}</span>
                   <div className="activity-list">
                     {selectedAccount.auth_accounts.length === 0 ? (
-                      <div className="activity-empty">Привязанных identity нет.</div>
+                      <div className="activity-empty">{t("admin.accounts.authIdentities.empty")}</div>
                     ) : (
                       selectedAccount.auth_accounts.map((identity) => (
                         <article key={`${identity.provider}:${identity.provider_uid}`} className="activity-item">
@@ -5604,12 +6149,10 @@ export default function App() {
                   <article className="detail-section">
                     <div className="detail-section__header detail-section__header--stacked">
                       <div>
-                        <span className="eyebrow">Account timeline</span>
-                        <h3>Business и audit события аккаунта</h3>
+                        <span className="eyebrow">{t("admin.accounts.timeline.eyebrow")}</span>
+                        <h3>{t("admin.accounts.timeline.title")}</h3>
                       </div>
-                      <span className="form-hint">
-                        Здесь видны auth, linking, payments, referrals, withdrawals и admin actions.
-                      </span>
+                      <span className="form-hint">{t("admin.accounts.timeline.description")}</span>
                     </div>
                     <form className="event-filter-grid" onSubmit={handleApplyAccountEventFilters}>
                       <label className="form-field">
@@ -5623,7 +6166,9 @@ export default function App() {
                         >
                           {ACCOUNT_EVENT_TYPE_FILTER_OPTIONS.map((eventType) => (
                             <option key={eventType} value={eventType}>
-                              {eventType === "all" ? "Все события" : humanizeAccountEventType(eventType)}
+                              {eventType === "all"
+                                ? t("admin.accounts.timeline.allEvents")
+                                : humanizeAccountEventType(eventType)}
                             </option>
                           ))}
                         </select>
@@ -5862,44 +6407,39 @@ export default function App() {
                 </section>
 
                 <section className="detail-section detail-section--action detail-section--danger">
-                  <span className="eyebrow">Опасная зона</span>
+                  <span className="eyebrow">{t("admin.accounts.dangerZone.eyebrow")}</span>
                   <div className="detail-section__intro">
-                    <h3>Полная блокировка пользователя</h3>
-                    <p>
-                      Это удаленное административное действие. Полная блокировка режет protected API,
-                      Telegram WebApp auth, новые платежи, wallet-покупки, новые выводы и заставляет
-                      бота молчать на обычные сообщения и `/start`.
-                    </p>
+                    <h3>{t("admin.accounts.dangerZone.title")}</h3>
+                    <p>{t("admin.accounts.dangerZone.description")}</p>
                   </div>
                   <form className="adjustment-form" onSubmit={handleAccountStatusChange}>
                     <div className="form-field">
-                      <span>Текущий статус</span>
+                      <span>{t("admin.accounts.dangerZone.statusLabel")}</span>
                       <div className="status-action-summary status-action-summary--danger">
                         <strong>{humanizeAccountStatus(selectedAccount.status)}</strong>
                         <small>
                           {selectedAccount.status === "blocked"
-                            ? "Сейчас для пользователя действует полный стоп по доступу и основным входным точкам."
-                            : "Сейчас пользователь работает в обычном режиме. Полную блокировку применяй только как крайнее действие."}
+                            ? t("admin.accounts.dangerZone.blockedState")
+                            : t("admin.accounts.dangerZone.activeState")}
                         </small>
                       </div>
                     </div>
                     <label className="form-field form-field--wide">
-                      <span>Комментарий</span>
+                      <span>{t("admin.accounts.dangerZone.commentLabel")}</span>
                       <textarea
                         value={statusChangeComment}
                         onChange={(event) => setStatusChangeComment(event.target.value)}
-                        placeholder="Почему включаем или снимаем полную блокировку"
+                        placeholder={t("admin.accounts.dangerZone.commentPlaceholder")}
                         rows={3}
                         required
                       />
                     </label>
                     <div className="adjustment-form__footer">
                       <span className="form-hint">
-                        Следующее действие:{" "}
+                        {t("admin.accounts.dangerZone.nextActionLabel")}:{" "}
                         {selectedAccount.status === "blocked"
-                          ? "снять полную блокировку"
-                          : "включить полную блокировку"}
-                        . Комментарий попадет в audit trail.
+                          ? t("admin.accounts.dangerZone.nextActionUnblock")
+                          : t("admin.accounts.dangerZone.nextActionBlock")}
                       </span>
                       <button
                         className={
@@ -5911,17 +6451,19 @@ export default function App() {
                         disabled={statusSubmitting}
                       >
                         {statusSubmitting
-                          ? "Сохраняем..."
+                          ? t("admin.accounts.dangerZone.submitting")
                           : selectedAccount.status === "blocked"
-                            ? "Снять полную блокировку"
-                            : "Включить полную блокировку"}
+                            ? t("admin.accounts.dangerZone.submitUnblock")
+                            : t("admin.accounts.dangerZone.submitBlock")}
                       </button>
                     </div>
                   </form>
                 </section>
               </>
-            ) : null}
-          </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : activeView === "events" ? (
         <section className="search-shell">

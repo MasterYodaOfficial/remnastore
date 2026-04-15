@@ -58,6 +58,8 @@ class AdminAuthResponse(BaseModel):
 class AdminDashboardSummaryResponse(BaseModel):
     total_accounts: int
     active_subscriptions: int
+    accounts_with_telegram: int
+    paying_accounts_last_30d: int
     pending_withdrawals: int
     pending_payments: int
     blocked_accounts: int
@@ -66,10 +68,13 @@ class AdminDashboardSummaryResponse(BaseModel):
     total_referral_earnings: int
     pending_withdrawals_amount: int
     paid_withdrawals_amount_last_30d: int
-    successful_payments_last_30d: int
-    successful_payments_amount_last_30d: int
+    successful_payments_rub_last_30d: int
+    successful_payments_amount_rub_last_30d: int
     wallet_topups_amount_last_30d: int
-    direct_plan_revenue_last_30d: int
+    direct_plan_purchases_rub_last_30d: int
+    direct_plan_revenue_rub_last_30d: int
+    direct_plan_purchases_stars_last_30d: int
+    direct_plan_revenue_stars_last_30d: int
 
 
 class AdminAccountSearchItemResponse(BaseModel):
@@ -89,6 +94,30 @@ class AdminAccountSearchItemResponse(BaseModel):
 
 class AdminAccountSearchResponse(BaseModel):
     items: list[AdminAccountSearchItemResponse]
+
+
+class AdminAccountListItemResponse(BaseModel):
+    id: UUID
+    email: str | None = None
+    display_name: str | None = None
+    telegram_id: int | None = None
+    username: str | None = None
+    status: AccountStatus
+    balance: int
+    subscription_status: str | None = None
+    subscription_expires_at: datetime | None = None
+    referrals_count: int
+    last_seen_at: datetime | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AdminAccountListResponse(BaseModel):
+    items: list[AdminAccountListItemResponse]
+    total: int
+    limit: int
+    offset: int
 
 
 class AdminAccountAuthIdentityResponse(BaseModel):

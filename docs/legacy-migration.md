@@ -21,8 +21,8 @@ docker compose up -d
 2. Положите старую SQLite базу сюда:
 
 ```bash
-mkdir -p /opt/remnastore/old_db /opt/remnastore/migration-reports
-cp /path/to/db_2.sqlite3 /opt/remnastore/old_db/db_2.sqlite3
+mkdir -p /opt/remnastore/testdb_db /opt/remnastore/migration-reports
+cp /path/to/db_2.sqlite3 /opt/remnastore/testdb_db/db_2.sqlite3
 ```
 
 По умолчанию migration tool ищет файл именно по пути `./old_db/db_2.sqlite3`.
@@ -96,7 +96,7 @@ docker compose --profile tools run --rm legacy-migration \
 ```bash
 cd /opt/remnastore
 docker compose --profile tools run --rm legacy-migration \
-  --legacy-db /app/old_db/my-legacy.sqlite3 \
+  --legacy-db /app/testdb_db/my-legacy.sqlite3 \
   --dry-run
 ```
 
