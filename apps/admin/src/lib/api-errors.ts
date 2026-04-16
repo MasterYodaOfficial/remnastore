@@ -45,6 +45,14 @@ function mapAdminErrorCodeToMessage(errorCode: string | null, fallback: string):
       return t("admin.apiErrors.promoImportConflict");
     case "admin_promo_invalid_account_id":
       return t("admin.apiErrors.promoInvalidAccountId");
+    case "admin_plan_validation_failed":
+      return t("admin.apiErrors.planValidationFailed");
+    case "admin_plan_conflict":
+      return t("admin.apiErrors.planConflict");
+    case "admin_plan_not_found":
+      return t("admin.apiErrors.planNotFound");
+    case "admin_plan_in_use":
+      return t("admin.apiErrors.planInUse");
     case "admin_broadcast_not_found":
       return t("admin.apiErrors.broadcastNotFound");
     case "admin_broadcast_run_not_found":

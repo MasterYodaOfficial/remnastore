@@ -77,6 +77,88 @@ class AdminDashboardSummaryResponse(BaseModel):
     direct_plan_revenue_stars_last_30d: int
 
 
+class AdminSubscriptionPlanResponse(BaseModel):
+    code: str
+    name: str
+    price_rub: int
+    price_stars: int | None = None
+    duration_days: int
+    features: list[str]
+    device_limit: int | None = None
+    popular: bool = False
+
+
+class AdminSubscriptionPlanCreateRequest(BaseModel):
+    code: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=255)
+    price_rub: int = Field(gt=0)
+    price_stars: int | None = Field(default=None, gt=0)
+    duration_days: int = Field(gt=0)
+    features: list[str] = Field(..., min_length=1)
+    device_limit: int | None = Field(default=None, ge=0)
+    popular: bool = False
+
+    @field_validator("code", "name")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @field_validator("features")
+    @classmethod
+    def validate_features(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            feature = item.strip()
+            if not feature:
+                continue
+            if feature in seen:
+                continue
+            normalized.append(feature)
+            seen.add(feature)
+        if not normalized:
+            raise ValueError("at least one feature is required")
+        return normalized
+
+
+class AdminSubscriptionPlanUpdateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    price_rub: int = Field(gt=0)
+    price_stars: int | None = Field(default=None, gt=0)
+    duration_days: int = Field(gt=0)
+    features: list[str] = Field(..., min_length=1)
+    device_limit: int | None = Field(default=None, ge=0)
+    popular: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+    @field_validator("features")
+    @classmethod
+    def validate_features(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            feature = item.strip()
+            if not feature:
+                continue
+            if feature in seen:
+                continue
+            normalized.append(feature)
+            seen.add(feature)
+        if not normalized:
+            raise ValueError("at least one feature is required")
+        return normalized
+
+
 class AdminAccountSearchItemResponse(BaseModel):
     id: UUID
     email: str | None = None
@@ -892,6 +974,9 @@ class AdminBroadcastAudiencePreviewResponse(BaseModel):
 class AdminBroadcastAudiencePresetUpsertRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    channels: list[BroadcastChannel] = Field(
+        default_factory=lambda: [BroadcastChannel.IN_APP]
+    )
     audience: AdminBroadcastAudienceRequest = Field(
         default_factory=AdminBroadcastAudienceRequest
     )
@@ -911,11 +996,24 @@ class AdminBroadcastAudiencePresetUpsertRequest(BaseModel):
         normalized = value.strip()
         return normalized or None
 
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value: list[BroadcastChannel]) -> list[BroadcastChannel]:
+        if not value:
+            raise ValueError("at least one channel is required")
+
+        unique_channels: list[BroadcastChannel] = []
+        for channel in value:
+            if channel not in unique_channels:
+                unique_channels.append(channel)
+        return unique_channels
+
 
 class AdminBroadcastAudiencePresetResponse(BaseModel):
     id: int
     name: str
     description: str | None = None
+    channels: list[BroadcastChannel]
     audience: AdminBroadcastAudienceResponse
     created_by_admin_id: UUID
     updated_by_admin_id: UUID

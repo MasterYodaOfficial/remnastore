@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import csv
+import enum
+from datetime import date, datetime
+from io import StringIO
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import api_error, api_error_from_exception
@@ -33,6 +37,7 @@ from app.schemas.admin import (
 )
 from app.schemas.payment import SubscriptionPlanResponse
 from app.services.admin_accounts import (
+    export_admin_accounts,
     get_admin_account_detail,
     get_admin_account_event_logs,
     list_admin_accounts,
@@ -61,6 +66,41 @@ from app.services.i18n import translate
 
 router = APIRouter()
 
+ACCOUNT_EXPORT_COLUMNS = (
+    "id",
+    "email",
+    "display_name",
+    "telegram_id",
+    "username",
+    "first_name",
+    "last_name",
+    "is_premium",
+    "locale",
+    "telegram_bot_blocked_at",
+    "remnawave_user_uuid",
+    "subscription_url",
+    "subscription_status",
+    "subscription_expires_at",
+    "subscription_last_synced_at",
+    "subscription_is_trial",
+    "trial_used_at",
+    "trial_ends_at",
+    "balance",
+    "referral_code",
+    "referral_earnings",
+    "referrals_count",
+    "referral_reward_rate",
+    "referred_by_account_id",
+    "status",
+    "last_login_source",
+    "last_seen_at",
+    "created_at",
+    "updated_at",
+    "auth_email_primary",
+    "auth_emails",
+    "auth_providers",
+)
+
 
 def _build_account_list_item(account: Account) -> AdminAccountListItemResponse:
     resolved_email = account.email or next(
@@ -81,6 +121,62 @@ def _build_account_list_item(account: Account) -> AdminAccountListItemResponse:
         last_seen_at=account.last_seen_at,
         created_at=account.created_at,
     )
+
+
+def _format_account_export_value(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, enum.Enum):
+        return str(value.value)
+    return str(value)
+
+
+def _build_account_export_row(account: Account) -> list[str]:
+    auth_emails = [
+        identity.email for identity in account.auth_accounts if identity.email
+    ]
+    auth_providers = [identity.provider.value for identity in account.auth_accounts]
+    auth_email_primary = auth_emails[0] if auth_emails else None
+
+    row = [
+        account.id,
+        account.email,
+        account.display_name,
+        account.telegram_id,
+        account.username,
+        account.first_name,
+        account.last_name,
+        account.is_premium,
+        account.locale,
+        account.telegram_bot_blocked_at,
+        account.remnawave_user_uuid,
+        account.subscription_url,
+        account.subscription_status,
+        account.subscription_expires_at,
+        account.subscription_last_synced_at,
+        account.subscription_is_trial,
+        account.trial_used_at,
+        account.trial_ends_at,
+        account.balance,
+        account.referral_code,
+        account.referral_earnings,
+        account.referrals_count,
+        account.referral_reward_rate,
+        account.referred_by_account_id,
+        account.status,
+        account.last_login_source,
+        account.last_seen_at,
+        account.created_at,
+        account.updated_at,
+        auth_email_primary,
+        ", ".join(auth_emails),
+        ", ".join(auth_providers),
+    ]
+    return [_format_account_export_value(value) for value in row]
 
 
 @router.get("", response_model=AdminAccountListResponse)
@@ -129,6 +225,59 @@ async def list_accounts(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get("/export")
+async def export_accounts(
+    query: str | None = Query(default=None, min_length=1, max_length=255),
+    user_query: str | None = Query(default=None, min_length=1, max_length=255),
+    telegram_query: str | None = Query(default=None, min_length=1, max_length=255),
+    email_query: str | None = Query(default=None, min_length=1, max_length=255),
+    status: Literal["active", "blocked"] | None = Query(default=None),
+    subscription_state: Literal["active", "inactive", "none"] | None = Query(
+        default=None
+    ),
+    telegram_state: Literal["connected", "not_connected"] | None = Query(default=None),
+    sort_by: Literal[
+        "user",
+        "telegram_id",
+        "email",
+        "created_at",
+        "last_seen_at",
+        "balance",
+        "subscription_expires_at",
+        "referrals_count",
+    ] = Query(default="created_at"),
+    sort_order: Literal["asc", "desc"] = Query(default="desc"),
+    session: AsyncSession = Depends(get_session),
+    _: Admin = Depends(get_current_admin),
+) -> Response:
+    accounts = await export_admin_accounts(
+        session,
+        query=query,
+        user_query=user_query,
+        telegram_query=telegram_query,
+        email_query=email_query,
+        status=status,
+        subscription_state=subscription_state,
+        telegram_state=telegram_state,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+    buffer = StringIO()
+    writer = csv.writer(buffer, delimiter=";", lineterminator="\n")
+    writer.writerow(ACCOUNT_EXPORT_COLUMNS)
+    for account in accounts:
+        writer.writerow(_build_account_export_row(account))
+
+    export_date = date.today().isoformat()
+    filename = f"accounts-export-{export_date}.csv"
+    return Response(
+        content=f"\ufeff{buffer.getvalue()}",
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

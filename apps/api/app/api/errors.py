@@ -121,6 +121,16 @@ async def request_validation_error_handler(
             ),
         )
 
+    if path.startswith("/api/v1/admin/plans"):
+        return await api_error_handler(
+            request,
+            api_error(
+                422,
+                translate("api.admin.errors.plan_validation_failed"),
+                error_code="admin_plan_validation_failed",
+            ),
+        )
+
     return await api_error_handler(
         request,
         api_error(

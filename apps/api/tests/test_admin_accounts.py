@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 import tempfile
 import unittest
 import uuid
@@ -353,6 +355,79 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
             [item["username"] for item in telegram_filtered_body["items"]],
             ["highest", "inactive"],
         )
+
+    async def test_export_accounts_returns_all_filtered_rows_as_csv(self) -> None:
+        token = await self._create_admin_token()
+        now = datetime(2026, 4, 15, 12, 30, tzinfo=UTC)
+
+        async with self._session_factory() as session:
+            exported_account = Account(
+                email=None,
+                display_name="Export Target",
+                telegram_id=700100200,
+                username="export_target",
+                status=AccountStatus.ACTIVE,
+                balance=4200,
+                subscription_status="active",
+                subscription_expires_at=now + timedelta(days=30),
+                created_at=now,
+                updated_at=now + timedelta(days=1),
+            )
+            hidden_account = Account(
+                email="hidden@example.com",
+                display_name="Hidden",
+                telegram_id=700999000,
+                username="hidden",
+                status=AccountStatus.BLOCKED,
+                balance=120,
+                created_at=now - timedelta(days=10),
+            )
+            session.add_all([exported_account, hidden_account])
+            await session.flush()
+            session.add(
+                AuthAccount(
+                    account_id=exported_account.id,
+                    provider=AuthProvider.GOOGLE,
+                    provider_uid="export-google",
+                    email="export@example.com",
+                    display_name="Export Target",
+                )
+            )
+            await session.commit()
+
+        response = await self.client.get(
+            "/api/v1/admin/accounts/export",
+            params={
+                "user_query": "export",
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("text/csv"))
+        self.assertIn(
+            'attachment; filename="accounts-export-',
+            response.headers["content-disposition"],
+        )
+
+        rows = list(
+            csv.DictReader(
+                StringIO(response.text.lstrip("\ufeff")),
+                delimiter=";",
+            )
+        )
+        self.assertEqual(len(rows), 1)
+        exported_row = rows[0]
+        self.assertEqual(exported_row["username"], "export_target")
+        self.assertEqual(exported_row["telegram_id"], "700100200")
+        self.assertEqual(exported_row["auth_email_primary"], "export@example.com")
+        self.assertEqual(exported_row["auth_providers"], "google")
+        self.assertEqual(exported_row["created_at"], "2026-04-15")
+        self.assertEqual(exported_row["updated_at"], "2026-04-16")
+        self.assertEqual(exported_row["subscription_expires_at"], "2026-05-15")
 
     async def test_subscription_plans_endpoint_returns_catalog(self) -> None:
         token = await self._create_admin_token()

@@ -277,6 +277,7 @@ type AdminSubscriptionPlan = {
   price_stars: number | null;
   duration_days: number;
   features: string[];
+  device_limit: number | null;
   popular: boolean;
 };
 
@@ -469,6 +470,7 @@ type AdminBroadcastAudiencePreset = {
   id: number;
   name: string;
   description: string | null;
+  channels: BroadcastChannel[];
   audience: AdminBroadcastAudience;
   created_by_admin_id: string;
   updated_by_admin_id: string;
@@ -481,6 +483,25 @@ type AdminBroadcastAudiencePresetListResponse = {
   total: number;
   limit: number;
   offset: number;
+};
+
+type BroadcastAudienceEditorState = {
+  segment: BroadcastAudienceSegment;
+  excludeBlocked: boolean;
+  manualTargetsInput: string;
+  lastSeenOlderThanDays: string;
+  includeNeverSeen: boolean;
+  pendingPaymentOlderThanMinutes: string;
+  pendingPaymentWithinLastDays: string;
+  failedPaymentWithinLastDays: string;
+  subscriptionExpiredFromDays: string;
+  subscriptionExpiredToDays: string;
+  cooldownDays: string;
+  cooldownKey: string;
+  telegramQuietHoursStart: string;
+  telegramQuietHoursEnd: string;
+  sendInApp: boolean;
+  sendTelegram: boolean;
 };
 
 type AdminBroadcastTestSendTargetResult = {
@@ -563,14 +584,6 @@ type AdminBroadcastRunDelivery = {
   error_message: string | null;
   created_at: string;
   updated_at: string;
-};
-
-type AdminBroadcastRunDetailResponse = {
-  run: AdminBroadcastRun;
-  deliveries: AdminBroadcastRunDelivery[];
-  total_deliveries: number;
-  limit: number;
-  offset: number;
 };
 
 type BroadcastButtonDraft = {
@@ -734,7 +747,14 @@ type AccountListFilters = {
   sortOrder: AccountListSortOrder;
 };
 
-type AdminView = "dashboard" | "accounts" | "events" | "broadcasts" | "withdrawals" | "promos";
+type AdminView =
+  | "dashboard"
+  | "accounts"
+  | "events"
+  | "broadcasts"
+  | "plans"
+  | "withdrawals"
+  | "promos";
 const TOKEN_KEY = "remnastore_admin_token";
 const ADMIN_ACCOUNT_LIST_PAGE_SIZE = 20;
 const ACCOUNT_LIST_FILTER_DEBOUNCE_MS = 250;
@@ -756,6 +776,24 @@ const BROADCAST_AUDIENCE_SEGMENTS = [
 ] as const;
 const BROADCAST_AUDIENCE_PREVIEW_LIMIT = 10;
 const BROADCAST_AUDIENCE_PRESET_LIMIT = 100;
+const EMPTY_BROADCAST_AUDIENCE_EDITOR_STATE: BroadcastAudienceEditorState = {
+  segment: "all",
+  excludeBlocked: true,
+  manualTargetsInput: "",
+  lastSeenOlderThanDays: "",
+  includeNeverSeen: false,
+  pendingPaymentOlderThanMinutes: "",
+  pendingPaymentWithinLastDays: "",
+  failedPaymentWithinLastDays: "",
+  subscriptionExpiredFromDays: "",
+  subscriptionExpiredToDays: "",
+  cooldownDays: "",
+  cooldownKey: "",
+  telegramQuietHoursStart: "",
+  telegramQuietHoursEnd: "",
+  sendInApp: true,
+  sendTelegram: false,
+};
 const PROMO_CAMPAIGN_STATUS_OPTIONS = ["draft", "active", "disabled", "archived"] as const;
 const PROMO_EFFECT_TYPE_OPTIONS = [
   "percent_discount",
@@ -984,7 +1022,29 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
     throw new Error(await readErrorMessage(response));
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
+}
+
+function getDownloadFilename(contentDisposition: string | null): string | null {
+  if (!contentDisposition) {
+    return null;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return plainMatch ? plainMatch[1] : null;
 }
 
 function humanizeAccountStatus(status: string): string {
@@ -1475,64 +1535,6 @@ function formatBroadcastAudienceSummary(audience: AdminBroadcastAudience): strin
   return parts.join(" · ");
 }
 
-function formatBroadcastAudiencePreviewMeta(item: AdminBroadcastAudiencePreviewItem): string {
-  const parts: string[] = [];
-
-  if (item.subscription_expires_at) {
-    parts.push(
-      t("admin.broadcasts.preview.subscription", {
-        date: formatDateMoscow(item.subscription_expires_at),
-      }),
-    );
-  }
-  if (item.trial_ends_at) {
-    parts.push(
-      t("admin.broadcasts.preview.trial", {
-        date: formatDateMoscow(item.trial_ends_at),
-      }),
-    );
-  }
-  if (item.last_seen_at) {
-    parts.push(
-      t("admin.broadcasts.preview.lastSeen", {
-        date: formatDateMoscow(item.last_seen_at),
-      }),
-    );
-  }
-
-  return parts.join(" · ");
-}
-
-function humanizeManualListMatchToken(value: string): string {
-  if (value.startsWith("account_id:")) {
-    return t("admin.broadcasts.manualList.matchAccountId", {
-      value: value.slice("account_id:".length),
-    });
-  }
-  if (value.startsWith("email:")) {
-    return t("admin.broadcasts.manualList.matchEmail", {
-      value: value.slice("email:".length),
-    });
-  }
-  if (value.startsWith("telegram_id:")) {
-    return t("admin.broadcasts.manualList.matchTelegramId", {
-      value: value.slice("telegram_id:".length),
-    });
-  }
-  return value;
-}
-
-function humanizeManualListExclusionReason(value: string): string {
-  switch (value) {
-    case "blocked":
-      return t("admin.broadcasts.manualList.excludeBlocked");
-    case "cooldown":
-      return t("admin.broadcasts.manualList.excludeCooldown");
-    default:
-      return t("admin.broadcasts.manualList.excludeDefault", { value });
-  }
-}
-
 function humanizeBroadcastChannel(channel: BroadcastChannel): string {
   return channel === "telegram"
     ? t("admin.broadcasts.channels.telegram")
@@ -1541,6 +1543,189 @@ function humanizeBroadcastChannel(channel: BroadcastChannel): string {
 
 function humanizeBroadcastChannels(channels: BroadcastChannel[]): string {
   return channels.map((channel) => humanizeBroadcastChannel(channel)).join(" + ");
+}
+
+function buildBroadcastChannels(sendInApp: boolean, sendTelegram: boolean): BroadcastChannel[] {
+  const channels: BroadcastChannel[] = [];
+  if (sendInApp) {
+    channels.push("in_app");
+  }
+  if (sendTelegram) {
+    channels.push("telegram");
+  }
+  return channels;
+}
+
+function createBroadcastAudienceEditorState(
+  audience: AdminBroadcastAudience,
+  channels: BroadcastChannel[],
+): BroadcastAudienceEditorState {
+  return {
+    segment: audience.segment,
+    excludeBlocked: audience.exclude_blocked,
+    manualTargetsInput: [
+      ...audience.manual_account_ids,
+      ...audience.manual_emails,
+      ...audience.manual_telegram_ids.map((item) => String(item)),
+    ].join("\n"),
+    lastSeenOlderThanDays:
+      audience.last_seen_older_than_days !== null ? String(audience.last_seen_older_than_days) : "",
+    includeNeverSeen: audience.include_never_seen,
+    pendingPaymentOlderThanMinutes:
+      audience.pending_payment_older_than_minutes !== null
+        ? String(audience.pending_payment_older_than_minutes)
+        : "",
+    pendingPaymentWithinLastDays:
+      audience.pending_payment_within_last_days !== null
+        ? String(audience.pending_payment_within_last_days)
+        : "",
+    failedPaymentWithinLastDays:
+      audience.failed_payment_within_last_days !== null
+        ? String(audience.failed_payment_within_last_days)
+        : "",
+    subscriptionExpiredFromDays:
+      audience.subscription_expired_from_days !== null
+        ? String(audience.subscription_expired_from_days)
+        : "",
+    subscriptionExpiredToDays:
+      audience.subscription_expired_to_days !== null
+        ? String(audience.subscription_expired_to_days)
+        : "",
+    cooldownDays: audience.cooldown_days !== null ? String(audience.cooldown_days) : "",
+    cooldownKey: audience.cooldown_key || "",
+    telegramQuietHoursStart: audience.telegram_quiet_hours_start || "",
+    telegramQuietHoursEnd: audience.telegram_quiet_hours_end || "",
+    sendInApp: channels.includes("in_app"),
+    sendTelegram: channels.includes("telegram"),
+  };
+}
+
+function buildBroadcastAudiencePayloadFromEditor(
+  editor: BroadcastAudienceEditorState,
+): AdminBroadcastAudience {
+  const audience: AdminBroadcastAudience = {
+    segment: editor.segment,
+    exclude_blocked: editor.excludeBlocked,
+    manual_account_ids: [],
+    manual_emails: [],
+    manual_telegram_ids: [],
+    last_seen_older_than_days: null,
+    include_never_seen: false,
+    pending_payment_older_than_minutes: null,
+    pending_payment_within_last_days: null,
+    failed_payment_within_last_days: null,
+    subscription_expired_from_days: null,
+    subscription_expired_to_days: null,
+    cooldown_days: null,
+    cooldown_key: null,
+    telegram_quiet_hours_start: null,
+    telegram_quiet_hours_end: null,
+  };
+
+  if (editor.segment === "manual_list") {
+    const parsedManualTargets = parseManualAudienceTargetsInput(editor.manualTargetsInput);
+    if (
+      parsedManualTargets.manualAccountIds.length === 0 &&
+      parsedManualTargets.manualEmails.length === 0 &&
+      parsedManualTargets.manualTelegramIds.length === 0
+    ) {
+      throw new Error("Для ручного списка добавь хотя бы один ID аккаунта, email или Telegram ID");
+    }
+    audience.manual_account_ids = parsedManualTargets.manualAccountIds;
+    audience.manual_emails = parsedManualTargets.manualEmails;
+    audience.manual_telegram_ids = parsedManualTargets.manualTelegramIds;
+  } else if (editor.segment === "inactive_accounts" || editor.segment === "inactive_paid_users") {
+    audience.last_seen_older_than_days = parseOptionalIntegerInput(
+      editor.lastSeenOlderThanDays,
+      1,
+      "Давность неактивности",
+    );
+    audience.include_never_seen = editor.includeNeverSeen;
+  } else if (editor.segment === "abandoned_checkout") {
+    audience.pending_payment_older_than_minutes = parseOptionalIntegerInput(
+      editor.pendingPaymentOlderThanMinutes,
+      1,
+      "Минимальная давность незавершенного платежа",
+    );
+    audience.pending_payment_within_last_days = parseOptionalIntegerInput(
+      editor.pendingPaymentWithinLastDays,
+      1,
+      "Окно поиска незавершенного платежа",
+    );
+  } else if (editor.segment === "failed_payment") {
+    audience.failed_payment_within_last_days = parseOptionalIntegerInput(
+      editor.failedPaymentWithinLastDays,
+      1,
+      "Окно поиска неуспешной оплаты",
+    );
+  } else if (editor.segment === "expired") {
+    audience.subscription_expired_from_days = parseOptionalIntegerInput(
+      editor.subscriptionExpiredFromDays,
+      0,
+      "Нижняя граница давности окончания подписки",
+    );
+    audience.subscription_expired_to_days = parseOptionalIntegerInput(
+      editor.subscriptionExpiredToDays,
+      0,
+      "Верхняя граница давности окончания подписки",
+    );
+    if (
+      audience.subscription_expired_from_days !== null &&
+      audience.subscription_expired_to_days !== null &&
+      audience.subscription_expired_from_days > audience.subscription_expired_to_days
+    ) {
+      throw new Error("Для истекшей подписки нижняя граница не может быть больше верхней");
+    }
+  }
+
+  const cooldownDays = parseOptionalIntegerInput(
+    editor.cooldownDays,
+    1,
+    "Пауза между повторными отправками",
+  );
+  const cooldownKey = editor.cooldownKey.trim().toLowerCase() || null;
+  if ((cooldownDays === null) !== (cooldownKey === null)) {
+    throw new Error("Для паузы между повторными отправками укажи и срок в днях, и название группы");
+  }
+  audience.cooldown_days = cooldownDays;
+  audience.cooldown_key = cooldownKey;
+
+  const telegramQuietHoursStart = editor.telegramQuietHoursStart.trim() || null;
+  const telegramQuietHoursEnd = editor.telegramQuietHoursEnd.trim() || null;
+  if ((telegramQuietHoursStart === null) !== (telegramQuietHoursEnd === null)) {
+    throw new Error("Для тихих часов Telegram нужно указать и начало, и конец окна");
+  }
+  if (
+    telegramQuietHoursStart !== null &&
+    telegramQuietHoursEnd !== null &&
+    telegramQuietHoursStart === telegramQuietHoursEnd
+  ) {
+    throw new Error("Начало и конец тихих часов Telegram не должны совпадать");
+  }
+  audience.telegram_quiet_hours_start = telegramQuietHoursStart;
+  audience.telegram_quiet_hours_end = telegramQuietHoursEnd;
+
+  return audience;
+}
+
+function normalizeBroadcastAudienceForComparison(audience: AdminBroadcastAudience): string {
+  return JSON.stringify({
+    ...audience,
+    manual_account_ids: [...audience.manual_account_ids].sort(),
+    manual_emails: [...audience.manual_emails].sort(),
+    manual_telegram_ids: [...audience.manual_telegram_ids].sort((left, right) => left - right),
+  });
+}
+
+function hasSameBroadcastAudiencePresetSelection(
+  preset: AdminBroadcastAudiencePreset,
+  channels: BroadcastChannel[],
+  audience: AdminBroadcastAudience,
+): boolean {
+  return (
+    JSON.stringify([...preset.channels].sort()) === JSON.stringify([...channels].sort()) &&
+    normalizeBroadcastAudienceForComparison(preset.audience) === normalizeBroadcastAudienceForComparison(audience)
+  );
 }
 
 function formatRewardRate(value: number): string {
@@ -1553,21 +1738,6 @@ function humanizeReferralRewardStatus(status: AdminReferralChainItem["reward_sta
   return status === "rewarded"
     ? t("admin.broadcasts.referralRewardStatuses.rewarded")
     : t("admin.broadcasts.referralRewardStatuses.pending");
-}
-
-function humanizeBroadcastTestSendStatus(status: AdminBroadcastTestSendTargetResult["status"]): string {
-  switch (status) {
-    case "sent":
-      return t("admin.broadcasts.testSendStatuses.sent");
-    case "partial":
-      return t("admin.broadcasts.testSendStatuses.partial");
-    case "failed":
-      return t("admin.broadcasts.testSendStatuses.failed");
-    case "skipped":
-      return t("admin.broadcasts.testSendStatuses.skipped");
-    default:
-      return status;
-  }
 }
 
 function humanizeBroadcastRunType(runType: BroadcastRunType): string {
@@ -1743,19 +1913,58 @@ function describePromoRedemptionOutcome(redemption: AdminPromoRedemption): strin
   return describePromoEffect(redemption.effect_type, redemption.effect_value, redemption.currency);
 }
 
-function humanizeBroadcastDeliveryStatus(status: AdminBroadcastRunDelivery["status"]): string {
-  switch (status) {
-    case "pending":
-      return t("admin.broadcasts.deliveryStatuses.pending");
-    case "delivered":
-      return t("admin.broadcasts.deliveryStatuses.delivered");
-    case "failed":
-      return t("admin.broadcasts.deliveryStatuses.failed");
-    case "skipped":
-      return t("admin.broadcasts.deliveryStatuses.skipped");
-    default:
-      return status;
+function describePromoSubscriptionRequirement(campaign: AdminPromoCampaign): string {
+  if (campaign.requires_active_subscription) {
+    return t("admin.promos.workspace.campaignDetail.subscriptionRequirement.active");
   }
+  if (campaign.requires_no_active_subscription) {
+    return t("admin.promos.workspace.campaignDetail.subscriptionRequirement.inactive");
+  }
+  return t("admin.promos.workspace.campaignDetail.subscriptionRequirement.any");
+}
+
+function describePromoPlanScope(planCodes: string[] | null): string {
+  return planCodes?.length ? planCodes.join(", ") : t("admin.promos.workspace.common.allPlans");
+}
+
+function describePromoLimit(limit: number | null): string {
+  return limit === null ? t("admin.promos.workspace.common.unlimited") : String(limit);
+}
+
+function describePromoCodeAssignment(accountId: string | null): string {
+  if (!accountId) {
+    return t("admin.promos.workspace.codeTable.noBinding");
+  }
+  return t("admin.promos.workspace.codeTable.accountBinding", {
+    accountId: formatCompactId(accountId),
+  });
+}
+
+function describePromoCodeLimit(limit: number | null): string {
+  if (limit === null) {
+    return t("admin.promos.workspace.codeTable.noLimit");
+  }
+  return t("admin.promos.workspace.codeTable.limitValue", { count: limit });
+}
+
+function describePromoCodeStatus(isActive: boolean): string {
+  return isActive
+    ? t("admin.promos.workspace.codeTable.statusActive")
+    : t("admin.promos.workspace.codeTable.statusInactive");
+}
+
+function describePromoRedemptionReference(redemption: AdminPromoRedemption): string {
+  if (redemption.failure_reason) {
+    return t("admin.promos.workspace.redemptions.referenceFailure", {
+      reason: redemption.failure_reason,
+    });
+  }
+  if (redemption.reference_type || redemption.reference_id) {
+    return t("admin.promos.workspace.redemptions.referenceValue", {
+      reference: `${redemption.reference_type || t("admin.promos.workspace.redemptions.referenceFallback")} ${redemption.reference_id || ""}`.trim(),
+    });
+  }
+  return t("admin.promos.workspace.redemptions.referenceEmpty");
 }
 
 function buildMoscowScheduleIso(value: string): string {
@@ -1768,6 +1977,55 @@ function buildMoscowScheduleIso(value: string): string {
 
 function renderBroadcastPreviewHtml(html: string): string {
   return html.replace(/\n/g, "<br />");
+}
+
+function formatPlanFeaturesInput(features: string[]): string {
+  return features.join("\n");
+}
+
+function parsePlanFeaturesInput(value: string): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const rawLine of value.split("\n")) {
+    const feature = rawLine.trim();
+    if (!feature || seen.has(feature)) {
+      continue;
+    }
+    normalized.push(feature);
+    seen.add(feature);
+  }
+  return normalized;
+}
+
+function formatPlanDuration(days: number): string {
+  return t("admin.plans.table.durationValue", { days });
+}
+
+function formatPlanStarsPrice(price: number | null): string {
+  if (price === null) {
+    return t("admin.plans.table.starsEmpty");
+  }
+  return `${price} XTR`;
+}
+
+function formatPlanDeviceLimit(value: number | null): string {
+  if (value === null) {
+    return t("admin.plans.table.deviceLimitEmpty");
+  }
+  return t("admin.plans.table.deviceLimitValue", { count: value });
+}
+
+function summarizePlanFeatures(features: string[]): string {
+  if (features.length === 0) {
+    return t("admin.common.noData");
+  }
+
+  const preview = features.slice(0, 2).join(" · ");
+  const remaining = features.length - 2;
+  if (remaining <= 0) {
+    return preview;
+  }
+  return `${preview} ${t("admin.plans.table.moreFeatures", { count: remaining })}`;
 }
 
 export default function App() {
@@ -1785,6 +2043,7 @@ export default function App() {
   const [accountTotal, setAccountTotal] = useState(0);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountsLoadingMore, setAccountsLoadingMore] = useState(false);
+  const [accountsExporting, setAccountsExporting] = useState(false);
   const [accountListDraftFilters, setAccountListDraftFilters] =
     useState<AccountListFilters>({ ...EMPTY_ACCOUNT_LIST_FILTERS });
   const [accountListFilters, setAccountListFilters] =
@@ -1822,6 +2081,17 @@ export default function App() {
   const [globalEventLoadingMore, setGlobalEventLoadingMore] = useState(false);
   const [subscriptionPlans, setSubscriptionPlans] = useState<AdminSubscriptionPlan[]>([]);
   const [plansLoading, setPlansLoading] = useState(false);
+  const [selectedCatalogPlanCode, setSelectedCatalogPlanCode] = useState<string | null>(null);
+  const [planSubmitting, setPlanSubmitting] = useState(false);
+  const [planDeleting, setPlanDeleting] = useState(false);
+  const [planEditorCode, setPlanEditorCode] = useState("");
+  const [planEditorName, setPlanEditorName] = useState("");
+  const [planEditorPriceRub, setPlanEditorPriceRub] = useState("");
+  const [planEditorPriceStars, setPlanEditorPriceStars] = useState("");
+  const [planEditorDurationDays, setPlanEditorDurationDays] = useState("");
+  const [planEditorDeviceLimit, setPlanEditorDeviceLimit] = useState("");
+  const [planEditorPopular, setPlanEditorPopular] = useState(false);
+  const [planEditorFeaturesInput, setPlanEditorFeaturesInput] = useState("");
   const [balanceAdjustmentAmount, setBalanceAdjustmentAmount] = useState("");
   const [balanceAdjustmentComment, setBalanceAdjustmentComment] = useState("");
   const [balanceSubmitting, setBalanceSubmitting] = useState(false);
@@ -1839,15 +2109,16 @@ export default function App() {
   const [broadcastItems, setBroadcastItems] = useState<AdminBroadcast[]>([]);
   const [broadcastTotal, setBroadcastTotal] = useState(0);
   const [selectedBroadcastId, setSelectedBroadcastId] = useState<number | null>(null);
+  const [broadcastSelectionMode, setBroadcastSelectionMode] = useState<"existing" | "new">("existing");
   const [selectedBroadcast, setSelectedBroadcast] = useState<AdminBroadcast | null>(null);
   const [broadcastsLoading, setBroadcastsLoading] = useState(false);
   const [broadcastSubmitting, setBroadcastSubmitting] = useState(false);
   const [broadcastEstimate, setBroadcastEstimate] = useState<AdminBroadcastEstimate | null>(null);
   const [broadcastEstimateLoading, setBroadcastEstimateLoading] = useState(false);
   const [broadcastEstimateError, setBroadcastEstimateError] = useState<string | null>(null);
-  const [broadcastAudiencePreview, setBroadcastAudiencePreview] = useState<AdminBroadcastAudiencePreview | null>(null);
-  const [broadcastAudiencePreviewLoading, setBroadcastAudiencePreviewLoading] = useState(false);
-  const [broadcastAudiencePreviewError, setBroadcastAudiencePreviewError] = useState<string | null>(null);
+  const [, setBroadcastAudiencePreview] = useState<AdminBroadcastAudiencePreview | null>(null);
+  const [, setBroadcastAudiencePreviewLoading] = useState(false);
+  const [, setBroadcastAudiencePreviewError] = useState<string | null>(null);
   const [broadcastAudiencePresetItems, setBroadcastAudiencePresetItems] = useState<AdminBroadcastAudiencePreset[]>([]);
   const [broadcastAudiencePresetTotal, setBroadcastAudiencePresetTotal] = useState(0);
   const [selectedBroadcastAudiencePresetId, setSelectedBroadcastAudiencePresetId] = useState<number | null>(null);
@@ -1856,25 +2127,28 @@ export default function App() {
   const [broadcastAudiencePresetError, setBroadcastAudiencePresetError] = useState<string | null>(null);
   const [broadcastAudiencePresetName, setBroadcastAudiencePresetName] = useState("");
   const [broadcastAudiencePresetDescription, setBroadcastAudiencePresetDescription] = useState("");
-  const [broadcastTestEmailsInput, setBroadcastTestEmailsInput] = useState("");
-  const [broadcastTestTelegramIdsInput, setBroadcastTestTelegramIdsInput] = useState("");
-  const [broadcastTestComment, setBroadcastTestComment] = useState("");
-  const [broadcastTestSubmitting, setBroadcastTestSubmitting] = useState(false);
-  const [broadcastTestResult, setBroadcastTestResult] = useState<AdminBroadcastTestSendResponse | null>(null);
+  const [broadcastAudiencePresetEditor, setBroadcastAudiencePresetEditor] = useState<BroadcastAudienceEditorState>({
+    ...EMPTY_BROADCAST_AUDIENCE_EDITOR_STATE,
+  });
+  const [, setBroadcastTestEmailsInput] = useState("");
+  const [, setBroadcastTestTelegramIdsInput] = useState("");
+  const [, setBroadcastTestComment] = useState("");
+  const [, setBroadcastTestSubmitting] = useState(false);
+  const [, setBroadcastTestResult] = useState<AdminBroadcastTestSendResponse | null>(null);
   const [broadcastRuntimeComment, setBroadcastRuntimeComment] = useState("");
   const [broadcastScheduleAtInput, setBroadcastScheduleAtInput] = useState("");
   const [broadcastRuntimeSubmitting, setBroadcastRuntimeSubmitting] = useState(false);
-  const [broadcastRunItems, setBroadcastRunItems] = useState<AdminBroadcastRun[]>([]);
+  const [, setBroadcastRunItems] = useState<AdminBroadcastRun[]>([]);
   const [broadcastRunTotal, setBroadcastRunTotal] = useState(0);
-  const [selectedBroadcastRunId, setSelectedBroadcastRunId] = useState<number | null>(null);
-  const [selectedBroadcastRun, setSelectedBroadcastRun] = useState<AdminBroadcastRun | null>(null);
-  const [broadcastRunsLoading, setBroadcastRunsLoading] = useState(false);
-  const [broadcastRunDetailLoading, setBroadcastRunDetailLoading] = useState(false);
-  const [broadcastRunDeliveries, setBroadcastRunDeliveries] = useState<AdminBroadcastRunDelivery[]>([]);
+  const [, setSelectedBroadcastRunId] = useState<number | null>(null);
+  const [, setSelectedBroadcastRun] = useState<AdminBroadcastRun | null>(null);
+  const [, setBroadcastRunsLoading] = useState(false);
+  const [, setBroadcastRunDetailLoading] = useState(false);
+  const [, setBroadcastRunDeliveries] = useState<AdminBroadcastRunDelivery[]>([]);
   const [, setBroadcastRunDeliveriesTotal] = useState(0);
-  const [broadcastRunStatusFilter, setBroadcastRunStatusFilter] = useState<BroadcastRunStatus | "all">("all");
-  const [broadcastRunTypeFilter, setBroadcastRunTypeFilter] = useState<BroadcastRunType | "all">("all");
-  const [broadcastRunChannelFilter, setBroadcastRunChannelFilter] = useState<BroadcastChannel | "all">("all");
+  const [, setBroadcastRunStatusFilter] = useState<BroadcastRunStatus | "all">("all");
+  const [, setBroadcastRunTypeFilter] = useState<BroadcastRunType | "all">("all");
+  const [, setBroadcastRunChannelFilter] = useState<BroadcastChannel | "all">("all");
   const [broadcastName, setBroadcastName] = useState("");
   const [broadcastTitle, setBroadcastTitle] = useState("");
   const [broadcastBodyHtml, setBroadcastBodyHtml] = useState("");
@@ -2077,6 +2351,23 @@ export default function App() {
     () => subscriptionPlans.find((plan) => plan.code === subscriptionGrantPlanCode) || null,
     [subscriptionGrantPlanCode, subscriptionPlans],
   );
+  const selectedCatalogPlan = useMemo(
+    () => subscriptionPlans.find((plan) => plan.code === selectedCatalogPlanCode) || null,
+    [selectedCatalogPlanCode, subscriptionPlans],
+  );
+  const plansOverview = useMemo(
+    () => ({
+      total: subscriptionPlans.length,
+      popular: subscriptionPlans.filter((plan) => plan.popular).length,
+      starsEnabled: subscriptionPlans.filter((plan) => plan.price_stars !== null).length,
+      longestDuration: subscriptionPlans.reduce(
+        (maxDuration, plan) => Math.max(maxDuration, plan.duration_days),
+        0,
+      ),
+    }),
+    [subscriptionPlans],
+  );
+  const planEditorMode = selectedCatalogPlanCode === null ? "create" : "edit";
   const selectedWithdrawal = useMemo(
     () => withdrawalItems.find((item) => item.id === selectedWithdrawalId) || null,
     [selectedWithdrawalId, withdrawalItems],
@@ -2123,17 +2414,26 @@ export default function App() {
   );
   const broadcastEditorMode = selectedBroadcastId ? "edit" : "create";
   const broadcastIsDraft = !selectedBroadcast || selectedBroadcast.status === "draft";
+  const showBroadcastEditor = broadcastIsDraft;
+  const showBroadcastRuntime = Boolean(
+    selectedBroadcast &&
+      selectedBroadcast.status !== "completed" &&
+      selectedBroadcast.status !== "failed" &&
+      selectedBroadcast.status !== "cancelled",
+  );
   const canManageBroadcastRuntime = Boolean(profile?.is_superuser && selectedBroadcastId !== null);
-  const broadcastChannels = useMemo(() => {
-    const channels: BroadcastChannel[] = [];
-    if (broadcastSendInApp) {
-      channels.push("in_app");
-    }
-    if (broadcastSendTelegram) {
-      channels.push("telegram");
-    }
-    return channels;
-  }, [broadcastSendInApp, broadcastSendTelegram]);
+  const broadcastChannels = useMemo(
+    () => buildBroadcastChannels(broadcastSendInApp, broadcastSendTelegram),
+    [broadcastSendInApp, broadcastSendTelegram],
+  );
+  const broadcastAudiencePresetChannels = useMemo(
+    () =>
+      buildBroadcastChannels(
+        broadcastAudiencePresetEditor.sendInApp,
+        broadcastAudiencePresetEditor.sendTelegram,
+      ),
+    [broadcastAudiencePresetEditor.sendInApp, broadcastAudiencePresetEditor.sendTelegram],
+  );
   const broadcastEstimateSnapshot = useMemo<AdminBroadcastEstimate | null>(() => {
     if (broadcastEstimate) {
       return broadcastEstimate;
@@ -2149,6 +2449,17 @@ export default function App() {
       estimated_telegram_recipients: selectedBroadcast.estimated_telegram_recipients,
     };
   }, [broadcastEstimate, selectedBroadcast]);
+  const broadcastDraftCount = useMemo(
+    () => broadcastItems.filter((item) => item.status === "draft").length,
+    [broadcastItems],
+  );
+  const broadcastActiveCount = useMemo(
+    () =>
+      broadcastItems.filter(
+        (item) => item.status === "scheduled" || item.status === "running" || item.status === "paused",
+      ).length,
+    [broadcastItems],
+  );
   const broadcastAudiencePreviewSummary = useMemo(() => {
     try {
       return formatBroadcastAudienceSummary(buildBroadcastAudiencePayload());
@@ -2176,6 +2487,44 @@ export default function App() {
       broadcastAudiencePresetItems.find((item) => item.id === selectedBroadcastAudiencePresetId) || null,
     [broadcastAudiencePresetItems, selectedBroadcastAudiencePresetId],
   );
+  const broadcastAudiencePresetEditorSummary = useMemo(() => {
+    try {
+      return formatBroadcastAudienceSummary(
+        buildBroadcastAudiencePayloadFromEditor(broadcastAudiencePresetEditor),
+      );
+    } catch {
+      return humanizeBroadcastAudienceSegment(broadcastAudiencePresetEditor.segment);
+    }
+  }, [broadcastAudiencePresetEditor]);
+  const matchedBroadcastAudiencePreset = useMemo(() => {
+    try {
+      const currentAudience = buildBroadcastAudiencePayload();
+      return (
+        broadcastAudiencePresetItems.find((item) =>
+          hasSameBroadcastAudiencePresetSelection(item, broadcastChannels, currentAudience),
+        ) || null
+      );
+    } catch {
+      return null;
+    }
+  }, [
+    broadcastAudienceExcludeBlocked,
+    broadcastAudiencePresetItems,
+    broadcastChannels,
+    broadcastCooldownDays,
+    broadcastCooldownKey,
+    broadcastFailedPaymentWithinLastDays,
+    broadcastIncludeNeverSeen,
+    broadcastLastSeenOlderThanDays,
+    broadcastManualAudienceTargetsInput,
+    broadcastPendingPaymentOlderThanMinutes,
+    broadcastPendingPaymentWithinLastDays,
+    broadcastSubscriptionExpiredFromDays,
+    broadcastSubscriptionExpiredToDays,
+    broadcastTelegramQuietHoursEnd,
+    broadcastTelegramQuietHoursStart,
+    broadcastAudienceSegment,
+  ]);
   const selectedPromoCampaign = useMemo(
     () => promoCampaignItems.find((campaign) => campaign.id === selectedPromoCampaignId) || null,
     [promoCampaignItems, selectedPromoCampaignId],
@@ -2183,13 +2532,13 @@ export default function App() {
   const promoCampaignEditorMode = promoCampaignEditingId === null ? "create" : "edit";
   const promoOverview = useMemo(
     () => ({
+      draft: promoCampaignItems.filter((campaign) => campaign.status === "draft").length,
       active: promoCampaignItems.filter((campaign) => campaign.status === "active").length,
-      directRedeems: promoCampaignItems.filter((campaign) =>
-        campaign.effect_type === "free_days" ||
-        campaign.effect_type === "extra_days" ||
-        campaign.effect_type === "balance_credit"
-      ).length,
       totalCodes: promoCampaignItems.reduce((accumulator, campaign) => accumulator + campaign.codes_count, 0),
+      totalRedemptions: promoCampaignItems.reduce(
+        (accumulator, campaign) => accumulator + campaign.redemptions_count,
+        0,
+      ),
     }),
     [promoCampaignItems],
   );
@@ -2234,49 +2583,27 @@ export default function App() {
     setBroadcastFormSourceId(null);
   }
 
-  function applyBroadcastAudienceToEditor(audience: AdminBroadcastAudience) {
-    setBroadcastAudienceSegment(audience.segment);
-    setBroadcastAudienceExcludeBlocked(audience.exclude_blocked);
-    setBroadcastManualAudienceTargetsInput(
-      [
-        ...audience.manual_account_ids,
-        ...audience.manual_emails,
-        ...audience.manual_telegram_ids.map((item) => String(item)),
-      ].join("\n"),
-    );
-    setBroadcastLastSeenOlderThanDays(
-      audience.last_seen_older_than_days !== null ? String(audience.last_seen_older_than_days) : "",
-    );
-    setBroadcastIncludeNeverSeen(audience.include_never_seen);
-    setBroadcastPendingPaymentOlderThanMinutes(
-      audience.pending_payment_older_than_minutes !== null
-        ? String(audience.pending_payment_older_than_minutes)
-        : "",
-    );
-    setBroadcastPendingPaymentWithinLastDays(
-      audience.pending_payment_within_last_days !== null
-        ? String(audience.pending_payment_within_last_days)
-        : "",
-    );
-    setBroadcastFailedPaymentWithinLastDays(
-      audience.failed_payment_within_last_days !== null
-        ? String(audience.failed_payment_within_last_days)
-        : "",
-    );
-    setBroadcastSubscriptionExpiredFromDays(
-      audience.subscription_expired_from_days !== null
-        ? String(audience.subscription_expired_from_days)
-        : "",
-    );
-    setBroadcastSubscriptionExpiredToDays(
-      audience.subscription_expired_to_days !== null
-        ? String(audience.subscription_expired_to_days)
-        : "",
-    );
-    setBroadcastCooldownDays(audience.cooldown_days !== null ? String(audience.cooldown_days) : "");
-    setBroadcastCooldownKey(audience.cooldown_key || "");
-    setBroadcastTelegramQuietHoursStart(audience.telegram_quiet_hours_start || "");
-    setBroadcastTelegramQuietHoursEnd(audience.telegram_quiet_hours_end || "");
+  function applyBroadcastAudienceToEditor(
+    audience: AdminBroadcastAudience,
+    channels: BroadcastChannel[] = ["in_app"],
+  ) {
+    const nextState = createBroadcastAudienceEditorState(audience, channels);
+    setBroadcastAudienceSegment(nextState.segment);
+    setBroadcastAudienceExcludeBlocked(nextState.excludeBlocked);
+    setBroadcastManualAudienceTargetsInput(nextState.manualTargetsInput);
+    setBroadcastLastSeenOlderThanDays(nextState.lastSeenOlderThanDays);
+    setBroadcastIncludeNeverSeen(nextState.includeNeverSeen);
+    setBroadcastPendingPaymentOlderThanMinutes(nextState.pendingPaymentOlderThanMinutes);
+    setBroadcastPendingPaymentWithinLastDays(nextState.pendingPaymentWithinLastDays);
+    setBroadcastFailedPaymentWithinLastDays(nextState.failedPaymentWithinLastDays);
+    setBroadcastSubscriptionExpiredFromDays(nextState.subscriptionExpiredFromDays);
+    setBroadcastSubscriptionExpiredToDays(nextState.subscriptionExpiredToDays);
+    setBroadcastCooldownDays(nextState.cooldownDays);
+    setBroadcastCooldownKey(nextState.cooldownKey);
+    setBroadcastTelegramQuietHoursStart(nextState.telegramQuietHoursStart);
+    setBroadcastTelegramQuietHoursEnd(nextState.telegramQuietHoursEnd);
+    setBroadcastSendInApp(nextState.sendInApp);
+    setBroadcastSendTelegram(nextState.sendTelegram);
   }
 
   function resetPromoCampaignForm() {
@@ -2295,6 +2622,30 @@ export default function App() {
     setPromoEndsAtInput("");
     setPromoTotalRedemptionsLimit("");
     setPromoPerAccountRedemptionsLimit("");
+  }
+
+  function resetSubscriptionPlanEditor() {
+    setSelectedCatalogPlanCode(null);
+    setPlanEditorCode("");
+    setPlanEditorName("");
+    setPlanEditorPriceRub("");
+    setPlanEditorPriceStars("");
+    setPlanEditorDurationDays("");
+    setPlanEditorDeviceLimit("");
+    setPlanEditorPopular(false);
+    setPlanEditorFeaturesInput("");
+  }
+
+  function hydrateSubscriptionPlanEditor(plan: AdminSubscriptionPlan) {
+    setSelectedCatalogPlanCode(plan.code);
+    setPlanEditorCode(plan.code);
+    setPlanEditorName(plan.name);
+    setPlanEditorPriceRub(String(plan.price_rub));
+    setPlanEditorPriceStars(plan.price_stars !== null ? String(plan.price_stars) : "");
+    setPlanEditorDurationDays(String(plan.duration_days));
+    setPlanEditorDeviceLimit(plan.device_limit !== null ? String(plan.device_limit) : "");
+    setPlanEditorPopular(plan.popular);
+    setPlanEditorFeaturesInput(formatPlanFeaturesInput(plan.features));
   }
 
   function resetPromoCodeForm() {
@@ -2350,9 +2701,7 @@ export default function App() {
     setBroadcastContentType(broadcast.content_type);
     setBroadcastImageUrl(broadcast.image_url || "");
     setBroadcastButtonDrafts(broadcast.buttons.map((button) => createBroadcastButtonDraft(button)));
-    applyBroadcastAudienceToEditor(broadcast.audience);
-    setBroadcastSendInApp(broadcast.channels.includes("in_app"));
-    setBroadcastSendTelegram(broadcast.channels.includes("telegram"));
+    applyBroadcastAudienceToEditor(broadcast.audience, broadcast.channels);
     setBroadcastEditorDirty(false);
     setBroadcastFormSourceId(broadcast.id);
   }
@@ -2683,10 +3032,13 @@ export default function App() {
       setPlansLoading(true);
       try {
         const plans = await adminFetch<AdminSubscriptionPlan[]>(
-          "/api/v1/admin/accounts/subscription-plans",
+          "/api/v1/admin/plans",
           activeToken,
         );
         setSubscriptionPlans(plans);
+        setSelectedCatalogPlanCode((currentSelection) =>
+          plans.some((plan) => plan.code === currentSelection) ? currentSelection : null,
+        );
         return plans;
       } catch (fetchError) {
         setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить тарифы");
@@ -2738,7 +3090,9 @@ export default function App() {
         setSelectedBroadcastId((currentSelection) =>
           response.items.some((item) => item.id === currentSelection)
             ? currentSelection
-            : (response.items[0]?.id ?? null),
+            : broadcastSelectionMode === "new"
+              ? null
+              : (response.items[0]?.id ?? null),
         );
         return response.items;
       } catch (fetchError) {
@@ -2752,7 +3106,7 @@ export default function App() {
         setBroadcastsLoading(false);
       }
     },
-    [],
+    [broadcastSelectionMode],
   );
 
   const loadBroadcastAudiencePresets = useCallback(
@@ -2816,68 +3170,20 @@ export default function App() {
     async (activeToken: string): Promise<AdminBroadcastRun[]> => {
       setBroadcastRunsLoading(true);
       try {
-        const params = new URLSearchParams({
-          limit: "20",
-          offset: "0",
-        });
-        if (broadcastRunStatusFilter !== "all") {
-          params.set("status", broadcastRunStatusFilter);
-        }
-        if (broadcastRunTypeFilter !== "all") {
-          params.set("run_type", broadcastRunTypeFilter);
-        }
-        if (broadcastRunChannelFilter !== "all") {
-          params.set("channel", broadcastRunChannelFilter);
-        }
-
         const response = await adminFetch<AdminBroadcastRunListResponse>(
-          `/api/v1/admin/broadcasts/runs?${params.toString()}`,
+          "/api/v1/admin/broadcasts/runs?limit=20&offset=0",
           activeToken,
         );
         setBroadcastRunItems(response.items);
         setBroadcastRunTotal(response.total);
-        setSelectedBroadcastRunId((currentSelection) =>
-          response.items.some((item) => item.id === currentSelection)
-            ? currentSelection
-            : (response.items[0]?.id ?? null),
-        );
         return response.items;
       } catch (fetchError) {
         setBroadcastRunItems([]);
         setBroadcastRunTotal(0);
-        setSelectedBroadcastRunId(null);
-        setSelectedBroadcastRun(null);
-        setBroadcastRunDeliveries([]);
-        setBroadcastRunDeliveriesTotal(0);
         setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить журнал запусков");
         return [];
       } finally {
         setBroadcastRunsLoading(false);
-      }
-    },
-    [broadcastRunChannelFilter, broadcastRunStatusFilter, broadcastRunTypeFilter],
-  );
-
-  const loadBroadcastRunDetail = useCallback(
-    async (runId: number, activeToken: string): Promise<AdminBroadcastRun | null> => {
-      setBroadcastRunDetailLoading(true);
-      try {
-        const response = await adminFetch<AdminBroadcastRunDetailResponse>(
-          `/api/v1/admin/broadcasts/runs/${runId}?limit=50&offset=0`,
-          activeToken,
-        );
-        setSelectedBroadcastRun(response.run);
-        setBroadcastRunDeliveries(response.deliveries);
-        setBroadcastRunDeliveriesTotal(response.total_deliveries);
-        return response.run;
-      } catch (fetchError) {
-        setSelectedBroadcastRun(null);
-        setBroadcastRunDeliveries([]);
-        setBroadcastRunDeliveriesTotal(0);
-        setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить run-detail");
-        return null;
-      } finally {
-        setBroadcastRunDetailLoading(false);
       }
     },
     [],
@@ -3030,6 +3336,7 @@ export default function App() {
       setAccountTotal(0);
       setAccountsLoading(false);
       setAccountsLoadingMore(false);
+      setAccountsExporting(false);
       setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
       setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
       setSelectedAccountId(null);
@@ -3165,6 +3472,7 @@ export default function App() {
         setSummary(null);
         setAccountItems([]);
         setAccountTotal(0);
+        setAccountsExporting(false);
         setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
         setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
         setSelectedAccountId(null);
@@ -3193,7 +3501,11 @@ export default function App() {
   }, [loadDashboard, token]);
 
   useEffect(() => {
-    if (!token || (activeView !== "accounts" && activeView !== "promos") || subscriptionPlans.length > 0) {
+    if (
+      !token ||
+      (activeView !== "accounts" && activeView !== "promos" && activeView !== "plans") ||
+      subscriptionPlans.length > 0
+    ) {
       return;
     }
 
@@ -3275,20 +3587,6 @@ export default function App() {
 
     void loadBroadcastDetail(selectedBroadcastId, token);
   }, [activeView, loadBroadcastDetail, selectedBroadcastId, token]);
-
-  useEffect(() => {
-    if (!token || activeView !== "broadcasts") {
-      return;
-    }
-    if (selectedBroadcastRunId === null) {
-      setSelectedBroadcastRun(null);
-      setBroadcastRunDeliveries([]);
-      setBroadcastRunDeliveriesTotal(0);
-      return;
-    }
-
-    void loadBroadcastRunDetail(selectedBroadcastRunId, token);
-  }, [activeView, loadBroadcastRunDetail, selectedBroadcastRunId, token]);
 
   useEffect(() => {
     if (!token || activeView !== "promos") {
@@ -3410,7 +3708,6 @@ export default function App() {
       setBroadcastTestResult(null);
       setBroadcastRuntimeComment("");
       setBroadcastScheduleAtInput("");
-      resetBroadcastEditorForm();
       return;
     }
 
@@ -3438,6 +3735,12 @@ export default function App() {
     if (selectedBroadcastAudiencePreset) {
       setBroadcastAudiencePresetName(selectedBroadcastAudiencePreset.name);
       setBroadcastAudiencePresetDescription(selectedBroadcastAudiencePreset.description || "");
+      setBroadcastAudiencePresetEditor(
+        createBroadcastAudienceEditorState(
+          selectedBroadcastAudiencePreset.audience,
+          selectedBroadcastAudiencePreset.channels,
+        ),
+      );
       return;
     }
 
@@ -3448,6 +3751,7 @@ export default function App() {
     setSelectedBroadcastAudiencePresetId(null);
     setBroadcastAudiencePresetName("");
     setBroadcastAudiencePresetDescription("");
+    setBroadcastAudiencePresetEditor({ ...EMPTY_BROADCAST_AUDIENCE_EDITOR_STATE });
   }, [selectedBroadcastAudiencePreset, selectedBroadcastAudiencePresetId]);
 
   useEffect(() => {
@@ -3565,7 +3869,7 @@ export default function App() {
     }
 
     void loadBroadcastRuns(token);
-  }, [activeView, broadcastRunChannelFilter, broadcastRunStatusFilter, broadcastRunTypeFilter, loadBroadcastRuns, token]);
+  }, [activeView, loadBroadcastRuns, token]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3612,6 +3916,7 @@ export default function App() {
     setAccountTotal(0);
     setAccountsLoading(false);
     setAccountsLoadingMore(false);
+    setAccountsExporting(false);
     setAccountListDraftFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
     setAccountListFilters({ ...EMPTY_ACCOUNT_LIST_FILTERS });
     setSelectedAccountId(null);
@@ -3636,6 +3941,7 @@ export default function App() {
     setWithdrawalComment("");
     setBroadcastItems([]);
     setBroadcastTotal(0);
+    setBroadcastSelectionMode("existing");
     setSelectedBroadcastId(null);
     setSelectedBroadcast(null);
     setBroadcastEstimate(null);
@@ -3734,7 +4040,9 @@ export default function App() {
     setError(null);
     try {
       await loadDashboard(token);
-      if (activeView === "accounts" && subscriptionPlans.length === 0) {
+      if (activeView === "plans") {
+        await loadSubscriptionPlans(token);
+      } else if ((activeView === "accounts" || activeView === "promos") && subscriptionPlans.length === 0) {
         await loadSubscriptionPlans(token);
       }
       if (activeView === "accounts") {
@@ -3781,9 +4089,6 @@ export default function App() {
       }
       if (activeView === "broadcasts" && selectedBroadcastId !== null) {
         await loadBroadcastDetail(selectedBroadcastId, token);
-      }
-      if (activeView === "broadcasts" && selectedBroadcastRunId !== null) {
-        await loadBroadcastRunDetail(selectedBroadcastRunId, token);
       }
       if (activeView === "promos" && selectedPromoCampaignId !== null) {
         await loadPromoCodes(selectedPromoCampaignId, token);
@@ -3871,6 +4176,73 @@ export default function App() {
     });
   }
 
+  async function handleExportAccounts() {
+    if (!token || accountsExporting) {
+      return;
+    }
+
+    const filters = normalizeAccountListFilters(accountListDraftFilters);
+    setAccountListFilters(filters);
+    setError(null);
+    setNotice(null);
+    setAccountsExporting(true);
+
+    const searchParams = new URLSearchParams({
+      sort_by: filters.sortBy,
+      sort_order: filters.sortOrder,
+    });
+    if (filters.userQuery) {
+      searchParams.set("user_query", filters.userQuery);
+    }
+    if (filters.telegramQuery) {
+      searchParams.set("telegram_query", filters.telegramQuery);
+    }
+    if (filters.emailQuery) {
+      searchParams.set("email_query", filters.emailQuery);
+    }
+    if (filters.status !== "all") {
+      searchParams.set("status", filters.status);
+    }
+    if (filters.subscription !== "all") {
+      searchParams.set("subscription_state", filters.subscription);
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/admin/accounts/export?${searchParams.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download =
+        getDownloadFilename(response.headers.get("Content-Disposition")) ||
+        "accounts-export.csv";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      setNotice(t("admin.accounts.export.success"));
+    } catch (exportError) {
+      setError(
+        exportError instanceof Error
+          ? exportError.message
+          : t("admin.accounts.export.failed"),
+      );
+    } finally {
+      setAccountsExporting(false);
+    }
+  }
+
   async function handleOpenWithdrawalAccount(accountId: string) {
     if (!token) {
       return;
@@ -3886,6 +4258,7 @@ export default function App() {
     if (!confirmDiscardBroadcastEditorChanges()) {
       return;
     }
+    setBroadcastSelectionMode("new");
     setSelectedBroadcastId(null);
     setSelectedBroadcast(null);
     resetBroadcastEditorForm();
@@ -3897,7 +4270,20 @@ export default function App() {
     if (broadcastId !== selectedBroadcastId && !confirmDiscardBroadcastEditorChanges()) {
       return;
     }
+    setBroadcastSelectionMode("existing");
     setSelectedBroadcastId(broadcastId);
+    setError(null);
+    setNotice(null);
+  }
+
+  function handleNewSubscriptionPlan() {
+    resetSubscriptionPlanEditor();
+    setError(null);
+    setNotice(null);
+  }
+
+  function handleSelectSubscriptionPlan(plan: AdminSubscriptionPlan) {
+    hydrateSubscriptionPlanEditor(plan);
     setError(null);
     setNotice(null);
   }
@@ -3923,6 +4309,150 @@ export default function App() {
         ? currentItems.filter((item) => item !== planCode)
         : [...currentItems, planCode],
     );
+  }
+
+  async function handleSaveSubscriptionPlan(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) {
+      return;
+    }
+
+    const normalizedCode = planEditorCode.trim();
+    const normalizedName = planEditorName.trim();
+    const parsedPriceRub = Number.parseInt(planEditorPriceRub, 10);
+    const parsedPriceStars = planEditorPriceStars.trim()
+      ? Number.parseInt(planEditorPriceStars, 10)
+      : null;
+    const parsedDurationDays = Number.parseInt(planEditorDurationDays, 10);
+    const parsedDeviceLimit = planEditorDeviceLimit.trim()
+      ? Number.parseInt(planEditorDeviceLimit, 10)
+      : null;
+    const parsedFeatures = parsePlanFeaturesInput(planEditorFeaturesInput);
+
+    if (!normalizedCode && planEditorMode === "create") {
+      setError(t("admin.plans.form.validation.codeRequired"));
+      return;
+    }
+    if (!normalizedName) {
+      setError(t("admin.plans.form.validation.nameRequired"));
+      return;
+    }
+    if (!Number.isInteger(parsedPriceRub) || parsedPriceRub <= 0) {
+      setError(t("admin.plans.form.validation.priceRubInvalid"));
+      return;
+    }
+    if (parsedPriceStars !== null && (!Number.isInteger(parsedPriceStars) || parsedPriceStars <= 0)) {
+      setError(t("admin.plans.form.validation.priceStarsInvalid"));
+      return;
+    }
+    if (!Number.isInteger(parsedDurationDays) || parsedDurationDays <= 0) {
+      setError(t("admin.plans.form.validation.durationInvalid"));
+      return;
+    }
+    if (parsedDeviceLimit !== null && (!Number.isInteger(parsedDeviceLimit) || parsedDeviceLimit < 0)) {
+      setError(t("admin.plans.form.validation.deviceLimitInvalid"));
+      return;
+    }
+    if (parsedFeatures.length === 0) {
+      setError(t("admin.plans.form.validation.featuresRequired"));
+      return;
+    }
+
+    setPlanSubmitting(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const updatePlanCode = selectedCatalogPlanCode;
+      if (planEditorMode === "edit" && !updatePlanCode) {
+        setError(t("admin.apiErrors.planNotFound"));
+        return;
+      }
+
+      const payload = {
+        name: normalizedName,
+        price_rub: parsedPriceRub,
+        price_stars: parsedPriceStars,
+        duration_days: parsedDurationDays,
+        device_limit: parsedDeviceLimit,
+        popular: planEditorPopular,
+        features: parsedFeatures,
+      };
+      const response =
+        planEditorMode === "create"
+          ? await adminFetch<AdminSubscriptionPlan>("/api/v1/admin/plans", token, {
+              method: "POST",
+              body: JSON.stringify({
+                code: normalizedCode,
+                ...payload,
+              }),
+            })
+          : await adminFetch<AdminSubscriptionPlan>(
+              `/api/v1/admin/plans/${encodeURIComponent(updatePlanCode || normalizedCode)}`,
+              token,
+              {
+                method: "PUT",
+                body: JSON.stringify(payload),
+              },
+            );
+
+      setSubscriptionPlans((currentItems) => {
+        if (planEditorMode === "create") {
+          return [...currentItems, response];
+        }
+        return currentItems.map((item) => (item.code === response.code ? response : item));
+      });
+      hydrateSubscriptionPlanEditor(response);
+      if (subscriptionGrantPlanCode === "" && response.popular) {
+        setSubscriptionGrantPlanCode(response.code);
+      }
+      setNotice(
+        planEditorMode === "create"
+          ? t("admin.plans.form.notices.created", { name: response.name })
+          : t("admin.plans.form.notices.updated", { name: response.name }),
+      );
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error ? submitError.message : t("admin.plans.form.notices.failed"),
+      );
+    } finally {
+      setPlanSubmitting(false);
+    }
+  }
+
+  async function handleDeleteSubscriptionPlan() {
+    if (!token || !selectedCatalogPlan || planDeleting) {
+      return;
+    }
+    if (!window.confirm(t("admin.plans.form.deleteConfirm", { name: selectedCatalogPlan.name }))) {
+      return;
+    }
+
+    setPlanDeleting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await adminFetch<void>(`/api/v1/admin/plans/${encodeURIComponent(selectedCatalogPlan.code)}`, token, {
+        method: "DELETE",
+      });
+      setSubscriptionPlans((currentItems) =>
+        currentItems.filter((item) => item.code !== selectedCatalogPlan.code),
+      );
+      if (subscriptionGrantPlanCode === selectedCatalogPlan.code) {
+        setSubscriptionGrantPlanCode("");
+      }
+      setPromoSelectedPlanCodes((currentItems) =>
+        currentItems.filter((item) => item !== selectedCatalogPlan.code),
+      );
+      resetSubscriptionPlanEditor();
+      setNotice(t("admin.plans.form.notices.deleted", { name: selectedCatalogPlan.name }));
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : t("admin.plans.form.notices.failed"),
+      );
+    } finally {
+      setPlanDeleting(false);
+    }
   }
 
   async function handleCreatePromoCampaign(event: FormEvent<HTMLFormElement>) {
@@ -4374,18 +4904,12 @@ export default function App() {
     setBroadcastButtonDrafts((currentItems) => currentItems.filter((item) => item.id !== buttonId));
   }
 
-  function parseBroadcastTargetText(value: string): string[] {
-    return value
-      .split(/[\n,;]+/g)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
   function handleStartNewBroadcastAudiencePreset() {
     setSelectedBroadcastAudiencePresetId(null);
     setBroadcastAudiencePresetName("");
     setBroadcastAudiencePresetDescription("");
     setBroadcastAudiencePresetError(null);
+    setBroadcastAudiencePresetEditor({ ...EMPTY_BROADCAST_AUDIENCE_EDITOR_STATE });
   }
 
   function handleSelectBroadcastAudiencePreset(preset: AdminBroadcastAudiencePreset) {
@@ -4393,127 +4917,55 @@ export default function App() {
     setBroadcastAudiencePresetName(preset.name);
     setBroadcastAudiencePresetDescription(preset.description || "");
     setBroadcastAudiencePresetError(null);
+    setBroadcastAudiencePresetEditor(
+      createBroadcastAudienceEditorState(preset.audience, preset.channels),
+    );
   }
 
   function handleApplyBroadcastAudiencePreset(preset: AdminBroadcastAudiencePreset) {
     if (selectedBroadcast && !broadcastIsDraft) {
-      setError("Применять сохраненную аудиторию можно только к новому или draft-черновику");
+      setError("Применять сохранённый сегмент можно только к новому или черновику");
       return;
     }
 
     markBroadcastEditorDirty();
-    applyBroadcastAudienceToEditor(preset.audience);
-    handleSelectBroadcastAudiencePreset(preset);
-    setNotice(`Аудитория "${preset.name}" применена к текущему черновику`);
+    applyBroadcastAudienceToEditor(preset.audience, preset.channels);
+    setNotice(`Сегмент "${preset.name}" применён к текущему черновику`);
+  }
+
+  function handleSelectBroadcastAudiencePresetForCampaign(presetId: string) {
+    const nextPresetId = Number.parseInt(presetId, 10);
+    if (!Number.isInteger(nextPresetId)) {
+      return;
+    }
+
+    const preset = broadcastAudiencePresetItems.find((item) => item.id === nextPresetId);
+    if (!preset) {
+      return;
+    }
+
+    handleApplyBroadcastAudiencePreset(preset);
   }
 
   function buildBroadcastAudiencePayload(): AdminBroadcastAudience {
-    const audience: AdminBroadcastAudience = {
+    return buildBroadcastAudiencePayloadFromEditor({
       segment: broadcastAudienceSegment,
-      exclude_blocked: broadcastAudienceExcludeBlocked,
-      manual_account_ids: [],
-      manual_emails: [],
-      manual_telegram_ids: [],
-      last_seen_older_than_days: null,
-      include_never_seen: false,
-      pending_payment_older_than_minutes: null,
-      pending_payment_within_last_days: null,
-      failed_payment_within_last_days: null,
-      subscription_expired_from_days: null,
-      subscription_expired_to_days: null,
-      cooldown_days: null,
-      cooldown_key: null,
-      telegram_quiet_hours_start: null,
-      telegram_quiet_hours_end: null,
-    };
-
-    if (broadcastAudienceSegment === "manual_list") {
-      const parsedManualTargets = parseManualAudienceTargetsInput(broadcastManualAudienceTargetsInput);
-      if (
-        parsedManualTargets.manualAccountIds.length === 0 &&
-        parsedManualTargets.manualEmails.length === 0 &&
-        parsedManualTargets.manualTelegramIds.length === 0
-      ) {
-        throw new Error("Для ручного списка добавь хотя бы один account_id, email или telegram_id");
-      }
-      audience.manual_account_ids = parsedManualTargets.manualAccountIds;
-      audience.manual_emails = parsedManualTargets.manualEmails;
-      audience.manual_telegram_ids = parsedManualTargets.manualTelegramIds;
-    } else if (
-      broadcastAudienceSegment === "inactive_accounts" ||
-      broadcastAudienceSegment === "inactive_paid_users"
-    ) {
-      audience.last_seen_older_than_days = parseOptionalIntegerInput(
-        broadcastLastSeenOlderThanDays,
-        1,
-        "Давность неактивности",
-      );
-      audience.include_never_seen = broadcastIncludeNeverSeen;
-    } else if (broadcastAudienceSegment === "abandoned_checkout") {
-      audience.pending_payment_older_than_minutes = parseOptionalIntegerInput(
-        broadcastPendingPaymentOlderThanMinutes,
-        1,
-        "Минимальная давность незавершенного платежа",
-      );
-      audience.pending_payment_within_last_days = parseOptionalIntegerInput(
-        broadcastPendingPaymentWithinLastDays,
-        1,
-        "Окно поиска незавершенного платежа",
-      );
-    } else if (broadcastAudienceSegment === "failed_payment") {
-      audience.failed_payment_within_last_days = parseOptionalIntegerInput(
-        broadcastFailedPaymentWithinLastDays,
-        1,
-        "Окно поиска неуспешной оплаты",
-      );
-    } else if (broadcastAudienceSegment === "expired") {
-      audience.subscription_expired_from_days = parseOptionalIntegerInput(
-        broadcastSubscriptionExpiredFromDays,
-        0,
-        "Нижняя граница давности окончания подписки",
-      );
-      audience.subscription_expired_to_days = parseOptionalIntegerInput(
-        broadcastSubscriptionExpiredToDays,
-        0,
-        "Верхняя граница давности окончания подписки",
-      );
-      if (
-        audience.subscription_expired_from_days !== null &&
-        audience.subscription_expired_to_days !== null &&
-        audience.subscription_expired_from_days > audience.subscription_expired_to_days
-      ) {
-        throw new Error("Для истекшей подписки нижняя граница не может быть больше верхней");
-      }
-    }
-
-    const cooldownDays = parseOptionalIntegerInput(
-      broadcastCooldownDays,
-      1,
-      "Cooldown по дням",
-    );
-    const cooldownKey = broadcastCooldownKey.trim().toLowerCase() || null;
-    if ((cooldownDays === null) !== (cooldownKey === null)) {
-      throw new Error("Для cooldown нужно указать и окно в днях, и family key");
-    }
-    audience.cooldown_days = cooldownDays;
-    audience.cooldown_key = cooldownKey;
-
-    const telegramQuietHoursStart = broadcastTelegramQuietHoursStart.trim() || null;
-    const telegramQuietHoursEnd = broadcastTelegramQuietHoursEnd.trim() || null;
-    if ((telegramQuietHoursStart === null) !== (telegramQuietHoursEnd === null)) {
-      throw new Error("Для quiet hours Telegram нужно указать и начало, и конец окна");
-    }
-    if (
-      telegramQuietHoursStart !== null &&
-      telegramQuietHoursEnd !== null &&
-      telegramQuietHoursStart === telegramQuietHoursEnd
-    ) {
-      throw new Error("Начало и конец quiet hours Telegram не должны совпадать");
-    }
-    audience.telegram_quiet_hours_start = telegramQuietHoursStart;
-    audience.telegram_quiet_hours_end = telegramQuietHoursEnd;
-
-    return audience;
+      excludeBlocked: broadcastAudienceExcludeBlocked,
+      manualTargetsInput: broadcastManualAudienceTargetsInput,
+      lastSeenOlderThanDays: broadcastLastSeenOlderThanDays,
+      includeNeverSeen: broadcastIncludeNeverSeen,
+      pendingPaymentOlderThanMinutes: broadcastPendingPaymentOlderThanMinutes,
+      pendingPaymentWithinLastDays: broadcastPendingPaymentWithinLastDays,
+      failedPaymentWithinLastDays: broadcastFailedPaymentWithinLastDays,
+      subscriptionExpiredFromDays: broadcastSubscriptionExpiredFromDays,
+      subscriptionExpiredToDays: broadcastSubscriptionExpiredToDays,
+      cooldownDays: broadcastCooldownDays,
+      cooldownKey: broadcastCooldownKey,
+      telegramQuietHoursStart: broadcastTelegramQuietHoursStart,
+      telegramQuietHoursEnd: broadcastTelegramQuietHoursEnd,
+      sendInApp: broadcastSendInApp,
+      sendTelegram: broadcastSendTelegram,
+    });
   }
 
   async function handleSaveBroadcast(event: FormEvent<HTMLFormElement>) {
@@ -4591,6 +5043,7 @@ export default function App() {
         },
       );
       setBroadcastEditorDirty(false);
+      setBroadcastSelectionMode("existing");
       setSelectedBroadcast(broadcast);
       setSelectedBroadcastId(broadcast.id);
       setBroadcastEstimate({
@@ -4618,13 +5071,17 @@ export default function App() {
     const trimmedName = broadcastAudiencePresetName.trim();
     const trimmedDescription = broadcastAudiencePresetDescription.trim();
     if (!trimmedName) {
-      setBroadcastAudiencePresetError("Укажи название сохраненной аудитории");
+      setBroadcastAudiencePresetError("Укажи название сегмента");
+      return;
+    }
+    if (broadcastAudiencePresetChannels.length === 0) {
+      setBroadcastAudiencePresetError("Выбери хотя бы один канал доставки");
       return;
     }
 
     let audience: AdminBroadcastAudience;
     try {
-      audience = buildBroadcastAudiencePayload();
+      audience = buildBroadcastAudiencePayloadFromEditor(broadcastAudiencePresetEditor);
     } catch (audienceError) {
       setBroadcastAudiencePresetError(
         audienceError instanceof Error ? audienceError.message : "Некорректные параметры аудитории",
@@ -4646,16 +5103,17 @@ export default function App() {
           body: JSON.stringify({
             name: trimmedName,
             description: trimmedDescription || null,
+            channels: broadcastAudiencePresetChannels,
             audience,
           }),
         },
       );
       await loadBroadcastAudiencePresets(token);
       setSelectedBroadcastAudiencePresetId(preset.id);
-      setNotice(`Сохраненная аудитория "${preset.name}" создана`);
+      setNotice(`Сегмент "${preset.name}" сохранён`);
     } catch (submitError) {
       setBroadcastAudiencePresetError(
-        submitError instanceof Error ? submitError.message : "Не удалось сохранить аудиторию",
+        submitError instanceof Error ? submitError.message : "Не удалось сохранить сегмент",
       );
     } finally {
       setBroadcastAudiencePresetSubmitting(false);
@@ -4670,13 +5128,17 @@ export default function App() {
     const trimmedName = broadcastAudiencePresetName.trim();
     const trimmedDescription = broadcastAudiencePresetDescription.trim();
     if (!trimmedName) {
-      setBroadcastAudiencePresetError("Укажи название сохраненной аудитории");
+      setBroadcastAudiencePresetError("Укажи название сегмента");
+      return;
+    }
+    if (broadcastAudiencePresetChannels.length === 0) {
+      setBroadcastAudiencePresetError("Выбери хотя бы один канал доставки");
       return;
     }
 
     let audience: AdminBroadcastAudience;
     try {
-      audience = buildBroadcastAudiencePayload();
+      audience = buildBroadcastAudiencePayloadFromEditor(broadcastAudiencePresetEditor);
     } catch (audienceError) {
       setBroadcastAudiencePresetError(
         audienceError instanceof Error ? audienceError.message : "Некорректные параметры аудитории",
@@ -4698,16 +5160,17 @@ export default function App() {
           body: JSON.stringify({
             name: trimmedName,
             description: trimmedDescription || null,
+            channels: broadcastAudiencePresetChannels,
             audience,
           }),
         },
       );
       await loadBroadcastAudiencePresets(token);
       setSelectedBroadcastAudiencePresetId(preset.id);
-      setNotice(`Сохраненная аудитория "${preset.name}" обновлена`);
+      setNotice(`Сегмент "${preset.name}" обновлён`);
     } catch (submitError) {
       setBroadcastAudiencePresetError(
-        submitError instanceof Error ? submitError.message : "Не удалось обновить аудиторию",
+        submitError instanceof Error ? submitError.message : "Не удалось обновить сегмент",
       );
     } finally {
       setBroadcastAudiencePresetSubmitting(false);
@@ -4719,7 +5182,7 @@ export default function App() {
       return;
     }
 
-    if (!window.confirm(`Удалить сохраненную аудиторию "${selectedBroadcastAudiencePreset.name}"?`)) {
+    if (!window.confirm(`Удалить сегмент "${selectedBroadcastAudiencePreset.name}"?`)) {
       return;
     }
 
@@ -4744,84 +5207,13 @@ export default function App() {
 
       await loadBroadcastAudiencePresets(token);
       handleStartNewBroadcastAudiencePreset();
-      setNotice(`Сохраненная аудитория "${selectedBroadcastAudiencePreset.name}" удалена`);
+      setNotice(`Сегмент "${selectedBroadcastAudiencePreset.name}" удалён`);
     } catch (deleteError) {
       setBroadcastAudiencePresetError(
-        deleteError instanceof Error ? deleteError.message : "Не удалось удалить аудиторию",
+        deleteError instanceof Error ? deleteError.message : "Не удалось удалить сегмент",
       );
     } finally {
       setBroadcastAudiencePresetSubmitting(false);
-    }
-  }
-
-  async function handleBroadcastTestSend(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!token || selectedBroadcastId === null) {
-      setError("Сначала сохрани черновик рассылки, затем запускай test send");
-      return;
-    }
-    if (!broadcastIsDraft) {
-      setError("Test send доступен только для черновика рассылки");
-      return;
-    }
-    if (broadcastEditorDirty) {
-      setError("Сначала сохрани черновик, затем запускай test send.");
-      return;
-    }
-
-    const emails = parseBroadcastTargetText(broadcastTestEmailsInput).map((item) => item.toLowerCase());
-    const telegramIdTokens = parseBroadcastTargetText(broadcastTestTelegramIdsInput);
-    const telegramIds: number[] = [];
-    for (const token of telegramIdTokens) {
-      const normalized = token.replace(/^@/, "");
-      if (!/^-?\d+$/.test(normalized)) {
-        setError(`Некорректный telegram_id: ${token}`);
-        return;
-      }
-      telegramIds.push(Number.parseInt(normalized, 10));
-    }
-
-    const trimmedComment = broadcastTestComment.trim();
-    if (emails.length === 0 && telegramIds.length === 0) {
-      setError("Добавь хотя бы один email или telegram_id для test send");
-      return;
-    }
-    if (!trimmedComment) {
-      setError("Комментарий для test send обязателен");
-      return;
-    }
-
-    setBroadcastTestSubmitting(true);
-    setError(null);
-    setNotice(null);
-
-    try {
-      const idempotencyKey =
-        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `broadcast-test-${Date.now()}`;
-
-      const result = await adminFetch<AdminBroadcastTestSendResponse>(
-        `/api/v1/admin/broadcasts/${selectedBroadcastId}/test-send`,
-        token,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            emails,
-            telegram_ids: telegramIds,
-            comment: trimmedComment,
-            idempotency_key: idempotencyKey,
-          }),
-        },
-      );
-      setBroadcastTestResult(result);
-      setNotice(
-        `Test send завершен: отправлено ${result.sent_targets}, частично ${result.partial_targets}, ошибок ${result.failed_targets}, пропущено ${result.skipped_targets}.`,
-      );
-    } catch (testSendError) {
-      setError(testSendError instanceof Error ? testSendError.message : "Не удалось выполнить test send");
-    } finally {
-      setBroadcastTestSubmitting(false);
     }
   }
 
@@ -4830,9 +5222,6 @@ export default function App() {
     await loadBroadcastRuns(activeToken);
     if (broadcastId !== null && broadcastId !== undefined) {
       await loadBroadcastDetail(broadcastId, activeToken);
-    }
-    if (selectedBroadcastRunId !== null) {
-      await loadBroadcastRunDetail(selectedBroadcastRunId, activeToken);
     }
   }
 
@@ -4878,6 +5267,7 @@ export default function App() {
         throw new Error(await readErrorMessage(response));
       }
 
+      setBroadcastSelectionMode("existing");
       setSelectedBroadcastId(null);
       setSelectedBroadcast(null);
       resetBroadcastEditorForm();
@@ -4937,7 +5327,6 @@ export default function App() {
         },
       );
       setSelectedBroadcast(updated);
-      setSelectedBroadcastRunId(updated.latest_run?.id ?? selectedBroadcastRunId);
       await refreshBroadcastRuntimeState(token, updated.id);
       setNotice(
         action === "send-now"
@@ -5444,6 +5833,17 @@ export default function App() {
         <button
           type="button"
           className={
+            activeView === "plans"
+              ? "module-nav__button module-nav__button--active"
+              : "module-nav__button"
+          }
+          onClick={() => setActiveView("plans")}
+        >
+          {t("admin.navigation.plans")}
+        </button>
+        <button
+          type="button"
+          className={
             activeView === "promos"
               ? "module-nav__button module-nav__button--active"
               : "module-nav__button"
@@ -5547,14 +5947,26 @@ export default function App() {
               </div>
               <div className="accounts-panel__actions">
                 <p>{t("admin.accounts.directoryDescription")}</p>
-                <button
-                  className="ghost-button"
-                  type="button"
-                  onClick={handleResetAccountListFilters}
-                  disabled={!accountListFiltersActive}
-                >
-                  {t("admin.accounts.table.resetFilters")}
-                </button>
+                <div className="accounts-panel__actions-row">
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={handleExportAccounts}
+                    disabled={accountsExporting}
+                  >
+                    {accountsExporting
+                      ? t("admin.accounts.export.loading")
+                      : t("admin.accounts.export.action")}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={handleResetAccountListFilters}
+                    disabled={!accountListFiltersActive}
+                  >
+                    {t("admin.accounts.table.resetFilters")}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -5965,39 +6377,73 @@ export default function App() {
                       <div><span>{t("admin.accounts.identity.locale")}</span><strong>{selectedAccount.locale || "-"}</strong></div>
                       <div><span>{t("admin.accounts.identity.referralCode")}</span><strong>{selectedAccount.referral_code || "-"}</strong></div>
                       <div><span>{t("admin.accounts.identity.referrals")}</span><strong>{selectedAccount.referrals_count}</strong></div>
-                      <div><span>Last seen</span><strong>{formatDate(selectedAccount.last_seen_at)}</strong></div>
+                      <div><span>{t("admin.accounts.identity.lastSeen")}</span><strong>{formatDate(selectedAccount.last_seen_at)}</strong></div>
                     </div>
                   </article>
 
                   <article className="detail-section">
-                    <span className="eyebrow">Подписка</span>
+                    <span className="eyebrow">{t("admin.accounts.subscription.eyebrow")}</span>
                     <div className="detail-kv">
-                      <div><span>Статус</span><strong>{selectedAccount.subscription_status || "нет"}</strong></div>
-                      <div><span>Истекает</span><strong>{formatDate(selectedAccount.subscription_expires_at)}</strong></div>
-                      <div><span>Trial</span><strong>{selectedAccount.subscription_is_trial ? "Да" : "Нет"}</strong></div>
-                      <div><span>Trial used</span><strong>{formatDate(selectedAccount.trial_used_at)}</strong></div>
-                      <div><span>Sync</span><strong>{formatDate(selectedAccount.subscription_last_synced_at)}</strong></div>
-                      <div><span>Remnawave UUID</span><strong>{selectedAccount.remnawave_user_uuid || "-"}</strong></div>
+                      <div>
+                        <span>{t("admin.accounts.subscription.status")}</span>
+                        <strong>{selectedAccount.subscription_status || t("admin.accounts.subscription.none")}</strong>
+                      </div>
+                      <div>
+                        <span>{t("admin.accounts.subscription.expires")}</span>
+                        <strong>{formatDate(selectedAccount.subscription_expires_at)}</strong>
+                      </div>
+                      <div>
+                        <span>{t("admin.accounts.subscription.trial")}</span>
+                        <strong>
+                          {selectedAccount.subscription_is_trial
+                            ? t("admin.accounts.subscription.yes")
+                            : t("admin.accounts.subscription.no")}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>{t("admin.accounts.subscription.trialUsed")}</span>
+                        <strong>{formatDate(selectedAccount.trial_used_at)}</strong>
+                      </div>
+                      <div>
+                        <span>{t("admin.accounts.subscription.sync")}</span>
+                        <strong>{formatDate(selectedAccount.subscription_last_synced_at)}</strong>
+                      </div>
+                      <div>
+                        <span>{t("admin.accounts.subscription.externalId")}</span>
+                        <strong>{selectedAccount.remnawave_user_uuid || "-"}</strong>
+                      </div>
                     </div>
                     {selectedAccount.subscription_url ? (
                       <a className="detail-link" href={selectedAccount.subscription_url} target="_blank" rel="noreferrer">
-                        Открыть subscription URL
+                        {t("admin.accounts.subscription.openLink")}
                       </a>
                     ) : null}
                   </article>
                 </section>
 
                 <section className="detail-facts-grid detail-facts-grid--compact">
-                  <DetailFact label="Ledger entries" value={String(selectedAccount.ledger_entries_count)} />
-                  <DetailFact label="Payments" value={String(selectedAccount.payments_count)} />
-                  <DetailFact label="Pending payments" value={String(selectedAccount.pending_payments_count)} />
-                  <DetailFact label="Withdrawals" value={String(selectedAccount.withdrawals_count)} />
+                  <DetailFact
+                    label={t("admin.accounts.metrics.ledgerEntries")}
+                    value={String(selectedAccount.ledger_entries_count)}
+                  />
+                  <DetailFact
+                    label={t("admin.accounts.metrics.payments")}
+                    value={String(selectedAccount.payments_count)}
+                  />
+                  <DetailFact
+                    label={t("admin.accounts.metrics.pendingPayments")}
+                    value={String(selectedAccount.pending_payments_count)}
+                  />
+                  <DetailFact
+                    label={t("admin.accounts.metrics.withdrawals")}
+                    value={String(selectedAccount.withdrawals_count)}
+                  />
                 </section>
 
                 <section className="detail-section">
                   <div className="detail-section__header detail-section__header--stacked">
                     <div>
-                      <span className="eyebrow">Referral chain</span>
+                      <span className="eyebrow">{t("admin.accounts.referralChain.eyebrow")}</span>
                       <h3>Кто привел пользователя и кого привел он</h3>
                     </div>
                     <span className="form-hint">
@@ -6806,123 +7252,154 @@ export default function App() {
             ) : null}
           </div>
         </section>
-      ) : activeView === "promos" ? (
+      ) : activeView === "plans" ? (
         <section className="search-shell search-shell--broadcasts">
-          <aside className="search-column search-column--broadcasts">
+          <div className="detail-column detail-column--broadcasts">
             <section className="search-panel search-panel--broadcasts">
               <div className="panel-toolbar">
                 <div>
-                  <span className="eyebrow">Контур промокодов</span>
-                  <h2>Кампании и коды</h2>
-                  <p className="queue-panel__copy">
-                    Здесь создаются кампании, ограничения и отдельные коды. Применение уже работает в WebApp,
-                    браузере и настройках.
-                  </p>
+                  <span className="eyebrow">{t("admin.plans.overview.eyebrow")}</span>
+                  <h2>{t("admin.plans.overview.title")}</h2>
+                  <p className="queue-panel__copy">{t("admin.plans.overview.description")}</p>
+                </div>
+                <div className="panel-toolbar__actions">
+                  <button className="ghost-button" type="button" onClick={handleNewSubscriptionPlan}>
+                    {t("admin.plans.overview.newPlan")}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => {
+                      if (token) {
+                        void loadSubscriptionPlans(token);
+                      }
+                    }}
+                    disabled={!token || plansLoading}
+                  >
+                    {plansLoading ? t("admin.actions.refreshing") : t("admin.actions.refresh")}
+                  </button>
                 </div>
               </div>
 
-              <div className="queue-summary">
+              <div className="queue-summary queue-summary--broadcasts">
                 <article className="queue-summary__item">
-                  <span>Всего кампаний</span>
-                  <strong>{promoCampaignTotal}</strong>
+                  <span>{t("admin.plans.overview.summary.total")}</span>
+                  <strong>{plansOverview.total}</strong>
                 </article>
                 <article className="queue-summary__item">
-                  <span>Активные</span>
-                  <strong>{promoOverview.active}</strong>
+                  <span>{t("admin.plans.overview.summary.popular")}</span>
+                  <strong>{plansOverview.popular}</strong>
                 </article>
                 <article className="queue-summary__item">
-                  <span>Всего кодов</span>
-                  <strong>{promoOverview.totalCodes}</strong>
+                  <span>{t("admin.plans.overview.summary.starsEnabled")}</span>
+                  <strong>{plansOverview.starsEnabled}</strong>
                 </article>
-              </div>
-
-              <div className="inline-filter">
-                <label className="inline-filter__field">
-                  <span>Фильтр кампаний</span>
-                  <select
-                    value={promoCampaignStatusFilter}
-                    onChange={(event) => setPromoCampaignStatusFilter(event.target.value as PromoCampaignFilter)}
-                    disabled={promoCampaignsLoading}
-                  >
-                    <option value="all">Все статусы</option>
-                    {PROMO_CAMPAIGN_STATUS_OPTIONS.map((status) => (
-                      <option key={status} value={status}>
-                        {humanizePromoCampaignStatus(status)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <article className="queue-summary__item">
+                  <span>{t("admin.plans.overview.summary.longestDuration")}</span>
+                  <strong>
+                    {plansOverview.longestDuration > 0
+                      ? formatPlanDuration(plansOverview.longestDuration)
+                      : t("admin.plans.overview.summary.longestDurationEmpty")}
+                  </strong>
+                </article>
               </div>
             </section>
 
-            <div className="results-list results-list--broadcasts">
-              {promoCampaignsLoading ? (
-                <div className="empty-state">Загружаем кампании промокодов...</div>
-              ) : promoCampaignItems.length === 0 ? (
-                <div className="empty-state">Кампаний пока нет. Создай первую кампанию справа.</div>
-              ) : (
-                promoCampaignItems.map((campaign) => (
-                  <button
-                    key={campaign.id}
-                    type="button"
-                    className={
-                      selectedPromoCampaignId === campaign.id
-                        ? "result-card result-card--active result-card--broadcast"
-                        : "result-card result-card--broadcast"
-                    }
-                    onClick={() => handleSelectPromoCampaign(campaign.id)}
-                  >
-                    <div className="result-card__top">
-                      <strong>{campaign.name}</strong>
-                      <span className={promoCampaignStatusPillClass(campaign.status)}>
-                        {humanizePromoCampaignStatus(campaign.status)}
-                      </span>
-                    </div>
-                    <div className="broadcast-card-summary">
-                      <span className="broadcast-card-summary__title">
-                        {humanizePromoEffectType(campaign.effect_type)}
-                      </span>
-                      <span>{describePromoEffect(campaign.effect_type, campaign.effect_value, campaign.currency)}</span>
-                      <span>{campaign.plan_codes?.length ? campaign.plan_codes.join(", ") : "Все тарифы"}</span>
-                    </div>
-                    <div className="broadcast-card-runtime">
-                      <span>{describePromoCampaignWindow(campaign)}</span>
-                      <strong>{`Кодов ${campaign.codes_count} · активаций ${campaign.redemptions_count}`}</strong>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </aside>
-
-          <div className="detail-column detail-column--broadcasts">
-            <section className="detail-header detail-header--broadcasts">
-              <div className="broadcast-toolbar">
+            <section className="detail-section detail-section--editor">
+              <div className="detail-section__header detail-section__header--stacked">
                 <div>
-                  <span className="eyebrow">Редактор промокампании</span>
-                  <h2>Создание и операционный контроль</h2>
-                  <p>
-                    Создание кампании и выпуск кодов вынесены в один workspace. Статусы кампаний пока задаются на
-                    этапе создания, отдельного редактирования еще нет.
-                  </p>
+                  <span className="eyebrow">{t("admin.plans.table.eyebrow")}</span>
+                  <h3>{t("admin.plans.table.title")}</h3>
                 </div>
+                <span className="form-hint">
+                  {selectedCatalogPlan
+                    ? t("admin.plans.table.selectedHint", { name: selectedCatalogPlan.name })
+                    : t("admin.plans.table.description")}
+                </span>
               </div>
-              <div className="broadcast-toolbar__meta">
-                <div className="broadcast-badge-cluster">
-                  <span className="status-pill status-pill--active">
-                    Direct redeem кампаний: {promoOverview.directRedeems}
-                  </span>
-                  {promoCampaignEditingId !== null ? (
-                    <span className="status-pill status-pill--warning">
-                      Редактируем кампанию #{promoCampaignEditingId}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="broadcast-header-actions">
-                  <button className="ghost-button" type="button" onClick={resetPromoCampaignForm}>
-                    {promoCampaignEditingId === null ? "Очистить форму" : "Новая кампания"}
-                  </button>
-                </div>
+              <div className="accounts-table__wrap plans-table__wrap">
+                <table className="accounts-table plans-table">
+                  <thead>
+                    <tr>
+                      <th>{t("admin.plans.table.columns.code")}</th>
+                      <th>{t("admin.plans.table.columns.plan")}</th>
+                      <th>{t("admin.plans.table.columns.duration")}</th>
+                      <th>{t("admin.plans.table.columns.priceRub")}</th>
+                      <th>{t("admin.plans.table.columns.priceStars")}</th>
+                      <th>{t("admin.plans.table.columns.devices")}</th>
+                      <th>{t("admin.plans.table.columns.features")}</th>
+                      <th>{t("admin.plans.table.columns.status")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plansLoading ? (
+                      <tr>
+                        <td className="accounts-table__empty" colSpan={8}>
+                          {t("admin.plans.table.loading")}
+                        </td>
+                      </tr>
+                    ) : subscriptionPlans.length === 0 ? (
+                      <tr>
+                        <td className="accounts-table__empty" colSpan={8}>
+                          {t("admin.plans.table.empty")}
+                        </td>
+                      </tr>
+                    ) : (
+                      subscriptionPlans.map((plan) => (
+                        <tr
+                          key={plan.code}
+                          className={
+                            selectedCatalogPlanCode === plan.code
+                              ? "accounts-table__row accounts-table__row--active"
+                              : "accounts-table__row"
+                          }
+                          onClick={() => handleSelectSubscriptionPlan(plan)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              handleSelectSubscriptionPlan(plan);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <td>
+                            <div className="plans-table__title-cell">
+                              <strong>{plan.code}</strong>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="plans-table__title-cell">
+                              <strong>{plan.name}</strong>
+                              <small>{t("admin.plans.table.featuresValue", { count: plan.features.length })}</small>
+                            </div>
+                          </td>
+                          <td>{formatPlanDuration(plan.duration_days)}</td>
+                          <td>{formatMoney(plan.price_rub)}</td>
+                          <td>{formatPlanStarsPrice(plan.price_stars)}</td>
+                          <td>{formatPlanDeviceLimit(plan.device_limit)}</td>
+                          <td>
+                            <div className="plans-table__title-cell">
+                              <strong>{t("admin.plans.table.featuresValue", { count: plan.features.length })}</strong>
+                              <small>{summarizePlanFeatures(plan.features)}</small>
+                            </div>
+                          </td>
+                          <td>
+                            <span
+                              className={
+                                plan.popular
+                                  ? "status-pill status-pill--active"
+                                  : "status-pill status-pill--pending"
+                              }
+                            >
+                              {plan.popular ? t("admin.plans.table.popular") : t("admin.plans.table.regular")}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </section>
 
@@ -6930,43 +7407,414 @@ export default function App() {
               <div className="detail-section__header">
                 <div>
                   <span className="eyebrow">
-                    {promoCampaignEditorMode === "create" ? "Новая кампания" : "Редактирование кампании"}
+                    {planEditorMode === "create"
+                      ? t("admin.plans.form.createEyebrow")
+                      : t("admin.plans.form.editEyebrow")}
+                  </span>
+                  <h3>
+                    {planEditorMode === "create"
+                      ? t("admin.plans.form.createTitle")
+                      : t("admin.plans.form.editTitle")}
+                  </h3>
+                </div>
+                <span className="form-hint">
+                  {planEditorMode === "create"
+                    ? t("admin.plans.form.createDescription")
+                    : t("admin.plans.form.editDescription")}
+                </span>
+              </div>
+
+              <form className="broadcast-editor-form" onSubmit={handleSaveSubscriptionPlan}>
+                <div className="broadcast-form-section broadcast-form-section--compact">
+                  <div className="broadcast-form-section__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.plans.form.basicsEyebrow")}</span>
+                      <h4>{t("admin.plans.form.basicsTitle")}</h4>
+                    </div>
+                    <span className="form-hint">{t("admin.plans.form.basicsHint")}</span>
+                  </div>
+                  <div className="broadcast-form-grid">
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.code")}</span>
+                      <input
+                        value={planEditorCode}
+                        onChange={(event) => setPlanEditorCode(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.codePlaceholder")}
+                        disabled={planSubmitting || planEditorMode === "edit"}
+                        required
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.name")}</span>
+                      <input
+                        value={planEditorName}
+                        onChange={(event) => setPlanEditorName(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.namePlaceholder")}
+                        disabled={planSubmitting}
+                        required
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.duration")}</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={planEditorDurationDays}
+                        onChange={(event) => setPlanEditorDurationDays(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.durationPlaceholder")}
+                        disabled={planSubmitting}
+                        required
+                      />
+                    </label>
+                    <label className="checkbox-card checkbox-card--inline">
+                      <input
+                        type="checkbox"
+                        checked={planEditorPopular}
+                        onChange={(event) => setPlanEditorPopular(event.target.checked)}
+                        disabled={planSubmitting}
+                      />
+                      <span>{t("admin.plans.form.fields.popular")}</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="broadcast-form-section broadcast-form-section--compact">
+                  <div className="broadcast-form-section__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.plans.form.pricingEyebrow")}</span>
+                      <h4>{t("admin.plans.form.pricingTitle")}</h4>
+                    </div>
+                    <span className="form-hint">{t("admin.plans.form.pricingHint")}</span>
+                  </div>
+                  <div className="broadcast-form-grid">
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.priceRub")}</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={planEditorPriceRub}
+                        onChange={(event) => setPlanEditorPriceRub(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.priceRubPlaceholder")}
+                        disabled={planSubmitting}
+                        required
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.priceStars")}</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={planEditorPriceStars}
+                        onChange={(event) => setPlanEditorPriceStars(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.priceStarsPlaceholder")}
+                        disabled={planSubmitting}
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.deviceLimit")}</span>
+                      <input
+                        type="number"
+                        step="1"
+                        min="1"
+                        value={planEditorDeviceLimit}
+                        onChange={(event) => setPlanEditorDeviceLimit(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.deviceLimitPlaceholder")}
+                        disabled={planSubmitting}
+                      />
+                    </label>
+                    <div className="status-action-summary">
+                      <strong>
+                        {t("admin.plans.form.preview.duration", {
+                          days: Number.parseInt(planEditorDurationDays || "0", 10) || 0,
+                        })}
+                      </strong>
+                      <small>
+                        {t("admin.plans.form.preview.rub", {
+                          amount: formatMoney(Number.parseInt(planEditorPriceRub || "0", 10) || 0),
+                        })}
+                      </small>
+                      <small>
+                        {planEditorPriceStars.trim()
+                          ? t("admin.plans.form.preview.stars", {
+                              amount: Number.parseInt(planEditorPriceStars, 10) || 0,
+                            })
+                          : t("admin.plans.form.preview.starsEmpty")}
+                      </small>
+                      <small>
+                        {t("admin.plans.form.preview.devices", {
+                          value: planEditorDeviceLimit.trim()
+                            ? String(Number.parseInt(planEditorDeviceLimit, 10) || 0)
+                            : t("admin.plans.table.deviceLimitEmpty"),
+                        })}
+                      </small>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="broadcast-form-section broadcast-form-section--compact">
+                  <div className="broadcast-form-section__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.plans.form.featuresEyebrow")}</span>
+                      <h4>{t("admin.plans.form.featuresTitle")}</h4>
+                    </div>
+                    <span className="form-hint">{t("admin.plans.form.featuresHint")}</span>
+                  </div>
+                  <label className="form-field form-field--wide">
+                    <span>{t("admin.plans.form.fields.features")}</span>
+                    <textarea
+                      rows={8}
+                      value={planEditorFeaturesInput}
+                      onChange={(event) => setPlanEditorFeaturesInput(event.target.value)}
+                      placeholder={t("admin.plans.form.fields.featuresPlaceholder")}
+                      disabled={planSubmitting}
+                      required
+                    />
+                  </label>
+                </div>
+
+                <div className="adjustment-form__footer">
+                  <span className="form-hint">{t("admin.plans.form.saveHint")}</span>
+                  <div className="action-cluster">
+                    {planEditorMode === "edit" ? (
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => void handleDeleteSubscriptionPlan()}
+                        disabled={planSubmitting || planDeleting}
+                      >
+                        {planDeleting
+                          ? t("admin.plans.form.buttons.deleting")
+                          : t("admin.plans.form.buttons.delete")}
+                      </button>
+                    ) : null}
+                    <button className="action-button" type="submit" disabled={planSubmitting}>
+                      {planSubmitting
+                        ? planEditorMode === "create"
+                          ? t("admin.plans.form.buttons.creating")
+                          : t("admin.plans.form.buttons.saving")
+                        : planEditorMode === "create"
+                          ? t("admin.plans.form.buttons.create")
+                          : t("admin.plans.form.buttons.save")}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+      ) : activeView === "promos" ? (
+        <section className="search-shell search-shell--broadcasts">
+          <div className="detail-column detail-column--broadcasts">
+            <section className="search-panel search-panel--broadcasts">
+              <div className="panel-toolbar">
+                <div>
+                  <span className="eyebrow">{t("admin.promos.workspace.overview.eyebrow")}</span>
+                  <h2>{t("admin.promos.workspace.overview.title")}</h2>
+                  <p className="queue-panel__copy">{t("admin.promos.workspace.overview.description")}</p>
+                </div>
+                <div className="panel-toolbar__actions">
+                  <button className="ghost-button" type="button" onClick={resetPromoCampaignForm}>
+                    {promoCampaignEditingId === null
+                      ? t("admin.promos.workspace.overview.newCampaign")
+                      : t("admin.promos.workspace.overview.clearForm")}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    type="button"
+                    onClick={() => {
+                      if (token) {
+                        void loadPromoCampaigns(token);
+                      }
+                    }}
+                    disabled={!token || promoCampaignsLoading}
+                  >
+                    {promoCampaignsLoading ? t("admin.actions.refreshing") : t("admin.actions.refresh")}
+                  </button>
+                </div>
+              </div>
+
+              <div className="queue-summary queue-summary--broadcasts">
+                <article className="queue-summary__item">
+                  <span>{t("admin.promos.workspace.overview.cards.totalCampaigns")}</span>
+                  <strong>{promoCampaignTotal}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>{t("admin.promos.workspace.overview.cards.activeCampaigns")}</span>
+                  <strong>{promoOverview.active}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>{t("admin.promos.workspace.overview.cards.totalCodes")}</span>
+                  <strong>{promoOverview.totalCodes}</strong>
+                </article>
+                <article className="queue-summary__item">
+                  <span>{t("admin.promos.workspace.overview.cards.activations")}</span>
+                  <strong>{promoOverview.totalRedemptions}</strong>
+                </article>
+              </div>
+
+              <div className="promo-overview-toolbar">
+                <label className="inline-filter__field">
+                  <span>{t("admin.promos.workspace.overview.filterLabel")}</span>
+                  <select
+                    value={promoCampaignStatusFilter}
+                    onChange={(event) => setPromoCampaignStatusFilter(event.target.value as PromoCampaignFilter)}
+                    disabled={promoCampaignsLoading}
+                  >
+                    <option value="all">{t("admin.promos.workspace.overview.filterAll")}</option>
+                    {PROMO_CAMPAIGN_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {humanizePromoCampaignStatus(status)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="form-hint">
+                  {t("admin.promos.workspace.overview.summary", {
+                    shown: promoCampaignItems.length,
+                    total: promoCampaignTotal,
+                    draft: promoOverview.draft,
+                  })}
+                </span>
+              </div>
+            </section>
+
+            <section className="detail-section detail-section--editor">
+              <div className="detail-section__header detail-section__header--stacked">
+                <div>
+                  <span className="eyebrow">{t("admin.promos.workspace.campaignTable.eyebrow")}</span>
+                  <h3>{t("admin.promos.workspace.campaignTable.title")}</h3>
+                </div>
+                <span className="form-hint">{t("admin.promos.workspace.campaignTable.description")}</span>
+              </div>
+              <div className="accounts-table__wrap promo-table__wrap">
+                <table className="accounts-table promo-table promo-table--campaigns">
+                  <thead>
+                    <tr>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.campaign")}</th>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.status")}</th>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.effect")}</th>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.plans")}</th>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.window")}</th>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.codes")}</th>
+                      <th>{t("admin.promos.workspace.campaignTable.columns.updatedAt")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {promoCampaignsLoading ? (
+                      <tr>
+                        <td className="accounts-table__empty" colSpan={7}>
+                          {t("admin.promos.workspace.campaignTable.loading")}
+                        </td>
+                      </tr>
+                    ) : promoCampaignItems.length === 0 ? (
+                      <tr>
+                        <td className="accounts-table__empty" colSpan={7}>
+                          {t("admin.promos.workspace.campaignTable.empty")}
+                        </td>
+                      </tr>
+                    ) : (
+                      promoCampaignItems.map((campaign) => (
+                        <tr
+                          key={campaign.id}
+                          className={
+                            selectedPromoCampaignId === campaign.id
+                              ? "accounts-table__row accounts-table__row--active"
+                              : "accounts-table__row"
+                          }
+                          onClick={() => handleSelectPromoCampaign(campaign.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              handleSelectPromoCampaign(campaign.id);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <td>
+                            <div className="promo-table__title-cell">
+                              <strong>{campaign.name}</strong>
+                              <small>{campaign.description || t("admin.promos.workspace.common.noDescription")}</small>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={promoCampaignStatusPillClass(campaign.status)}>
+                              {humanizePromoCampaignStatus(campaign.status)}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="promo-table__title-cell">
+                              <strong>{describePromoEffect(campaign.effect_type, campaign.effect_value, campaign.currency)}</strong>
+                              <small>{humanizePromoEffectType(campaign.effect_type)}</small>
+                            </div>
+                          </td>
+                          <td>{describePromoPlanScope(campaign.plan_codes)}</td>
+                          <td>{describePromoCampaignWindow(campaign)}</td>
+                          <td>
+                            <div className="promo-table__title-cell">
+                              <strong>{campaign.codes_count}</strong>
+                              <small>
+                                {t("admin.promos.workspace.campaignTable.activationsValue", {
+                                  count: campaign.redemptions_count,
+                                })}
+                              </small>
+                            </div>
+                          </td>
+                          <td>{formatDateMoscow(campaign.updated_at)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="detail-section detail-section--action detail-section--editor">
+              <div className="detail-section__header">
+                <div>
+                  <span className="eyebrow">
+                    {promoCampaignEditorMode === "create"
+                      ? t("admin.promos.workspace.campaignForm.createEyebrow")
+                      : t("admin.promos.workspace.campaignForm.editEyebrow")}
                   </span>
                   <h3>
                     {promoCampaignEditorMode === "create"
-                      ? "Создание ограничений и коммерческого эффекта"
-                      : "Обновление ограничений и коммерческого эффекта"}
+                      ? t("admin.promos.workspace.campaignForm.createTitle")
+                      : t("admin.promos.workspace.campaignForm.editTitle")}
                   </h3>
                 </div>
                 <span className="form-hint">
                   {promoCampaignEditorMode === "create"
-                    ? "Поддерживаются скидки, фиксированная цена, дополнительные дни, бесплатные дни и credit на баланс."
-                    : "Форма загружена из выбранной кампании. После сохранения список и карточка будут обновлены."}
+                    ? t("admin.promos.workspace.campaignForm.createDescription")
+                    : t("admin.promos.workspace.campaignForm.editDescription")}
                 </span>
               </div>
 
               <form className="broadcast-editor-form" onSubmit={handleCreatePromoCampaign}>
-                <div className="broadcast-form-section">
+                <div className="broadcast-form-section broadcast-form-section--compact">
                   <div className="broadcast-form-section__header">
                     <div>
-                      <span className="eyebrow">Блок 1</span>
-                      <h4>Основа кампании</h4>
+                      <span className="eyebrow">{t("admin.promos.workspace.campaignForm.basicsEyebrow")}</span>
+                      <h4>{t("admin.promos.workspace.campaignForm.basicsTitle")}</h4>
                     </div>
-                    <span className="form-hint">Название, статус и тип коммерческого эффекта.</span>
+                    <span className="form-hint">{t("admin.promos.workspace.campaignForm.basicsHint")}</span>
                   </div>
                   <div className="broadcast-form-grid">
                     <label className="form-field">
-                      <span>Название</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.name")}</span>
                       <input
                         value={promoCampaignName}
                         onChange={(event) => setPromoCampaignName(event.target.value)}
-                        placeholder="Например: SPRING_REACTIVATION"
+                        placeholder={t("admin.promos.workspace.campaignForm.fields.namePlaceholder")}
                         required
                         disabled={promoCampaignSubmitting}
                       />
                     </label>
                     <label className="form-field">
-                      <span>Статус</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.status")}</span>
                       <select
                         value={promoCampaignStatus}
                         onChange={(event) => setPromoCampaignStatus(event.target.value as PromoCampaignStatus)}
@@ -6980,7 +7828,7 @@ export default function App() {
                       </select>
                     </label>
                     <label className="form-field">
-                      <span>Тип эффекта</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.effectType")}</span>
                       <select
                         value={promoEffectType}
                         onChange={(event) => setPromoEffectType(event.target.value as PromoEffectType)}
@@ -6994,7 +7842,7 @@ export default function App() {
                       </select>
                     </label>
                     <label className="form-field">
-                      <span>Значение</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.effectValue")}</span>
                       <input
                         type="number"
                         step="1"
@@ -7002,28 +7850,28 @@ export default function App() {
                         onChange={(event) => setPromoEffectValue(event.target.value)}
                         placeholder={
                           promoEffectType === "percent_discount"
-                            ? "Например: 30"
+                            ? t("admin.promos.workspace.campaignForm.fields.effectValuePercentPlaceholder")
                             : promoEffectType === "extra_days" || promoEffectType === "free_days"
-                              ? "Например: 7"
-                              : "Например: 199"
+                              ? t("admin.promos.workspace.campaignForm.fields.effectValueDaysPlaceholder")
+                              : t("admin.promos.workspace.campaignForm.fields.effectValueAmountPlaceholder")
                         }
                         required
                         disabled={promoCampaignSubmitting}
                       />
                     </label>
                     <label className="form-field">
-                      <span>Валюта</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.currency")}</span>
                       <input
                         value={promoCurrency}
                         onChange={(event) => setPromoCurrency(event.target.value.toUpperCase())}
-                        placeholder="RUB"
+                        placeholder={t("admin.promos.workspace.campaignForm.fields.currencyPlaceholder")}
                         maxLength={8}
                         required
                         disabled={promoCampaignSubmitting}
                       />
                     </label>
                     <label className="form-field">
-                      <span>Старт, Москва</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.startsAt")}</span>
                       <input
                         type="datetime-local"
                         value={promoStartsAtInput}
@@ -7032,7 +7880,7 @@ export default function App() {
                       />
                     </label>
                     <label className="form-field">
-                      <span>Окончание, Москва</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.endsAt")}</span>
                       <input
                         type="datetime-local"
                         value={promoEndsAtInput}
@@ -7041,35 +7889,35 @@ export default function App() {
                       />
                     </label>
                     <label className="form-field">
-                      <span>Общий лимит</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.totalLimit")}</span>
                       <input
                         type="number"
                         step="1"
                         min="1"
                         value={promoTotalRedemptionsLimit}
                         onChange={(event) => setPromoTotalRedemptionsLimit(event.target.value)}
-                        placeholder="Пусто = без лимита"
+                        placeholder={t("admin.promos.workspace.campaignForm.fields.limitPlaceholder")}
                         disabled={promoCampaignSubmitting}
                       />
                     </label>
                     <label className="form-field">
-                      <span>Лимит на аккаунт</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.perAccountLimit")}</span>
                       <input
                         type="number"
                         step="1"
                         min="1"
                         value={promoPerAccountRedemptionsLimit}
                         onChange={(event) => setPromoPerAccountRedemptionsLimit(event.target.value)}
-                        placeholder="Пусто = без лимита"
+                        placeholder={t("admin.promos.workspace.campaignForm.fields.limitPlaceholder")}
                         disabled={promoCampaignSubmitting}
                       />
                     </label>
                     <label className="form-field form-field--wide">
-                      <span>Описание</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.description")}</span>
                       <textarea
                         value={promoCampaignDescription}
                         onChange={(event) => setPromoCampaignDescription(event.target.value)}
-                        placeholder="Для какой акции, канала или компенсационного сценария создается кампания"
+                        placeholder={t("admin.promos.workspace.campaignForm.fields.descriptionPlaceholder")}
                         rows={4}
                         disabled={promoCampaignSubmitting}
                       />
@@ -7077,13 +7925,13 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="broadcast-form-section">
+                <div className="broadcast-form-section broadcast-form-section--compact">
                   <div className="broadcast-form-section__header">
                     <div>
-                      <span className="eyebrow">Блок 2</span>
-                      <h4>Ограничения</h4>
+                      <span className="eyebrow">{t("admin.promos.workspace.campaignForm.rulesEyebrow")}</span>
+                      <h4>{t("admin.promos.workspace.campaignForm.rulesTitle")}</h4>
                     </div>
-                    <span className="form-hint">Логика допуска пользователя и список разрешенных тарифов.</span>
+                    <span className="form-hint">{t("admin.promos.workspace.campaignForm.rulesHint")}</span>
                   </div>
                   <div className="broadcast-form-grid">
                     <div className="broadcast-channel-grid">
@@ -7094,7 +7942,7 @@ export default function App() {
                           onChange={(event) => setPromoFirstPurchaseOnly(event.target.checked)}
                           disabled={promoCampaignSubmitting}
                         />
-                        <span>Только первый платеж</span>
+                        <span>{t("admin.promos.workspace.campaignForm.fields.firstPurchaseOnly")}</span>
                       </label>
                       <label className="checkbox-card">
                         <input
@@ -7103,7 +7951,7 @@ export default function App() {
                           onChange={(event) => setPromoRequiresActiveSubscription(event.target.checked)}
                           disabled={promoCampaignSubmitting}
                         />
-                        <span>Только с активной подпиской</span>
+                        <span>{t("admin.promos.workspace.campaignForm.fields.requiresActiveSubscription")}</span>
                       </label>
                       <label className="checkbox-card">
                         <input
@@ -7112,15 +7960,19 @@ export default function App() {
                           onChange={(event) => setPromoRequiresNoActiveSubscription(event.target.checked)}
                           disabled={promoCampaignSubmitting}
                         />
-                        <span>Только без активной подписки</span>
+                        <span>{t("admin.promos.workspace.campaignForm.fields.requiresNoActiveSubscription")}</span>
                       </label>
                     </div>
                     <div className="form-field form-field--wide">
-                      <span>Разрешенные тарифы</span>
+                      <span>{t("admin.promos.workspace.campaignForm.fields.planCodes")}</span>
                       {subscriptionPlans.length === 0 ? (
                         <div className="status-action-summary">
-                          <strong>{plansLoading ? "Загружаем тарифы..." : "Тарифы не загружены"}</strong>
-                          <small>Если список пуст, кампания будет применяться ко всем тарифам.</small>
+                          <strong>
+                            {plansLoading
+                              ? t("admin.promos.workspace.campaignForm.fields.plansLoading")
+                              : t("admin.promos.workspace.campaignForm.fields.plansEmpty")}
+                          </strong>
+                          <small>{t("admin.promos.workspace.campaignForm.fields.plansHint")}</small>
                         </div>
                       ) : (
                         <div className="broadcast-channel-grid">
@@ -7132,7 +7984,12 @@ export default function App() {
                                 onChange={() => handleTogglePromoPlanCode(plan.code)}
                                 disabled={promoCampaignSubmitting}
                               />
-                              <span>{`${plan.name} · ${plan.duration_days} дн.`}</span>
+                              <span>
+                                {t("admin.promos.workspace.campaignForm.fields.planOption", {
+                                  name: plan.name,
+                                  days: plan.duration_days,
+                                })}
+                              </span>
                             </label>
                           ))}
                         </div>
@@ -7143,31 +8000,42 @@ export default function App() {
 
                 <div className="adjustment-form__footer">
                   <span className="form-hint">
-                    Текущий эффект: {describePromoEffect(promoEffectType, Number.parseInt(promoEffectValue || "0", 10) || 0, promoCurrency || "RUB")}.
-                    Если тарифы не выбраны, кампания считается общей.
+                    {t("admin.promos.workspace.campaignForm.effectPreview", {
+                      effect: describePromoEffect(
+                        promoEffectType,
+                        Number.parseInt(promoEffectValue || "0", 10) || 0,
+                        promoCurrency || "RUB",
+                      ),
+                    })}
                   </span>
                   <button className="action-button" type="submit" disabled={promoCampaignSubmitting}>
                     {promoCampaignSubmitting
                       ? promoCampaignEditorMode === "create"
-                        ? "Создаем..."
-                        : "Сохраняем..."
+                        ? t("admin.promos.workspace.campaignForm.buttons.creating")
+                        : t("admin.promos.workspace.campaignForm.buttons.saving")
                       : promoCampaignEditorMode === "create"
-                        ? "Создать кампанию"
-                        : "Сохранить изменения"}
+                        ? t("admin.promos.workspace.campaignForm.buttons.create")
+                        : t("admin.promos.workspace.campaignForm.buttons.save")}
                   </button>
                 </div>
               </form>
             </section>
 
             {!selectedPromoCampaign ? (
-              <div className="detail-skeleton">Выбери кампанию слева, чтобы посмотреть детали и выпустить коды.</div>
+              <section className="detail-section">
+                <div className="detail-section__intro">
+                  <span className="eyebrow">{t("admin.promos.workspace.selectedCampaign.emptyEyebrow")}</span>
+                  <h3>{t("admin.promos.workspace.selectedCampaign.emptyTitle")}</h3>
+                  <p>{t("admin.promos.workspace.selectedCampaign.emptyDescription")}</p>
+                </div>
+              </section>
             ) : (
               <>
                 <section className="detail-header">
                   <div>
-                    <span className="eyebrow">Выбранная кампания</span>
+                    <span className="eyebrow">{t("admin.promos.workspace.selectedCampaign.eyebrow")}</span>
                     <h2>{selectedPromoCampaign.name}</h2>
-                    <p>{selectedPromoCampaign.description || "Описание не задано."}</p>
+                    <p>{selectedPromoCampaign.description || t("admin.promos.workspace.common.noDescription")}</p>
                   </div>
                   <div className="broadcast-toolbar__meta">
                     <span className={promoCampaignStatusPillClass(selectedPromoCampaign.status)}>
@@ -7179,7 +8047,7 @@ export default function App() {
                         type="button"
                         onClick={() => handleEditPromoCampaign(selectedPromoCampaign)}
                       >
-                        Редактировать
+                        {t("admin.promos.workspace.selectedCampaign.edit")}
                       </button>
                     </div>
                   </div>
@@ -7187,408 +8055,457 @@ export default function App() {
 
                 <section className="detail-facts-grid detail-facts-grid--compact">
                   <DetailFact
-                    label="Эффект"
+                    label={t("admin.promos.workspace.selectedCampaign.facts.effect")}
                     value={describePromoEffect(
                       selectedPromoCampaign.effect_type,
                       selectedPromoCampaign.effect_value,
                       selectedPromoCampaign.currency,
                     )}
                   />
-                  <DetailFact label="Кодов" value={String(selectedPromoCampaign.codes_count)} />
-                  <DetailFact label="Активаций" value={String(selectedPromoCampaign.redemptions_count)} />
-                  <DetailFact label="В истории" value={String(promoRedemptionTotal)} />
                   <DetailFact
-                    label="Окно"
+                    label={t("admin.promos.workspace.selectedCampaign.facts.codes")}
+                    value={String(selectedPromoCampaign.codes_count)}
+                  />
+                  <DetailFact
+                    label={t("admin.promos.workspace.selectedCampaign.facts.activations")}
+                    value={String(selectedPromoCampaign.redemptions_count)}
+                  />
+                  <DetailFact
+                    label={t("admin.promos.workspace.selectedCampaign.facts.history")}
+                    value={String(promoRedemptionTotal)}
+                  />
+                  <DetailFact
+                    label={t("admin.promos.workspace.selectedCampaign.facts.window")}
                     value={
-                      selectedPromoCampaign.starts_at || selectedPromoCampaign.ends_at ? "Ограничено" : "Открыто"
+                      selectedPromoCampaign.starts_at || selectedPromoCampaign.ends_at
+                        ? t("admin.promos.workspace.common.limitedWindow")
+                        : t("admin.promos.workspace.common.openWindow")
                     }
                   />
                 </section>
 
                 <section className="detail-sections-grid">
                   <article className="detail-section">
-                    <span className="eyebrow">Правила кампании</span>
+                    <span className="eyebrow">{t("admin.promos.workspace.campaignDetail.rulesEyebrow")}</span>
                     <div className="detail-kv">
                       <div>
-                        <span>Тип эффекта</span>
+                        <span>{t("admin.promos.workspace.campaignDetail.effectType")}</span>
                         <strong>{humanizePromoEffectType(selectedPromoCampaign.effect_type)}</strong>
                       </div>
                       <div>
-                        <span>Окно действия</span>
+                        <span>{t("admin.promos.workspace.campaignDetail.window")}</span>
                         <strong>{describePromoCampaignWindow(selectedPromoCampaign)}</strong>
                       </div>
                       <div>
-                        <span>Первый платеж</span>
-                        <strong>{selectedPromoCampaign.first_purchase_only ? "Да" : "Нет"}</strong>
-                      </div>
-                      <div>
-                        <span>Статус подписки</span>
+                        <span>{t("admin.promos.workspace.campaignDetail.firstPurchase")}</span>
                         <strong>
-                          {selectedPromoCampaign.requires_active_subscription
-                            ? "Только с активной подпиской"
-                            : selectedPromoCampaign.requires_no_active_subscription
-                              ? "Только без активной подписки"
-                              : "Без ограничения"}
+                          {selectedPromoCampaign.first_purchase_only
+                            ? t("admin.promos.workspace.common.yes")
+                            : t("admin.promos.workspace.common.no")}
                         </strong>
                       </div>
                       <div>
-                        <span>Общий лимит</span>
-                        <strong>{selectedPromoCampaign.total_redemptions_limit ?? "Без лимита"}</strong>
+                        <span>{t("admin.promos.workspace.campaignDetail.subscriptionRequirementLabel")}</span>
+                        <strong>{describePromoSubscriptionRequirement(selectedPromoCampaign)}</strong>
                       </div>
                       <div>
-                        <span>Лимит на аккаунт</span>
-                        <strong>{selectedPromoCampaign.per_account_redemptions_limit ?? "Без лимита"}</strong>
+                        <span>{t("admin.promos.workspace.campaignDetail.totalLimit")}</span>
+                        <strong>{describePromoLimit(selectedPromoCampaign.total_redemptions_limit)}</strong>
+                      </div>
+                      <div>
+                        <span>{t("admin.promos.workspace.campaignDetail.perAccountLimit")}</span>
+                        <strong>{describePromoLimit(selectedPromoCampaign.per_account_redemptions_limit)}</strong>
                       </div>
                     </div>
                   </article>
 
                   <article className="detail-section">
-                    <span className="eyebrow">Тарифы и аудит</span>
+                    <span className="eyebrow">{t("admin.promos.workspace.campaignDetail.serviceEyebrow")}</span>
                     <div className="detail-kv">
                       <div>
-                        <span>Тарифы</span>
-                        <strong>{selectedPromoCampaign.plan_codes?.join(", ") || "Все тарифы"}</strong>
+                        <span>{t("admin.promos.workspace.campaignDetail.plans")}</span>
+                        <strong>{describePromoPlanScope(selectedPromoCampaign.plan_codes)}</strong>
                       </div>
                       <div>
-                        <span>Создана</span>
+                        <span>{t("admin.promos.workspace.campaignDetail.createdAt")}</span>
                         <strong>{formatDateMoscow(selectedPromoCampaign.created_at)}</strong>
                       </div>
                       <div>
-                        <span>Обновлена</span>
+                        <span>{t("admin.promos.workspace.campaignDetail.updatedAt")}</span>
                         <strong>{formatDateMoscow(selectedPromoCampaign.updated_at)}</strong>
                       </div>
                       <div>
-                        <span>Admin ID</span>
-                        <strong>{selectedPromoCampaign.created_by_admin_id || "-"}</strong>
+                        <span>{t("admin.promos.workspace.campaignDetail.createdBy")}</span>
+                        <strong>{selectedPromoCampaign.created_by_admin_id || t("admin.common.notSpecified")}</strong>
                       </div>
                     </div>
                   </article>
                 </section>
 
-                <section className="detail-section detail-section--action">
-                  <span className="eyebrow">Новый код</span>
-                  <div className="detail-section__intro">
-                    <h3>Выпуск отдельных кодов внутри кампании</h3>
-                    <p>
-                      Можно ограничить код по конкретному аккаунту, лимиту использований и сразу активировать или
-                      оставить выключенным.
-                    </p>
-                  </div>
-                  <form className="adjustment-form adjustment-form--runtime" onSubmit={handleCreatePromoCode}>
-                    <label className="form-field">
-                      <span>Код</span>
-                      <input
-                        value={promoCodeValue}
-                        onChange={(event) => setPromoCodeValue(event.target.value.toUpperCase())}
-                        placeholder="Например: SPRING-30"
-                        required
-                        disabled={promoCodeSubmitting}
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>Лимит активаций</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="1"
-                        value={promoCodeMaxRedemptions}
-                        onChange={(event) => setPromoCodeMaxRedemptions(event.target.value)}
-                        placeholder="Пусто = без лимита"
-                        disabled={promoCodeSubmitting}
-                      />
-                    </label>
-                    <label className="form-field form-field--wide">
-                      <span>Assigned account UUID</span>
-                      <input
-                        value={promoCodeAssignedAccountId}
-                        onChange={(event) => setPromoCodeAssignedAccountId(event.target.value)}
-                        placeholder="Опционально. Ограничит код конкретным аккаунтом"
-                        disabled={promoCodeSubmitting}
-                      />
-                    </label>
-                    <label className="checkbox-card checkbox-card--inline">
-                      <input
-                        type="checkbox"
-                        checked={promoCodeIsActive}
-                        onChange={(event) => setPromoCodeIsActive(event.target.checked)}
-                        disabled={promoCodeSubmitting}
-                      />
-                      <span>Код активен сразу после создания</span>
-                    </label>
-                    <div className="adjustment-form__footer">
-                      <span className="form-hint">
-                        Кампания `{selectedPromoCampaign.name}` использует эффект{" "}
-                        {describePromoEffect(
-                          selectedPromoCampaign.effect_type,
-                          selectedPromoCampaign.effect_value,
-                          selectedPromoCampaign.currency,
-                        )}.
-                      </span>
-                      <button className="action-button" type="submit" disabled={promoCodeSubmitting}>
-                        {promoCodeSubmitting ? "Создаем..." : "Создать код"}
-                      </button>
+                <section className="promo-tools-grid">
+                  <article className="detail-section detail-section--action promo-tool-card">
+                    <div className="detail-section__intro">
+                      <span className="eyebrow">{t("admin.promos.workspace.singleCode.eyebrow")}</span>
+                      <h3>{t("admin.promos.workspace.singleCode.title")}</h3>
+                      <p>{t("admin.promos.workspace.singleCode.description")}</p>
                     </div>
-                  </form>
-                </section>
+                    <form className="adjustment-form adjustment-form--runtime" onSubmit={handleCreatePromoCode}>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.singleCode.fields.code")}</span>
+                        <input
+                          value={promoCodeValue}
+                          onChange={(event) => setPromoCodeValue(event.target.value.toUpperCase())}
+                          placeholder={t("admin.promos.workspace.singleCode.fields.codePlaceholder")}
+                          required
+                          disabled={promoCodeSubmitting}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.singleCode.fields.limit")}</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          value={promoCodeMaxRedemptions}
+                          onChange={(event) => setPromoCodeMaxRedemptions(event.target.value)}
+                          placeholder={t("admin.promos.workspace.campaignForm.fields.limitPlaceholder")}
+                          disabled={promoCodeSubmitting}
+                        />
+                      </label>
+                      <label className="form-field form-field--wide">
+                        <span>{t("admin.promos.workspace.singleCode.fields.accountId")}</span>
+                        <input
+                          value={promoCodeAssignedAccountId}
+                          onChange={(event) => setPromoCodeAssignedAccountId(event.target.value)}
+                          placeholder={t("admin.promos.workspace.singleCode.fields.accountIdPlaceholder")}
+                          disabled={promoCodeSubmitting}
+                        />
+                      </label>
+                      <label className="checkbox-card checkbox-card--inline">
+                        <input
+                          type="checkbox"
+                          checked={promoCodeIsActive}
+                          onChange={(event) => setPromoCodeIsActive(event.target.checked)}
+                          disabled={promoCodeSubmitting}
+                        />
+                        <span>{t("admin.promos.workspace.singleCode.fields.isActive")}</span>
+                      </label>
+                      <div className="adjustment-form__footer">
+                        <span className="form-hint">
+                          {t("admin.promos.workspace.singleCode.effectSummary", {
+                            effect: describePromoEffect(
+                              selectedPromoCampaign.effect_type,
+                              selectedPromoCampaign.effect_value,
+                              selectedPromoCampaign.currency,
+                            ),
+                          })}
+                        </span>
+                        <button className="action-button" type="submit" disabled={promoCodeSubmitting}>
+                          {promoCodeSubmitting
+                            ? t("admin.promos.workspace.singleCode.buttons.creating")
+                            : t("admin.promos.workspace.singleCode.buttons.create")}
+                        </button>
+                      </div>
+                    </form>
+                  </article>
 
-                <section className="detail-section detail-section--action">
-                  <span className="eyebrow">Batch generation</span>
-                  <div className="detail-section__intro">
-                    <h3>Массовый выпуск кодов для партнеров и рассылок</h3>
-                    <p>
-                      Генератор создает уникальные коды с общим префиксом и одинаковыми ограничениями. Последняя
-                      пачка сохраняется в интерфейсе, чтобы ее можно было быстро забрать.
-                    </p>
-                  </div>
-                  <form className="adjustment-form adjustment-form--runtime" onSubmit={handleBatchCreatePromoCodes}>
-                    <label className="form-field">
-                      <span>Количество</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="1"
-                        max="500"
-                        value={promoBatchQuantity}
-                        onChange={(event) => setPromoBatchQuantity(event.target.value)}
-                        disabled={promoBatchSubmitting}
-                        required
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>Префикс</span>
-                      <input
-                        value={promoBatchPrefix}
-                        onChange={(event) => setPromoBatchPrefix(event.target.value.toUpperCase())}
-                        placeholder="Например: AFFILIATE"
-                        disabled={promoBatchSubmitting}
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>Длина suffix</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="4"
-                        max="24"
-                        value={promoBatchSuffixLength}
-                        onChange={(event) => setPromoBatchSuffixLength(event.target.value)}
-                        disabled={promoBatchSubmitting}
-                        required
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>Лимит активаций</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="1"
-                        value={promoBatchMaxRedemptions}
-                        onChange={(event) => setPromoBatchMaxRedemptions(event.target.value)}
-                        placeholder="Пусто = без лимита"
-                        disabled={promoBatchSubmitting}
-                      />
-                    </label>
-                    <label className="form-field form-field--wide">
-                      <span>Assigned account UUID</span>
-                      <input
-                        value={promoBatchAssignedAccountId}
-                        onChange={(event) => setPromoBatchAssignedAccountId(event.target.value)}
-                        placeholder="Опционально. Ограничит всю пачку одним аккаунтом"
-                        disabled={promoBatchSubmitting}
-                      />
-                    </label>
-                    <label className="checkbox-card checkbox-card--inline">
-                      <input
-                        type="checkbox"
-                        checked={promoBatchIsActive}
-                        onChange={(event) => setPromoBatchIsActive(event.target.checked)}
-                        disabled={promoBatchSubmitting}
-                      />
-                      <span>Все коды активны сразу после генерации</span>
-                    </label>
-                    <div className="adjustment-form__footer">
-                      <span className="form-hint">
-                        Пример: {promoBatchPrefix.trim() ? `${promoBatchPrefix.trim().toUpperCase()}-` : ""}
-                        {"X".repeat(Math.max(Number.parseInt(promoBatchSuffixLength || "8", 10) || 8, 4))}
-                      </span>
-                      <button className="action-button" type="submit" disabled={promoBatchSubmitting}>
-                        {promoBatchSubmitting ? "Генерируем..." : "Сгенерировать пачку"}
-                      </button>
+                  <article className="detail-section detail-section--action promo-tool-card">
+                    <div className="detail-section__intro">
+                      <span className="eyebrow">{t("admin.promos.workspace.batch.eyebrow")}</span>
+                      <h3>{t("admin.promos.workspace.batch.title")}</h3>
+                      <p>{t("admin.promos.workspace.batch.description")}</p>
                     </div>
-                  </form>
-                  {promoLastGeneratedCodes.length > 0 ? (
-                    <article className="note-card">
-                      <strong>Последняя сгенерированная пачка</strong>
-                      <p>{promoLastGeneratedCodes.join("\n")}</p>
-                    </article>
-                  ) : null}
-                </section>
+                    <form className="adjustment-form adjustment-form--runtime" onSubmit={handleBatchCreatePromoCodes}>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.batch.fields.quantity")}</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          max="500"
+                          value={promoBatchQuantity}
+                          onChange={(event) => setPromoBatchQuantity(event.target.value)}
+                          disabled={promoBatchSubmitting}
+                          required
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.batch.fields.prefix")}</span>
+                        <input
+                          value={promoBatchPrefix}
+                          onChange={(event) => setPromoBatchPrefix(event.target.value.toUpperCase())}
+                          placeholder={t("admin.promos.workspace.batch.fields.prefixPlaceholder")}
+                          disabled={promoBatchSubmitting}
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.batch.fields.suffixLength")}</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="4"
+                          max="24"
+                          value={promoBatchSuffixLength}
+                          onChange={(event) => setPromoBatchSuffixLength(event.target.value)}
+                          disabled={promoBatchSubmitting}
+                          required
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.batch.fields.limit")}</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          value={promoBatchMaxRedemptions}
+                          onChange={(event) => setPromoBatchMaxRedemptions(event.target.value)}
+                          placeholder={t("admin.promos.workspace.campaignForm.fields.limitPlaceholder")}
+                          disabled={promoBatchSubmitting}
+                        />
+                      </label>
+                      <label className="form-field form-field--wide">
+                        <span>{t("admin.promos.workspace.batch.fields.accountId")}</span>
+                        <input
+                          value={promoBatchAssignedAccountId}
+                          onChange={(event) => setPromoBatchAssignedAccountId(event.target.value)}
+                          placeholder={t("admin.promos.workspace.batch.fields.accountIdPlaceholder")}
+                          disabled={promoBatchSubmitting}
+                        />
+                      </label>
+                      <label className="checkbox-card checkbox-card--inline">
+                        <input
+                          type="checkbox"
+                          checked={promoBatchIsActive}
+                          onChange={(event) => setPromoBatchIsActive(event.target.checked)}
+                          disabled={promoBatchSubmitting}
+                        />
+                        <span>{t("admin.promos.workspace.batch.fields.isActive")}</span>
+                      </label>
+                      <div className="adjustment-form__footer">
+                        <span className="form-hint">
+                          {t("admin.promos.workspace.batch.example", {
+                            example: `${promoBatchPrefix.trim() ? `${promoBatchPrefix.trim().toUpperCase()}-` : ""}${"X".repeat(Math.max(Number.parseInt(promoBatchSuffixLength || "8", 10) || 8, 4))}`,
+                          })}
+                        </span>
+                        <button className="action-button" type="submit" disabled={promoBatchSubmitting}>
+                          {promoBatchSubmitting
+                            ? t("admin.promos.workspace.batch.buttons.creating")
+                            : t("admin.promos.workspace.batch.buttons.create")}
+                        </button>
+                      </div>
+                    </form>
+                    {promoLastGeneratedCodes.length > 0 ? (
+                      <article className="note-card">
+                        <strong>{t("admin.promos.workspace.batch.lastBatchTitle")}</strong>
+                        <p>{promoLastGeneratedCodes.join("\n")}</p>
+                      </article>
+                    ) : null}
+                  </article>
 
-                <section className="detail-section detail-section--action">
-                  <span className="eyebrow">Import / export</span>
-                  <div className="detail-section__intro">
-                    <h3>Загрузка собственных кодов и выгрузка кампании</h3>
-                    <p>
-                      Импорт поддерживает список через новую строку, запятую или точку с запятой. Экспорт формирует
-                      полный список кодов кампании и пытается сразу скопировать его в буфер.
-                    </p>
-                  </div>
-                  <form className="adjustment-form adjustment-form--runtime" onSubmit={handleImportPromoCodes}>
-                    <label className="form-field form-field--wide">
-                      <span>Коды для импорта</span>
-                      <textarea
-                        rows={8}
-                        value={promoImportCodesText}
-                        onChange={(event) => setPromoImportCodesText(event.target.value.toUpperCase())}
-                        placeholder={"Например:\nSPRING-50\nPARTNER-99\nBLOGGER-7D"}
-                        disabled={promoImportSubmitting}
-                        required
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>Лимит активаций</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="1"
-                        value={promoImportMaxRedemptions}
-                        onChange={(event) => setPromoImportMaxRedemptions(event.target.value)}
-                        placeholder="Пусто = без лимита"
-                        disabled={promoImportSubmitting}
-                      />
-                    </label>
-                    <label className="form-field form-field--wide">
-                      <span>Assigned account UUID</span>
-                      <input
-                        value={promoImportAssignedAccountId}
-                        onChange={(event) => setPromoImportAssignedAccountId(event.target.value)}
-                        placeholder="Опционально. Ограничит импортированные коды одним аккаунтом"
-                        disabled={promoImportSubmitting}
-                      />
-                    </label>
-                    <label className="checkbox-card checkbox-card--inline">
-                      <input
-                        type="checkbox"
-                        checked={promoImportIsActive}
-                        onChange={(event) => setPromoImportIsActive(event.target.checked)}
-                        disabled={promoImportSubmitting}
-                      />
-                      <span>Импортировать коды активными</span>
-                    </label>
-                    <label className="checkbox-card checkbox-card--inline">
-                      <input
-                        type="checkbox"
-                        checked={promoImportSkipDuplicates}
-                        onChange={(event) => setPromoImportSkipDuplicates(event.target.checked)}
-                        disabled={promoImportSubmitting}
-                      />
-                      <span>Пропускать существующие коды вместо ошибки</span>
-                    </label>
-                    <div className="adjustment-form__footer">
-                      <span className="form-hint">
-                        Дубликаты внутри одного списка тоже нормализуются и не создаются повторно.
-                      </span>
-                      <button className="action-button" type="submit" disabled={promoImportSubmitting}>
-                        {promoImportSubmitting ? "Импортируем..." : "Импортировать коды"}
-                      </button>
+                  <article className="detail-section detail-section--action promo-tool-card promo-tool-card--wide">
+                    <div className="detail-section__intro">
+                      <span className="eyebrow">{t("admin.promos.workspace.importExport.eyebrow")}</span>
+                      <h3>{t("admin.promos.workspace.importExport.title")}</h3>
+                      <p>{t("admin.promos.workspace.importExport.description")}</p>
                     </div>
-                  </form>
-                  {promoImportSkippedCodes.length > 0 ? (
-                    <article className="note-card note-card--secondary">
-                      <strong>Пропущены существующие коды</strong>
-                      <p>{promoImportSkippedCodes.join(", ")}</p>
-                    </article>
-                  ) : null}
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Экспорт</span>
-                      <h3>Выгрузка кодов выбранной кампании</h3>
+                    <form className="adjustment-form adjustment-form--runtime" onSubmit={handleImportPromoCodes}>
+                      <label className="form-field form-field--wide">
+                        <span>{t("admin.promos.workspace.importExport.fields.codes")}</span>
+                        <textarea
+                          rows={8}
+                          value={promoImportCodesText}
+                          onChange={(event) => setPromoImportCodesText(event.target.value.toUpperCase())}
+                          placeholder={t("admin.promos.workspace.importExport.fields.codesPlaceholder")}
+                          disabled={promoImportSubmitting}
+                          required
+                        />
+                      </label>
+                      <label className="form-field">
+                        <span>{t("admin.promos.workspace.importExport.fields.limit")}</span>
+                        <input
+                          type="number"
+                          step="1"
+                          min="1"
+                          value={promoImportMaxRedemptions}
+                          onChange={(event) => setPromoImportMaxRedemptions(event.target.value)}
+                          placeholder={t("admin.promos.workspace.campaignForm.fields.limitPlaceholder")}
+                          disabled={promoImportSubmitting}
+                        />
+                      </label>
+                      <label className="form-field form-field--wide">
+                        <span>{t("admin.promos.workspace.importExport.fields.accountId")}</span>
+                        <input
+                          value={promoImportAssignedAccountId}
+                          onChange={(event) => setPromoImportAssignedAccountId(event.target.value)}
+                          placeholder={t("admin.promos.workspace.importExport.fields.accountIdPlaceholder")}
+                          disabled={promoImportSubmitting}
+                        />
+                      </label>
+                      <label className="checkbox-card checkbox-card--inline">
+                        <input
+                          type="checkbox"
+                          checked={promoImportIsActive}
+                          onChange={(event) => setPromoImportIsActive(event.target.checked)}
+                          disabled={promoImportSubmitting}
+                        />
+                        <span>{t("admin.promos.workspace.importExport.fields.isActive")}</span>
+                      </label>
+                      <label className="checkbox-card checkbox-card--inline">
+                        <input
+                          type="checkbox"
+                          checked={promoImportSkipDuplicates}
+                          onChange={(event) => setPromoImportSkipDuplicates(event.target.checked)}
+                          disabled={promoImportSubmitting}
+                        />
+                        <span>{t("admin.promos.workspace.importExport.fields.skipDuplicates")}</span>
+                      </label>
+                      <div className="adjustment-form__footer">
+                        <span className="form-hint">{t("admin.promos.workspace.importExport.importHint")}</span>
+                        <button className="action-button" type="submit" disabled={promoImportSubmitting}>
+                          {promoImportSubmitting
+                            ? t("admin.promos.workspace.importExport.buttons.importing")
+                            : t("admin.promos.workspace.importExport.buttons.import")}
+                        </button>
+                      </div>
+                    </form>
+                    {promoImportSkippedCodes.length > 0 ? (
+                      <article className="note-card note-card--secondary">
+                        <strong>{t("admin.promos.workspace.importExport.skippedTitle")}</strong>
+                        <p>{promoImportSkippedCodes.join(", ")}</p>
+                      </article>
+                    ) : null}
+                    <div className="promo-export-panel">
+                      <div className="detail-section__header detail-section__header--stacked">
+                        <div>
+                          <span className="eyebrow">{t("admin.promos.workspace.importExport.exportEyebrow")}</span>
+                          <h3>{t("admin.promos.workspace.importExport.exportTitle")}</h3>
+                        </div>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => void handleExportPromoCodes()}
+                          disabled={promoExportSubmitting}
+                        >
+                          {promoExportSubmitting
+                            ? t("admin.promos.workspace.importExport.buttons.exporting")
+                            : t("admin.promos.workspace.importExport.buttons.export")}
+                        </button>
+                      </div>
+                      <label className="form-field form-field--wide">
+                        <span>{t("admin.promos.workspace.importExport.exportField")}</span>
+                        <textarea
+                          readOnly
+                          rows={Math.min(Math.max(promoExportText.split("\n").length, 6), 16)}
+                          value={promoExportText}
+                          placeholder={t("admin.promos.workspace.importExport.exportPlaceholder")}
+                        />
+                      </label>
                     </div>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => void handleExportPromoCodes()}
-                      disabled={promoExportSubmitting}
-                    >
-                      {promoExportSubmitting ? "Готовим..." : "Экспортировать"}
-                    </button>
-                  </div>
-                  <label className="form-field form-field--wide">
-                    <span>Список кодов</span>
-                    <textarea
-                      readOnly
-                      rows={Math.min(Math.max(promoExportText.split("\n").length, 6), 16)}
-                      value={promoExportText}
-                      placeholder="После экспорта здесь появится список кодов кампании"
-                    />
-                  </label>
-                </section>
-
-                <section className="detail-section">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Список кодов</span>
-                      <h3>Все коды выбранной кампании</h3>
-                    </div>
-                    <span className="form-hint">Всего кодов: {promoCodeTotal}</span>
-                  </div>
-                  <div className="activity-list">
-                    {promoCodesLoading ? (
-                      <div className="activity-empty">Загружаем коды кампании...</div>
-                    ) : promoCodeItems.length === 0 ? (
-                      <div className="activity-empty">У этой кампании пока нет кодов.</div>
-                    ) : (
-                      promoCodeItems.map((promoCode) => (
-                        <article key={promoCode.id} className="activity-item">
-                          <div>
-                            <strong>{promoCode.code}</strong>
-                            <span>
-                              {promoCode.assigned_account_id
-                                ? `Только для account ${promoCode.assigned_account_id}`
-                                : "Без привязки к аккаунту"}
-                            </span>
-                            <span>
-                              {promoCode.max_redemptions
-                                ? `Лимит: ${promoCode.max_redemptions} активаций`
-                                : "Без лимита по количеству активаций"}
-                            </span>
-                          </div>
-                          <div className="activity-item__meta">
-                            <span className={promoCode.is_active ? "status-pill status-pill--active" : "status-pill status-pill--cancelled"}>
-                              {promoCode.is_active ? "Активен" : "Выключен"}
-                            </span>
-                            <strong>{promoCode.redemptions_count} активаций</strong>
-                            <span>{formatDateMoscow(promoCode.created_at)}</span>
-                            <button
-                              className="ghost-button"
-                              type="button"
-                              onClick={() => void handleTogglePromoCodeActivity(promoCode)}
-                              disabled={promoCodeActionId === promoCode.id}
-                            >
-                              {promoCodeActionId === promoCode.id
-                                ? "Сохраняем..."
-                                : promoCode.is_active
-                                  ? "Выключить"
-                                  : "Включить"}
-                            </button>
-                          </div>
-                        </article>
-                      ))
-                    )}
-                  </div>
+                  </article>
                 </section>
 
                 <section className="detail-section">
                   <div className="detail-section__header detail-section__header--stacked">
                     <div>
-                      <span className="eyebrow">История активаций</span>
-                      <h3>Последние redemption events</h3>
+                      <span className="eyebrow">{t("admin.promos.workspace.codeTable.eyebrow")}</span>
+                      <h3>{t("admin.promos.workspace.codeTable.title")}</h3>
                     </div>
-                    <span className="form-hint">Показано {promoRedemptionItems.length} из {promoRedemptionTotal}</span>
+                    <span className="form-hint">
+                      {t("admin.promos.workspace.codeTable.summary", { total: promoCodeTotal })}
+                    </span>
                   </div>
-                  <form className="adjustment-form adjustment-form--runtime" onSubmit={handleApplyPromoRedemptionFilters}>
+                  <div className="accounts-table__wrap promo-table__wrap">
+                    <table className="accounts-table promo-table promo-table--codes">
+                      <thead>
+                        <tr>
+                          <th>{t("admin.promos.workspace.codeTable.columns.code")}</th>
+                          <th>{t("admin.promos.workspace.codeTable.columns.status")}</th>
+                          <th>{t("admin.promos.workspace.codeTable.columns.account")}</th>
+                          <th>{t("admin.promos.workspace.codeTable.columns.limit")}</th>
+                          <th>{t("admin.promos.workspace.codeTable.columns.createdAt")}</th>
+                          <th>{t("admin.promos.workspace.codeTable.columns.actions")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {promoCodesLoading ? (
+                          <tr>
+                            <td className="accounts-table__empty" colSpan={6}>
+                              {t("admin.promos.workspace.codeTable.loading")}
+                            </td>
+                          </tr>
+                        ) : promoCodeItems.length === 0 ? (
+                          <tr>
+                            <td className="accounts-table__empty" colSpan={6}>
+                              {t("admin.promos.workspace.codeTable.empty")}
+                            </td>
+                          </tr>
+                        ) : (
+                          promoCodeItems.map((promoCode) => (
+                            <tr key={promoCode.id}>
+                              <td>
+                                <div className="promo-table__title-cell">
+                                  <strong>{promoCode.code}</strong>
+                                  <small>
+                                    {t("admin.promos.workspace.codeTable.redemptionsValue", {
+                                      count: promoCode.redemptions_count,
+                                    })}
+                                  </small>
+                                </div>
+                              </td>
+                              <td>
+                                <span
+                                  className={
+                                    promoCode.is_active
+                                      ? "status-pill status-pill--active"
+                                      : "status-pill status-pill--cancelled"
+                                  }
+                                >
+                                  {describePromoCodeStatus(promoCode.is_active)}
+                                </span>
+                              </td>
+                              <td title={promoCode.assigned_account_id || undefined}>
+                                {describePromoCodeAssignment(promoCode.assigned_account_id)}
+                              </td>
+                              <td>{describePromoCodeLimit(promoCode.max_redemptions)}</td>
+                              <td>{formatDateMoscow(promoCode.created_at)}</td>
+                              <td>
+                                <button
+                                  className="ghost-button"
+                                  type="button"
+                                  onClick={() => void handleTogglePromoCodeActivity(promoCode)}
+                                  disabled={promoCodeActionId === promoCode.id}
+                                >
+                                  {promoCodeActionId === promoCode.id
+                                    ? t("admin.promos.workspace.codeTable.buttons.saving")
+                                    : promoCode.is_active
+                                      ? t("admin.promos.workspace.codeTable.buttons.disable")
+                                      : t("admin.promos.workspace.codeTable.buttons.enable")}
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="detail-section">
+                  <div className="detail-section__header detail-section__header--stacked">
+                    <div>
+                      <span className="eyebrow">{t("admin.promos.workspace.redemptions.eyebrow")}</span>
+                      <h3>{t("admin.promos.workspace.redemptions.title")}</h3>
+                    </div>
+                    <span className="form-hint">
+                      {t("admin.promos.workspace.redemptions.summary", {
+                        shown: promoRedemptionItems.length,
+                        total: promoRedemptionTotal,
+                      })}
+                    </span>
+                  </div>
+                  <form className="promo-filters-grid" onSubmit={handleApplyPromoRedemptionFilters}>
                     <label className="form-field">
-                      <span>Статус</span>
+                      <span>{t("admin.promos.workspace.redemptions.filters.status")}</span>
                       <select
                         value={promoRedemptionStatusFilter}
                         onChange={(event) =>
@@ -7596,7 +8513,7 @@ export default function App() {
                         }
                         disabled={promoRedemptionsLoading}
                       >
-                        <option value="all">Все статусы</option>
+                        <option value="all">{t("admin.promos.workspace.redemptions.filters.allStatuses")}</option>
                         {PROMO_REDEMPTION_STATUS_OPTIONS.map((status) => (
                           <option key={status} value={status}>
                             {humanizePromoRedemptionStatus(status)}
@@ -7605,7 +8522,7 @@ export default function App() {
                       </select>
                     </label>
                     <label className="form-field">
-                      <span>Контекст</span>
+                      <span>{t("admin.promos.workspace.redemptions.filters.context")}</span>
                       <select
                         value={promoRedemptionContextFilter}
                         onChange={(event) =>
@@ -7613,7 +8530,7 @@ export default function App() {
                         }
                         disabled={promoRedemptionsLoading}
                       >
-                        <option value="all">Все контексты</option>
+                        <option value="all">{t("admin.promos.workspace.redemptions.filters.allContexts")}</option>
                         {PROMO_REDEMPTION_CONTEXT_OPTIONS.map((context) => (
                           <option key={context} value={context}>
                             {humanizePromoRedemptionContext(context)}
@@ -7622,74 +8539,118 @@ export default function App() {
                       </select>
                     </label>
                     <label className="form-field">
-                      <span>Поиск по коду</span>
+                      <span>{t("admin.promos.workspace.redemptions.filters.code")}</span>
                       <input
                         value={promoRedemptionCodeQueryInput}
                         onChange={(event) => setPromoRedemptionCodeQueryInput(event.target.value.toUpperCase())}
-                        placeholder="Например: WINBACK"
+                        placeholder={t("admin.promos.workspace.redemptions.filters.codePlaceholder")}
                         disabled={promoRedemptionsLoading}
                       />
                     </label>
                     <label className="form-field">
-                      <span>Account UUID</span>
+                      <span>{t("admin.promos.workspace.redemptions.filters.account")}</span>
                       <input
                         value={promoRedemptionAccountIdInput}
                         onChange={(event) => setPromoRedemptionAccountIdInput(event.target.value)}
-                        placeholder="Опционально"
+                        placeholder={t("admin.promos.workspace.redemptions.filters.accountPlaceholder")}
                         disabled={promoRedemptionsLoading}
                       />
                     </label>
-                    <div className="adjustment-form__footer">
+                    <div className="promo-filters-grid__footer">
                       <span className="form-hint">
                         {promoRedemptionFiltersActive
-                          ? "Активные фильтры применены к истории активаций."
-                          : "Фильтры не заданы. Показаны последние события кампании."}
+                          ? t("admin.promos.workspace.redemptions.filters.activeHint")
+                          : t("admin.promos.workspace.redemptions.filters.defaultHint")}
                       </span>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={handleResetPromoRedemptionFilters}
-                        disabled={promoRedemptionsLoading}
-                      >
-                        Сбросить
-                      </button>
-                      <button className="action-button" type="submit" disabled={promoRedemptionsLoading}>
-                        {promoRedemptionsLoading ? "Фильтруем..." : "Применить фильтры"}
-                      </button>
+                      <div className="action-cluster">
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={handleResetPromoRedemptionFilters}
+                          disabled={promoRedemptionsLoading}
+                        >
+                          {t("admin.promos.workspace.redemptions.filters.reset")}
+                        </button>
+                        <button className="action-button" type="submit" disabled={promoRedemptionsLoading}>
+                          {promoRedemptionsLoading
+                            ? t("admin.promos.workspace.redemptions.filters.applying")
+                            : t("admin.promos.workspace.redemptions.filters.apply")}
+                        </button>
+                      </div>
                     </div>
                   </form>
-                  <div className="activity-list">
-                    {promoRedemptionsLoading ? (
-                      <div className="activity-empty">Загружаем историю активаций...</div>
-                    ) : promoRedemptionItems.length === 0 ? (
-                      <div className="activity-empty">У этой кампании пока нет активаций.</div>
-                    ) : (
-                      promoRedemptionItems.map((redemption) => (
-                        <article key={redemption.id} className="activity-item">
-                          <div>
-                            <strong>{`${redemption.promo_code} · ${humanizePromoRedemptionContext(redemption.redemption_context)}`}</strong>
-                            <span>{describePromoRedemptionOutcome(redemption)}</span>
-                            <span>{`Account ${redemption.account_id}${redemption.plan_code ? ` · plan ${redemption.plan_code}` : ""}`}</span>
-                            <span>
-                              {redemption.failure_reason
-                                ? `Причина: ${redemption.failure_reason}`
-                                : redemption.reference_type || redemption.reference_id
-                                  ? `Reference: ${redemption.reference_type || "ref"} ${redemption.reference_id || ""}`.trim()
-                                  : "Без reference"}
-                            </span>
-                          </div>
-                          <div className="activity-item__meta">
-                            <span className={promoRedemptionStatusPillClass(redemption.status)}>
-                              {humanizePromoRedemptionStatus(redemption.status)}
-                            </span>
-                            <strong>{formatDateMoscow(redemption.created_at)}</strong>
-                            <span>
-                              {redemption.applied_at ? `Applied ${formatDateMoscow(redemption.applied_at)}` : "Еще не применен"}
-                            </span>
-                          </div>
-                        </article>
-                      ))
-                    )}
+                  <div className="accounts-table__wrap promo-table__wrap">
+                    <table className="accounts-table promo-table promo-table--redemptions">
+                      <thead>
+                        <tr>
+                          <th>{t("admin.promos.workspace.redemptions.columns.code")}</th>
+                          <th>{t("admin.promos.workspace.redemptions.columns.status")}</th>
+                          <th>{t("admin.promos.workspace.redemptions.columns.context")}</th>
+                          <th>{t("admin.promos.workspace.redemptions.columns.account")}</th>
+                          <th>{t("admin.promos.workspace.redemptions.columns.result")}</th>
+                          <th>{t("admin.promos.workspace.redemptions.columns.createdAt")}</th>
+                          <th>{t("admin.promos.workspace.redemptions.columns.details")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {promoRedemptionsLoading ? (
+                          <tr>
+                            <td className="accounts-table__empty" colSpan={7}>
+                              {t("admin.promos.workspace.redemptions.loading")}
+                            </td>
+                          </tr>
+                        ) : promoRedemptionItems.length === 0 ? (
+                          <tr>
+                            <td className="accounts-table__empty" colSpan={7}>
+                              {t("admin.promos.workspace.redemptions.empty")}
+                            </td>
+                          </tr>
+                        ) : (
+                          promoRedemptionItems.map((redemption) => (
+                            <tr key={redemption.id}>
+                              <td>
+                                <div className="promo-table__title-cell">
+                                  <strong>{redemption.promo_code}</strong>
+                                  <small>{describePromoEffect(redemption.effect_type, redemption.effect_value, redemption.currency)}</small>
+                                </div>
+                              </td>
+                              <td>
+                                <span className={promoRedemptionStatusPillClass(redemption.status)}>
+                                  {humanizePromoRedemptionStatus(redemption.status)}
+                                </span>
+                              </td>
+                              <td>{humanizePromoRedemptionContext(redemption.redemption_context)}</td>
+                              <td title={redemption.account_id}>
+                                <div className="promo-table__title-cell">
+                                  <strong>{formatCompactId(redemption.account_id)}</strong>
+                                  <small>
+                                    {redemption.plan_code
+                                      ? t("admin.promos.workspace.redemptions.planValue", {
+                                          planCode: redemption.plan_code,
+                                        })
+                                      : t("admin.promos.workspace.redemptions.planEmpty")}
+                                  </small>
+                                </div>
+                              </td>
+                              <td>{describePromoRedemptionOutcome(redemption)}</td>
+                              <td>
+                                <div className="promo-table__title-cell">
+                                  <strong>{formatDateMoscow(redemption.created_at)}</strong>
+                                  <small>
+                                    {redemption.applied_at
+                                      ? t("admin.promos.workspace.redemptions.appliedValue", {
+                                          date: formatDateMoscow(redemption.applied_at),
+                                        })
+                                      : t("admin.promos.workspace.redemptions.appliedEmpty")}
+                                  </small>
+                                </div>
+                              </td>
+                              <td>{describePromoRedemptionReference(redemption)}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </section>
               </>
@@ -7698,20 +8659,17 @@ export default function App() {
         </section>
       ) : activeView === "broadcasts" ? (
         <section className="search-shell search-shell--broadcasts">
-          <aside className="search-column search-column--broadcasts">
+          <div className="detail-column detail-column--broadcasts">
             <section className="search-panel search-panel--broadcasts">
               <div className="panel-toolbar">
                 <div>
-                  <span className="eyebrow">Контур рассылок</span>
-                  <h2>Кампании и черновики</h2>
-                  <p className="queue-panel__copy">
-                    Список кампаний живет отдельно от редактора. Пока ты работаешь с черновиком, данные не
-                    перетираются автоматическими запросами.
-                  </p>
+                  <span className="eyebrow">{t("admin.broadcasts.overview.eyebrow")}</span>
+                  <h2>{t("admin.broadcasts.overview.title")}</h2>
+                  <p className="queue-panel__copy">{t("admin.broadcasts.overview.description")}</p>
                 </div>
                 <div className="panel-toolbar__actions">
                   <button className="ghost-button" type="button" onClick={handleNewBroadcastDraft}>
-                    Новый черновик
+                    {t("admin.broadcasts.overview.newDraft")}
                   </button>
                   <button
                     className="ghost-button"
@@ -7719,943 +8677,938 @@ export default function App() {
                     onClick={() => void handleRefreshBroadcastWorkspace()}
                     disabled={broadcastWorkspaceRefreshing}
                   >
-                    {broadcastWorkspaceRefreshing ? "Обновляем..." : "Обновить"}
+                    {broadcastWorkspaceRefreshing ? t("admin.actions.refreshing") : t("admin.actions.refresh")}
                   </button>
                 </div>
               </div>
 
-              <div className="queue-summary">
-                <article className="queue-summary__item">
-                  <span>Всего кампаний</span>
-                  <strong>{broadcastTotal}</strong>
+              <div className="broadcasts-overview-grid">
+                <article className="broadcasts-overview-card">
+                  <div className="broadcasts-overview-card__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.broadcasts.overview.generalEyebrow")}</span>
+                      <h3>{t("admin.broadcasts.overview.generalTitle")}</h3>
+                    </div>
+                    <span className="form-hint">{t("admin.broadcasts.overview.generalDescription")}</span>
+                  </div>
+                  <div className="queue-summary queue-summary--broadcasts">
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.campaignsTotal")}</span>
+                      <strong>{broadcastTotal}</strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.drafts")}</span>
+                      <strong>{broadcastDraftCount}</strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.active")}</span>
+                      <strong>{broadcastActiveCount}</strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.runsTotal")}</span>
+                      <strong>{broadcastRunTotal}</strong>
+                    </article>
+                  </div>
                 </article>
-                <article className="queue-summary__item">
-                  <span>В работе</span>
-                  <strong>{broadcastItems.filter((item) => item.status === "running").length}</strong>
-                </article>
-                <article className="queue-summary__item">
-                  <span>Журнал запусков</span>
-                  <strong>{broadcastRunTotal}</strong>
+
+                <article className="broadcasts-overview-card broadcasts-overview-card--selected">
+                  <div className="broadcasts-overview-card__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.broadcasts.overview.selectionEyebrow")}</span>
+                      <h3>
+                        {selectedBroadcast
+                          ? selectedBroadcast.title || selectedBroadcast.name
+                          : t("admin.broadcasts.overview.selectionDraftTitle")}
+                      </h3>
+                    </div>
+                    <span className="form-hint">{t("admin.broadcasts.overview.selectionDescription")}</span>
+                  </div>
+                  <div className="queue-summary queue-summary--broadcasts">
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.status")}</span>
+                      <strong>
+                        {selectedBroadcast
+                          ? humanizeBroadcastStatus(selectedBroadcast.status)
+                          : t("admin.broadcasts.overview.stats.selectedNone")}
+                      </strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.channels")}</span>
+                      <strong>
+                        {broadcastChannels.length > 0
+                          ? humanizeBroadcastChannels(broadcastChannels)
+                          : t("admin.broadcasts.overview.stats.channelsEmpty")}
+                      </strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.audience")}</span>
+                      <strong>{broadcastAudiencePreviewSummary}</strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.audienceTotal")}</span>
+                      <strong>
+                        {broadcastEstimateSnapshot
+                          ? String(broadcastEstimateSnapshot.estimated_total_accounts)
+                          : "—"}
+                      </strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.inApp")}</span>
+                      <strong>
+                        {broadcastEstimateSnapshot
+                          ? String(broadcastEstimateSnapshot.estimated_in_app_recipients)
+                          : "—"}
+                      </strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.telegram")}</span>
+                      <strong>
+                        {broadcastEstimateSnapshot
+                          ? String(broadcastEstimateSnapshot.estimated_telegram_recipients)
+                          : "—"}
+                      </strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.updated")}</span>
+                      <strong>
+                        {selectedBroadcast
+                          ? formatDateMoscow(selectedBroadcast.updated_at)
+                          : t("admin.broadcasts.overview.stats.updatedEmpty")}
+                      </strong>
+                    </article>
+                    <article className="queue-summary__item">
+                      <span>{t("admin.broadcasts.overview.stats.estimateStatus")}</span>
+                      <strong>
+                        {broadcastEstimateLoading
+                          ? t("admin.broadcasts.overview.stats.estimateRefreshing")
+                          : broadcastEstimateError
+                            ? t("admin.broadcasts.overview.stats.estimateError")
+                            : t("admin.broadcasts.overview.stats.estimateReady")}
+                      </strong>
+                    </article>
+                  </div>
+                  <div className="broadcasts-overview-card__footer">
+                    <span className="form-hint">
+                      {broadcastEstimateError || t("admin.broadcasts.overview.selectionHint")}
+                    </span>
+                  </div>
                 </article>
               </div>
             </section>
 
-            <div className="results-list results-list--broadcasts">
-              {broadcastsLoading ? (
-                <div className="empty-state">Загружаем кампании...</div>
-              ) : broadcastItems.length === 0 ? (
-                <div className="empty-state">Кампаний пока нет. Создай первый черновик.</div>
-              ) : (
-                broadcastItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={
-                      selectedBroadcastId === item.id
-                        ? "result-card result-card--active result-card--broadcast"
-                        : "result-card result-card--broadcast"
-                    }
-                    onClick={() => handleSelectBroadcast(item.id)}
-                  >
-                    <div className="result-card__top">
-                      <strong>{item.name}</strong>
-                      <span className={`status-pill status-pill--${item.status}`}>
-                        {humanizeBroadcastStatus(item.status)}
-                      </span>
-                    </div>
-                    <div className="broadcast-card-summary">
-                      <span className="broadcast-card-summary__title">{item.title}</span>
-                      <span>{humanizeBroadcastChannels(item.channels)}</span>
-                      <span>
-                        {formatBroadcastAudienceSummary(item.audience)} · {item.estimated_total_accounts} акк.
-                      </span>
-                    </div>
-                    <div className="broadcast-card-runtime">
-                      <span>
-                        {item.latest_run
-                          ? `${humanizeBroadcastRunType(item.latest_run.run_type)} · ${humanizeBroadcastRunStatus(
-                              item.latest_run.status,
-                            )}`
-                          : "Боевых запусков еще не было"}
-                      </span>
-                      <strong>
-                        {item.latest_run
-                          ? `Доставлено ${item.latest_run.delivered_deliveries}/${item.latest_run.total_deliveries}`
-                          : "Только черновик"}
-                      </strong>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </aside>
+            <section className="detail-section detail-section--action">
+              <div className="detail-section__header detail-section__header--stacked">
+                <div>
+                  <span className="eyebrow">{t("admin.broadcasts.campaignTable.eyebrow")}</span>
+                  <h3>{t("admin.broadcasts.campaignTable.title")}</h3>
+                </div>
+                <span className="form-hint">{t("admin.broadcasts.campaignTable.description")}</span>
+              </div>
 
-          <div className="detail-column detail-column--broadcasts">
+              <div className="accounts-table__wrap broadcasts-table__wrap">
+                <table className="accounts-table broadcasts-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.campaign")}</th>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.status")}</th>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.channels")}</th>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.audience")}</th>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.recipients")}</th>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.lastRun")}</th>
+                      <th scope="col">{t("admin.broadcasts.campaignTable.columns.updated")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {broadcastsLoading ? (
+                      <tr>
+                        <td colSpan={7} className="accounts-table__empty">
+                          {t("admin.broadcasts.campaignTable.loading")}
+                        </td>
+                      </tr>
+                    ) : broadcastItems.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="accounts-table__empty">
+                          {t("admin.broadcasts.campaignTable.empty")}
+                        </td>
+                      </tr>
+                    ) : (
+                      broadcastItems.map((item) => (
+                        <tr
+                          key={item.id}
+                          className={
+                            selectedBroadcastId === item.id
+                              ? "accounts-table__row accounts-table__row--active"
+                              : "accounts-table__row"
+                          }
+                          onClick={() => handleSelectBroadcast(item.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              void handleSelectBroadcast(item.id);
+                            }
+                          }}
+                          tabIndex={0}
+                        >
+                          <td>
+                            <div className="broadcasts-table__cell broadcasts-table__cell--campaign">
+                              <strong>{item.name}</strong>
+                              <small>{item.title || t("admin.broadcasts.campaignTable.untitled")}</small>
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`status-pill status-pill--${item.status}`}>
+                              {humanizeBroadcastStatus(item.status)}
+                            </span>
+                          </td>
+                          <td>{humanizeBroadcastChannels(item.channels)}</td>
+                          <td>
+                            <div className="broadcasts-table__cell">
+                              <strong>{formatBroadcastAudienceSummary(item.audience)}</strong>
+                              <small>
+                                {t("admin.broadcasts.campaignTable.estimatedRecipients", {
+                                  count: item.estimated_total_accounts,
+                                })}
+                              </small>
+                            </div>
+                          </td>
+                          <td>{item.estimated_total_accounts}</td>
+                          <td>
+                            <div className="broadcasts-table__cell">
+                              <strong>
+                                {item.latest_run
+                                  ? `${humanizeBroadcastRunStatus(item.latest_run.status)} · ${humanizeBroadcastRunType(
+                                      item.latest_run.run_type,
+                                    )}`
+                                  : t("admin.broadcasts.campaignTable.runNever")}
+                              </strong>
+                              <small>
+                                {item.latest_run
+                                  ? t("admin.broadcasts.campaignTable.delivered", {
+                                      delivered: item.latest_run.delivered_deliveries,
+                                      total: item.latest_run.total_deliveries,
+                                    })
+                                  : t("admin.broadcasts.campaignTable.draftOnly")}
+                              </small>
+                            </div>
+                          </td>
+                          <td>{formatDateMoscow(item.updated_at)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="detail-section detail-section--action">
+              <div className="detail-section__header detail-section__header--stacked">
+                <div>
+                  <span className="eyebrow">{t("admin.broadcasts.audienceLibrary.eyebrow")}</span>
+                  <h3>{t("admin.broadcasts.audienceLibrary.title")}</h3>
+                </div>
+                <span className="form-hint">{t("admin.broadcasts.audienceLibrary.description")}</span>
+              </div>
+
+              <div className="broadcast-audience-library">
+                <article className="broadcast-audience-preset-panel broadcast-audience-preset-panel--editor">
+                  <div className="broadcast-audience-preset-panel__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.broadcasts.audienceLibrary.editorEyebrow")}</span>
+                      <h5>{t("admin.broadcasts.audienceLibrary.editorTitle")}</h5>
+                    </div>
+                    <span className="form-hint">
+                      {`${broadcastAudiencePresetEditorSummary} · ${
+                        broadcastAudiencePresetChannels.length > 0
+                          ? humanizeBroadcastChannels(broadcastAudiencePresetChannels)
+                          : t("admin.broadcasts.overview.stats.channelsEmpty")
+                      }`}
+                    </span>
+                  </div>
+
+                  <div className="broadcast-form-grid">
+                    <label className="form-field">
+                      <span>{t("admin.broadcasts.audienceLibrary.fields.name")}</span>
+                      <input
+                        value={broadcastAudiencePresetName}
+                        onChange={(event) => setBroadcastAudiencePresetName(event.target.value)}
+                        placeholder={t("admin.broadcasts.audienceLibrary.placeholders.name")}
+                        disabled={broadcastAudiencePresetSubmitting}
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.broadcasts.audienceLibrary.fields.description")}</span>
+                      <input
+                        value={broadcastAudiencePresetDescription}
+                        onChange={(event) => setBroadcastAudiencePresetDescription(event.target.value)}
+                        placeholder={t("admin.broadcasts.audienceLibrary.placeholders.description")}
+                        disabled={broadcastAudiencePresetSubmitting}
+                      />
+                    </label>
+
+                    <div className="broadcast-channel-grid">
+                      <label className="checkbox-card">
+                        <input
+                          type="checkbox"
+                          checked={broadcastAudiencePresetEditor.sendInApp}
+                          onChange={(event) =>
+                            setBroadcastAudiencePresetEditor((current) => ({
+                              ...current,
+                              sendInApp: event.target.checked,
+                            }))
+                          }
+                          disabled={broadcastAudiencePresetSubmitting}
+                        />
+                        <span>{t("admin.broadcasts.channels.inApp")}</span>
+                      </label>
+                      <label className="checkbox-card">
+                        <input
+                          type="checkbox"
+                          checked={broadcastAudiencePresetEditor.sendTelegram}
+                          onChange={(event) =>
+                            setBroadcastAudiencePresetEditor((current) => ({
+                              ...current,
+                              sendTelegram: event.target.checked,
+                            }))
+                          }
+                          disabled={broadcastAudiencePresetSubmitting}
+                        />
+                        <span>{t("admin.broadcasts.channels.telegram")}</span>
+                      </label>
+                    </div>
+
+                    <label className="form-field">
+                      <span>{t("admin.broadcasts.audienceLibrary.fields.segment")}</span>
+                      <select
+                        value={broadcastAudiencePresetEditor.segment}
+                        onChange={(event) =>
+                          setBroadcastAudiencePresetEditor((current) => ({
+                            ...current,
+                            segment: event.target.value as BroadcastAudienceSegment,
+                          }))
+                        }
+                        disabled={broadcastAudiencePresetSubmitting}
+                      >
+                        {BROADCAST_AUDIENCE_SEGMENTS.map((segment) => (
+                          <option key={segment} value={segment}>
+                            {humanizeBroadcastAudienceSegment(segment)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {broadcastAudiencePresetEditor.segment === "manual_list" ? (
+                      <label className="form-field form-field--wide">
+                        <span>{t("admin.broadcasts.audienceLibrary.fields.manualList")}</span>
+                        <textarea
+                          value={broadcastAudiencePresetEditor.manualTargetsInput}
+                          onChange={(event) =>
+                            setBroadcastAudiencePresetEditor((current) => ({
+                              ...current,
+                              manualTargetsInput: event.target.value,
+                            }))
+                          }
+                          placeholder={t("admin.broadcasts.audienceLibrary.placeholders.manualList")}
+                          rows={8}
+                          disabled={broadcastAudiencePresetSubmitting}
+                        />
+                      </label>
+                    ) : null}
+
+                    {broadcastAudiencePresetEditor.segment === "inactive_accounts" ||
+                    broadcastAudiencePresetEditor.segment === "inactive_paid_users" ? (
+                      <>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.inactiveDays")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={broadcastAudiencePresetEditor.lastSeenOlderThanDays}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                lastSeenOlderThanDays: event.target.value,
+                              }))
+                            }
+                            placeholder="7"
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                        <label className="checkbox-card checkbox-card--inline">
+                          <input
+                            type="checkbox"
+                            checked={broadcastAudiencePresetEditor.includeNeverSeen}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                includeNeverSeen: event.target.checked,
+                              }))
+                            }
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.includeNeverSeen")}</span>
+                        </label>
+                      </>
+                    ) : null}
+
+                    {broadcastAudiencePresetEditor.segment === "abandoned_checkout" ? (
+                      <>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.pendingOlderThanMinutes")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={broadcastAudiencePresetEditor.pendingPaymentOlderThanMinutes}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                pendingPaymentOlderThanMinutes: event.target.value,
+                              }))
+                            }
+                            placeholder="30"
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.pendingWithinDays")}</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={broadcastAudiencePresetEditor.pendingPaymentWithinLastDays}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                pendingPaymentWithinLastDays: event.target.value,
+                              }))
+                            }
+                            placeholder="7"
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                      </>
+                    ) : null}
+
+                    {broadcastAudiencePresetEditor.segment === "failed_payment" ? (
+                      <label className="form-field">
+                        <span>{t("admin.broadcasts.audienceLibrary.fields.failedWithinDays")}</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={broadcastAudiencePresetEditor.failedPaymentWithinLastDays}
+                          onChange={(event) =>
+                            setBroadcastAudiencePresetEditor((current) => ({
+                              ...current,
+                              failedPaymentWithinLastDays: event.target.value,
+                            }))
+                          }
+                          placeholder="7"
+                          disabled={broadcastAudiencePresetSubmitting}
+                        />
+                      </label>
+                    ) : null}
+
+                    {broadcastAudiencePresetEditor.segment === "expired" ? (
+                      <>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.expiredFromDays")}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={broadcastAudiencePresetEditor.subscriptionExpiredFromDays}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                subscriptionExpiredFromDays: event.target.value,
+                              }))
+                            }
+                            placeholder="30"
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.expiredToDays")}</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={broadcastAudiencePresetEditor.subscriptionExpiredToDays}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                subscriptionExpiredToDays: event.target.value,
+                              }))
+                            }
+                            placeholder="90"
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                      </>
+                    ) : null}
+
+                    <label className="form-field">
+                      <span>{t("admin.broadcasts.audienceLibrary.fields.cooldownDays")}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={broadcastAudiencePresetEditor.cooldownDays}
+                        onChange={(event) =>
+                          setBroadcastAudiencePresetEditor((current) => ({
+                            ...current,
+                            cooldownDays: event.target.value,
+                          }))
+                        }
+                        placeholder="7"
+                        disabled={broadcastAudiencePresetSubmitting}
+                      />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.broadcasts.audienceLibrary.fields.cooldownKey")}</span>
+                      <input
+                        value={broadcastAudiencePresetEditor.cooldownKey}
+                        onChange={(event) =>
+                          setBroadcastAudiencePresetEditor((current) => ({
+                            ...current,
+                            cooldownKey: event.target.value,
+                          }))
+                        }
+                        placeholder={t("admin.broadcasts.audienceLibrary.placeholders.cooldownKey")}
+                        disabled={broadcastAudiencePresetSubmitting}
+                      />
+                    </label>
+
+                    {broadcastAudiencePresetEditor.sendTelegram ? (
+                      <>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.telegramQuietStart")}</span>
+                          <input
+                            type="time"
+                            value={broadcastAudiencePresetEditor.telegramQuietHoursStart}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                telegramQuietHoursStart: event.target.value,
+                              }))
+                            }
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>{t("admin.broadcasts.audienceLibrary.fields.telegramQuietEnd")}</span>
+                          <input
+                            type="time"
+                            value={broadcastAudiencePresetEditor.telegramQuietHoursEnd}
+                            onChange={(event) =>
+                              setBroadcastAudiencePresetEditor((current) => ({
+                                ...current,
+                                telegramQuietHoursEnd: event.target.value,
+                              }))
+                            }
+                            disabled={broadcastAudiencePresetSubmitting}
+                          />
+                        </label>
+                      </>
+                    ) : null}
+
+                    <label className="checkbox-card checkbox-card--inline">
+                      <input
+                        type="checkbox"
+                        checked={broadcastAudiencePresetEditor.excludeBlocked}
+                        onChange={(event) =>
+                          setBroadcastAudiencePresetEditor((current) => ({
+                            ...current,
+                            excludeBlocked: event.target.checked,
+                          }))
+                        }
+                        disabled={broadcastAudiencePresetSubmitting}
+                      />
+                      <span>{t("admin.broadcasts.audienceLibrary.fields.excludeBlocked")}</span>
+                    </label>
+                  </div>
+
+                  {broadcastAudiencePresetError ? (
+                    <div className="form-hint form-hint--error">{broadcastAudiencePresetError}</div>
+                  ) : null}
+
+                  <div className="broadcast-audience-preset-toolbar">
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={handleStartNewBroadcastAudiencePreset}
+                      disabled={broadcastAudiencePresetSubmitting}
+                    >
+                      {t("admin.broadcasts.audienceLibrary.actions.new")}
+                    </button>
+                    <button
+                      className="action-button"
+                      type="button"
+                      onClick={() => void handleCreateBroadcastAudiencePreset()}
+                      disabled={broadcastAudiencePresetSubmitting}
+                    >
+                      {broadcastAudiencePresetSubmitting && selectedBroadcastAudiencePresetId === null
+                        ? t("admin.broadcasts.audienceLibrary.actions.saving")
+                        : t("admin.broadcasts.audienceLibrary.actions.save")}
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() => void handleUpdateBroadcastAudiencePreset()}
+                      disabled={broadcastAudiencePresetSubmitting || selectedBroadcastAudiencePresetId === null}
+                    >
+                      {t("admin.broadcasts.audienceLibrary.actions.update")}
+                    </button>
+                    <button
+                      className="ghost-button ghost-button--danger"
+                      type="button"
+                      onClick={() => void handleDeleteBroadcastAudiencePreset()}
+                      disabled={broadcastAudiencePresetSubmitting || selectedBroadcastAudiencePresetId === null}
+                    >
+                      {t("admin.broadcasts.audienceLibrary.actions.delete")}
+                    </button>
+                  </div>
+                </article>
+
+                <article className="broadcast-audience-preset-panel broadcast-audience-preset-panel--list">
+                  <div className="broadcast-audience-preset-panel__header">
+                    <div>
+                      <span className="eyebrow">{t("admin.broadcasts.audienceLibrary.listEyebrow")}</span>
+                      <h5>{t("admin.broadcasts.audienceLibrary.listTitle")}</h5>
+                    </div>
+                    <span className="form-hint">
+                      {t("admin.broadcasts.audienceLibrary.listCount", {
+                        count: broadcastAudiencePresetTotal,
+                      })}
+                    </span>
+                  </div>
+
+                  {broadcastAudiencePresetLoading ? (
+                    <div className="activity-empty">{t("admin.broadcasts.audienceLibrary.loading")}</div>
+                  ) : broadcastAudiencePresetItems.length === 0 ? (
+                    <div className="activity-empty">{t("admin.broadcasts.audienceLibrary.empty")}</div>
+                  ) : (
+                    <div className="broadcast-audience-preset-list">
+                      {broadcastAudiencePresetItems.map((item) => (
+                        <article
+                          key={item.id}
+                          className={`broadcast-audience-preset-card ${
+                            item.id === selectedBroadcastAudiencePresetId ? "broadcast-audience-preset-card--active" : ""
+                          }`}
+                        >
+                          <div className="broadcast-audience-preset-card__top">
+                            <div>
+                              <strong>{item.name}</strong>
+                              {item.description ? (
+                                <div className="broadcast-audience-preset-card__description">{item.description}</div>
+                              ) : null}
+                            </div>
+                            {matchedBroadcastAudiencePreset?.id === item.id ? (
+                              <span className="status-pill status-pill--active">
+                                {t("admin.broadcasts.audienceLibrary.inCampaign")}
+                              </span>
+                            ) : (
+                              <span className="form-hint">{formatDateMoscow(item.updated_at)}</span>
+                            )}
+                          </div>
+                          <div className="broadcast-audience-preset-card__summary">
+                            <strong>{humanizeBroadcastChannels(item.channels)}</strong>
+                            <span>{formatBroadcastAudienceSummary(item.audience)}</span>
+                          </div>
+                          <div className="broadcast-audience-preset-actions">
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => handleSelectBroadcastAudiencePreset(item)}
+                              disabled={broadcastAudiencePresetSubmitting}
+                            >
+                              {item.id === selectedBroadcastAudiencePresetId
+                                ? t("admin.broadcasts.audienceLibrary.actions.selected")
+                                : t("admin.broadcasts.audienceLibrary.actions.open")}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              onClick={() => handleApplyBroadcastAudiencePreset(item)}
+                              disabled={broadcastAudiencePresetSubmitting || (selectedBroadcast !== null && !broadcastIsDraft)}
+                            >
+                              {t("admin.broadcasts.audienceLibrary.actions.useInCampaign")}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              </div>
+            </section>
+
             <section className="detail-header detail-header--broadcasts">
               <div className="broadcast-toolbar">
                 <div>
-                  <span className="eyebrow">Редактор кампании</span>
-                  <h2>{selectedBroadcast ? selectedBroadcast.title : "Новый черновик"}</h2>
+                  <span className="eyebrow">
+                    {showBroadcastEditor
+                      ? t("admin.broadcasts.editorHeader.eyebrow")
+                      : t("admin.broadcasts.editorHeader.previewEyebrow")}
+                  </span>
+                  <h2>{selectedBroadcast ? selectedBroadcast.title : t("admin.broadcasts.editorHeader.newTitle")}</h2>
                   <p>
-                    Рабочее место разделено на контент, превью, runtime и журнал запусков. Данные
-                    обновляются только вручную или после явного действия оператора.
+                    {showBroadcastEditor
+                      ? t("admin.broadcasts.editorHeader.description")
+                      : t("admin.broadcasts.editorHeader.previewDescription")}
                   </p>
                 </div>
               </div>
               <div className="broadcast-toolbar__meta">
                 <div className="broadcast-badge-cluster">
-                  <span className={`status-pill ${broadcastEditorDirty ? "status-pill--warning" : "status-pill--active"}`}>
-                    {broadcastEditorDirty ? "Есть несохраненные изменения" : "Черновик синхронизирован"}
-                  </span>
-                  <span className={`status-pill ${selectedBroadcast ? `status-pill--${selectedBroadcast.status}` : "status-pill--draft"}`}>
-                    {selectedBroadcast ? humanizeBroadcastStatus(selectedBroadcast.status) : "Новый черновик"}
-                  </span>
-                </div>
-                <div className="broadcast-header-actions">
-                  <button className="ghost-button" type="button" onClick={handleNewBroadcastDraft}>
-                    Новый черновик
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void handleRefreshBroadcastWorkspace()}
-                    disabled={broadcastWorkspaceRefreshing}
+                  {showBroadcastEditor ? (
+                    <span
+                      className={`status-pill ${broadcastEditorDirty ? "status-pill--warning" : "status-pill--active"}`}
+                    >
+                      {broadcastEditorDirty
+                        ? t("admin.broadcasts.editorHeader.dirty")
+                        : t("admin.broadcasts.editorHeader.synced")}
+                    </span>
+                  ) : null}
+                  <span
+                    className={`status-pill ${
+                      selectedBroadcast ? `status-pill--${selectedBroadcast.status}` : "status-pill--draft"
+                    }`}
                   >
-                    {broadcastWorkspaceRefreshing ? "Обновляем..." : "Обновить данные"}
-                  </button>
+                    {selectedBroadcast
+                      ? humanizeBroadcastStatus(selectedBroadcast.status)
+                      : t("admin.broadcasts.editorHeader.newStatus")}
+                  </span>
                 </div>
               </div>
             </section>
 
-            <section className="detail-facts-grid detail-facts-grid--compact detail-facts-grid--broadcast-overview">
-              <DetailFact label="Кампания" value={selectedBroadcastId ? `#${selectedBroadcastId}` : "Новая"} />
-              <DetailFact
-                label="Каналы"
-                value={broadcastChannels.length > 0 ? humanizeBroadcastChannels(broadcastChannels) : "Не выбраны"}
-              />
-              <DetailFact
-                label="Аудитория"
-                value={broadcastAudiencePreviewSummary}
-              />
-              <DetailFact
-                label="Обновлено"
-                value={selectedBroadcast ? formatDateMoscow(selectedBroadcast.updated_at) : "Пока не сохранено"}
-              />
-            </section>
-
             <section className="broadcast-workbench">
-              <section className="detail-section detail-section--action detail-section--editor">
-                <div className="detail-section__header">
-                  <div>
-                    <span className="eyebrow">Редактор</span>
-                    <h3>{broadcastEditorMode === "edit" ? "Контент кампании" : "Создание новой кампании"}</h3>
-                  </div>
-                  {!broadcastIsDraft && selectedBroadcast ? (
-                    <span className="form-hint">
-                      Контент зафиксирован. Для новой версии создай отдельный черновик.
-                    </span>
-                  ) : null}
-                </div>
-
-                <form className="broadcast-editor-form" onSubmit={handleSaveBroadcast}>
-                  <div className="broadcast-form-section">
-                    <div className="broadcast-form-section__header">
-                      <div>
-                        <span className="eyebrow">Блок 1</span>
-                        <h4>Основа кампании</h4>
-                      </div>
-                      <span className="form-hint">Название для команды и пользовательский заголовок сообщения.</span>
-                    </div>
-                    <div className="broadcast-form-grid">
-                      <label className="form-field">
-                        <span>Внутреннее название</span>
-                        <input
-                          value={broadcastName}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastName(event.target.value);
-                          }}
-                          placeholder="Например: Spring promo 2026"
-                          required
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        />
-                      </label>
-                      <label className="form-field form-field--wide">
-                        <span>Заголовок</span>
-                        <input
-                          value={broadcastTitle}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastTitle(event.target.value);
-                          }}
-                          placeholder="Что увидит пользователь в Telegram и in-app"
-                          required
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        />
-                      </label>
-                      <label className="form-field">
-                        <span>Тип контента</span>
-                        <select
-                          value={broadcastContentType}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastContentType(event.target.value as BroadcastContentType);
-                          }}
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        >
-                          <option value="text">Только текст</option>
-                          <option value="photo">Текст + фото</option>
-                        </select>
-                      </label>
+              {showBroadcastEditor ? (
+                <section className="detail-section detail-section--action detail-section--editor">
+                  <div className="detail-section__header">
+                    <div>
+                      <span className="eyebrow">Редактор</span>
+                      <h3>{broadcastEditorMode === "edit" ? "Контент кампании" : "Создание новой кампании"}</h3>
                     </div>
                   </div>
 
-                  <div className="broadcast-form-section">
-                    <div className="broadcast-form-section__header">
-                      <div>
-                        <span className="eyebrow">Блок 2</span>
-                        <h4>Аудитория и каналы</h4>
-                      </div>
-                      <span className="form-hint">Состав аудитории и каналы доставки задаются отдельно от текста.</span>
-                    </div>
-                    <div className="broadcast-audience-preset-panel">
-                      <div className="broadcast-audience-preset-panel__header">
+                  <form className="broadcast-editor-form" onSubmit={handleSaveBroadcast}>
+                    <div className="broadcast-form-section broadcast-form-section--compact">
+                      <div className="broadcast-form-section__header">
                         <div>
-                          <span className="eyebrow">Saved audiences</span>
-                          <h5>Переиспользуемые сегменты</h5>
+                          <span className="eyebrow">{t("admin.broadcasts.segmentPicker.eyebrow")}</span>
+                          <h4>{t("admin.broadcasts.segmentPicker.title")}</h4>
                         </div>
-                        <span className="form-hint">
-                          {broadcastAudiencePresetTotal > 0
-                            ? `${broadcastAudiencePresetTotal} сохраненных аудиторий`
-                            : "Сохрани сюда частые win-back и recovery сценарии"}
-                        </span>
+                        <span className="form-hint">{t("admin.broadcasts.segmentPicker.description")}</span>
+                      </div>
+                      <div className="broadcast-form-grid">
+                        <label className="form-field form-field--wide">
+                          <span>{t("admin.broadcasts.segmentPicker.label")}</span>
+                          <select
+                            value={matchedBroadcastAudiencePreset?.id ?? ""}
+                            onChange={(event) =>
+                              handleSelectBroadcastAudiencePresetForCampaign(event.target.value)
+                            }
+                            disabled={
+                              !broadcastIsDraft ||
+                              broadcastSubmitting ||
+                              broadcastAudiencePresetItems.length === 0
+                            }
+                          >
+                            <option value="">{t("admin.broadcasts.segmentPicker.placeholder")}</option>
+                            {broadcastAudiencePresetItems.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="status-action-summary status-action-summary--neutral broadcast-campaign-segment">
+                          <strong>
+                            {matchedBroadcastAudiencePreset
+                              ? matchedBroadcastAudiencePreset.name
+                              : t("admin.broadcasts.segmentPicker.custom")}
+                          </strong>
+                          <span>
+                            {matchedBroadcastAudiencePreset
+                              ? matchedBroadcastAudiencePreset.description ||
+                                t("admin.broadcasts.segmentPicker.savedSummary")
+                              : t("admin.broadcasts.segmentPicker.customSummary")}
+                          </span>
+                          <span>{broadcastAudiencePreviewSummary}</span>
+                          <span>
+                            {broadcastChannels.length > 0
+                              ? humanizeBroadcastChannels(broadcastChannels)
+                              : t("admin.broadcasts.overview.stats.channelsEmpty")}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="broadcast-form-section">
+                      <div className="broadcast-form-section__header">
+                        <div>
+                          <span className="eyebrow">Блок 1</span>
+                          <h4>Основа кампании</h4>
+                        </div>
+                        <span className="form-hint">Название для команды и пользовательский заголовок сообщения.</span>
                       </div>
                       <div className="broadcast-form-grid">
                         <label className="form-field">
-                          <span>Название сохраненной аудитории</span>
+                          <span>Внутреннее название</span>
                           <input
-                            value={broadcastAudiencePresetName}
-                            onChange={(event) => setBroadcastAudiencePresetName(event.target.value)}
-                            placeholder="Например: expired_30_90_winback"
-                            disabled={broadcastAudiencePresetSubmitting}
-                          />
-                        </label>
-                        <label className="form-field">
-                          <span>Описание</span>
-                          <input
-                            value={broadcastAudiencePresetDescription}
-                            onChange={(event) => setBroadcastAudiencePresetDescription(event.target.value)}
-                            placeholder="Кого охватывает и для какого сценария"
-                            disabled={broadcastAudiencePresetSubmitting}
-                          />
-                        </label>
-                        <div className="broadcast-audience-preset-toolbar">
-                          <button
-                            className="ghost-button"
-                            type="button"
-                            onClick={handleStartNewBroadcastAudiencePreset}
-                            disabled={broadcastAudiencePresetSubmitting}
-                          >
-                            Новый пресет
-                          </button>
-                          <button
-                            className="action-button"
-                            type="button"
-                            onClick={() => void handleCreateBroadcastAudiencePreset()}
-                            disabled={broadcastAudiencePresetSubmitting}
-                          >
-                            {broadcastAudiencePresetSubmitting && selectedBroadcastAudiencePresetId === null
-                              ? "Сохраняем..."
-                              : "Сохранить как новый"}
-                          </button>
-                          <button
-                            className="ghost-button"
-                            type="button"
-                            onClick={() => void handleUpdateBroadcastAudiencePreset()}
-                            disabled={broadcastAudiencePresetSubmitting || selectedBroadcastAudiencePresetId === null}
-                          >
-                            Обновить выбранный
-                          </button>
-                          <button
-                            className="ghost-button ghost-button--danger"
-                            type="button"
-                            onClick={() => void handleDeleteBroadcastAudiencePreset()}
-                            disabled={broadcastAudiencePresetSubmitting || selectedBroadcastAudiencePresetId === null}
-                          >
-                            Удалить
-                          </button>
-                        </div>
-                      </div>
-                      {broadcastAudiencePresetError ? (
-                        <div className="form-hint form-hint--error">{broadcastAudiencePresetError}</div>
-                      ) : null}
-                      {broadcastAudiencePresetLoading ? (
-                        <div className="activity-empty">Загружаем сохраненные аудитории...</div>
-                      ) : broadcastAudiencePresetItems.length === 0 ? (
-                        <div className="activity-empty">
-                          Сохрани первую аудиторию после настройки фильтров ниже, чтобы потом запускать ее в пару кликов.
-                        </div>
-                      ) : (
-                        <div className="broadcast-audience-preset-list">
-                          {broadcastAudiencePresetItems.map((item) => (
-                            <article
-                              key={item.id}
-                              className={`broadcast-audience-preset-card ${
-                                item.id === selectedBroadcastAudiencePresetId
-                                  ? "broadcast-audience-preset-card--active"
-                                  : ""
-                              }`}
-                            >
-                              <div className="broadcast-audience-preset-card__top">
-                                <div>
-                                  <strong>{item.name}</strong>
-                                  {item.description ? (
-                                    <div className="broadcast-audience-preset-card__description">{item.description}</div>
-                                  ) : null}
-                                </div>
-                                <span className="form-hint">{formatDateMoscow(item.updated_at)}</span>
-                              </div>
-                              <div className="broadcast-audience-preset-card__summary">
-                                {formatBroadcastAudienceSummary(item.audience)}
-                              </div>
-                              <div className="broadcast-audience-preset-actions">
-                                <button
-                                  className="ghost-button"
-                                  type="button"
-                                  onClick={() => handleSelectBroadcastAudiencePreset(item)}
-                                  disabled={broadcastAudiencePresetSubmitting}
-                                >
-                                  {item.id === selectedBroadcastAudiencePresetId ? "Выбран" : "Выбрать"}
-                                </button>
-                                <button
-                                  className="ghost-button"
-                                  type="button"
-                                  onClick={() => handleApplyBroadcastAudiencePreset(item)}
-                                  disabled={
-                                    broadcastAudiencePresetSubmitting ||
-                                    (selectedBroadcast !== null && !broadcastIsDraft)
-                                  }
-                                >
-                                  Применить в черновик
-                                </button>
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="broadcast-form-grid">
-                      <div className="broadcast-channel-grid">
-                        <label className="checkbox-card">
-                          <input
-                            type="checkbox"
-                            checked={broadcastSendInApp}
+                            value={broadcastName}
                             onChange={(event) => {
                               markBroadcastEditorDirty();
-                              setBroadcastSendInApp(event.target.checked);
+                              setBroadcastName(event.target.value);
                             }}
-                            disabled={!broadcastIsDraft || broadcastSubmitting}
-                          />
-                          <span>In-app</span>
-                        </label>
-                        <label className="checkbox-card">
-                          <input
-                            type="checkbox"
-                            checked={broadcastSendTelegram}
-                            onChange={(event) => {
-                              markBroadcastEditorDirty();
-                              setBroadcastSendTelegram(event.target.checked);
-                            }}
-                            disabled={!broadcastIsDraft || broadcastSubmitting}
-                          />
-                          <span>Telegram</span>
-                        </label>
-                      </div>
-                      <label className="form-field">
-                        <span>Сегмент аудитории</span>
-                        <select
-                          value={broadcastAudienceSegment}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastAudienceSegment(event.target.value as BroadcastAudienceSegment);
-                          }}
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        >
-                          {BROADCAST_AUDIENCE_SEGMENTS.map((segment) => (
-                            <option key={segment} value={segment}>
-                              {humanizeBroadcastAudienceSegment(segment)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {broadcastAudienceSegment === "manual_list" ? (
-                        <label className="form-field form-field--wide">
-                          <span>Ручной список account_id / email / telegram_id</span>
-                          <textarea
-                            value={broadcastManualAudienceTargetsInput}
-                            onChange={(event) => {
-                              markBroadcastEditorDirty();
-                              setBroadcastManualAudienceTargetsInput(event.target.value);
-                            }}
-                            placeholder={
-                              "Можно вставлять столбец или CSV-подобный список.\nПоддерживаются account_id, email и telegram_id.\nРазделители: новая строка, запятая, ; или пробел."
-                            }
-                            rows={8}
-                            disabled={!broadcastIsDraft || broadcastSubmitting}
-                          />
-                        </label>
-                      ) : null}
-                      {broadcastAudienceSegment === "inactive_accounts" ||
-                      broadcastAudienceSegment === "inactive_paid_users" ? (
-                        <>
-                          <label className="form-field">
-                            <span>Не заходили дольше, чем дней</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={broadcastLastSeenOlderThanDays}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastLastSeenOlderThanDays(event.target.value);
-                              }}
-                              placeholder="7"
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                          <label className="checkbox-card checkbox-card--inline">
-                            <input
-                              type="checkbox"
-                              checked={broadcastIncludeNeverSeen}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastIncludeNeverSeen(event.target.checked);
-                              }}
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                            <span>Включать аккаунты без единого входа</span>
-                          </label>
-                        </>
-                      ) : null}
-                      {broadcastAudienceSegment === "abandoned_checkout" ? (
-                        <>
-                          <label className="form-field">
-                            <span>Старше, чем минут</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={broadcastPendingPaymentOlderThanMinutes}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastPendingPaymentOlderThanMinutes(event.target.value);
-                              }}
-                              placeholder="30"
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                          <label className="form-field">
-                            <span>Искать за последние дни</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={broadcastPendingPaymentWithinLastDays}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastPendingPaymentWithinLastDays(event.target.value);
-                              }}
-                              placeholder="7"
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                        </>
-                      ) : null}
-                      {broadcastAudienceSegment === "failed_payment" ? (
-                        <label className="form-field">
-                          <span>Окно поиска, дней</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={broadcastFailedPaymentWithinLastDays}
-                            onChange={(event) => {
-                              markBroadcastEditorDirty();
-                              setBroadcastFailedPaymentWithinLastDays(event.target.value);
-                            }}
-                            placeholder="7"
-                            disabled={!broadcastIsDraft || broadcastSubmitting}
-                          />
-                        </label>
-                      ) : null}
-                      {broadcastAudienceSegment === "expired" ? (
-                        <>
-                          <label className="form-field">
-                            <span>От скольких дней после окончания</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={broadcastSubscriptionExpiredFromDays}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastSubscriptionExpiredFromDays(event.target.value);
-                              }}
-                              placeholder="Например: 30"
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                          <label className="form-field">
-                            <span>До скольких дней после окончания</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={broadcastSubscriptionExpiredToDays}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastSubscriptionExpiredToDays(event.target.value);
-                              }}
-                              placeholder="Например: 90"
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                        </>
-                      ) : null}
-                      <label className="form-field">
-                        <span>Cooldown, дней</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={broadcastCooldownDays}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastCooldownDays(event.target.value);
-                          }}
-                          placeholder="Например: 7"
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        />
-                      </label>
-                      <label className="form-field">
-                        <span>Family key для cooldown</span>
-                        <input
-                          value={broadcastCooldownKey}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastCooldownKey(event.target.value);
-                          }}
-                          placeholder="payment_recovery"
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        />
-                      </label>
-                      {broadcastSendTelegram ? (
-                        <>
-                          <label className="form-field">
-                            <span>Quiet hours Telegram: с</span>
-                            <input
-                              type="time"
-                              value={broadcastTelegramQuietHoursStart}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastTelegramQuietHoursStart(event.target.value);
-                              }}
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                          <label className="form-field">
-                            <span>Quiet hours Telegram: до</span>
-                            <input
-                              type="time"
-                              value={broadcastTelegramQuietHoursEnd}
-                              onChange={(event) => {
-                                markBroadcastEditorDirty();
-                                setBroadcastTelegramQuietHoursEnd(event.target.value);
-                              }}
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            />
-                          </label>
-                        </>
-                      ) : null}
-                      <label className="checkbox-card checkbox-card--inline">
-                        <input
-                          type="checkbox"
-                          checked={broadcastAudienceExcludeBlocked}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastAudienceExcludeBlocked(event.target.checked);
-                          }}
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        />
-                        <span>Исключать полностью заблокированных</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="broadcast-form-section">
-                    <div className="broadcast-form-section__header">
-                      <div>
-                        <span className="eyebrow">Блок 3</span>
-                        <h4>Контент и визуал</h4>
-                      </div>
-                      <span className="form-hint">Telegram HTML и медиа для обеих клиентских поверхностей.</span>
-                    </div>
-                    <div className="broadcast-form-grid">
-                      {broadcastContentType === "photo" ? (
-                        <label className="form-field form-field--wide">
-                          <span>Image URL</span>
-                          <input
-                            value={broadcastImageUrl}
-                            onChange={(event) => {
-                              markBroadcastEditorDirty();
-                              setBroadcastImageUrl(event.target.value);
-                            }}
-                            placeholder="https://..."
+                            placeholder="Например: Spring promo 2026"
                             required
                             disabled={!broadcastIsDraft || broadcastSubmitting}
                           />
                         </label>
-                      ) : null}
-                      <label className="form-field form-field--wide">
-                        <span>HTML-текст</span>
-                        <textarea
-                          value={broadcastBodyHtml}
-                          onChange={(event) => {
-                            markBroadcastEditorDirty();
-                            setBroadcastBodyHtml(event.target.value);
-                          }}
-                          placeholder={"<b>Жирный текст</b>, <a href=\"https://...\">ссылка</a>, переносы строк и Telegram HTML"}
-                          rows={10}
-                          required
-                          disabled={!broadcastIsDraft || broadcastSubmitting}
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="broadcast-form-section broadcast-buttons-section">
-                    <div className="broadcast-form-section__header">
-                      <div>
-                        <span className="eyebrow">Блок 4</span>
-                        <h4>CTA-кнопки</h4>
+                        <label className="form-field form-field--wide">
+                          <span>Заголовок</span>
+                          <input
+                            value={broadcastTitle}
+                            onChange={(event) => {
+                              markBroadcastEditorDirty();
+                              setBroadcastTitle(event.target.value);
+                            }}
+                            placeholder="Что увидит пользователь в Telegram и in-app"
+                            required
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>Тип контента</span>
+                          <select
+                            value={broadcastContentType}
+                            onChange={(event) => {
+                              markBroadcastEditorDirty();
+                              setBroadcastContentType(event.target.value as BroadcastContentType);
+                            }}
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
+                          >
+                            <option value="text">Только текст</option>
+                            <option value="photo">Текст + фото</option>
+                          </select>
+                        </label>
                       </div>
-                      <button
-                        className="ghost-button"
-                        type="button"
-                        onClick={handleAddBroadcastButton}
-                        disabled={!broadcastIsDraft || broadcastSubmitting || broadcastButtonDrafts.length >= 3}
-                      >
-                        Добавить кнопку
+                    </div>
+
+                    <div className="broadcast-form-section">
+                      <div className="broadcast-form-section__header">
+                        <div>
+                          <span className="eyebrow">Блок 3</span>
+                          <h4>Контент и визуал</h4>
+                        </div>
+                        <span className="form-hint">Telegram HTML и медиа для обеих клиентских поверхностей.</span>
+                      </div>
+                      <div className="broadcast-form-grid">
+                        {broadcastContentType === "photo" ? (
+                          <label className="form-field form-field--wide">
+                            <span>Image URL</span>
+                            <input
+                              value={broadcastImageUrl}
+                              onChange={(event) => {
+                                markBroadcastEditorDirty();
+                                setBroadcastImageUrl(event.target.value);
+                              }}
+                              placeholder="https://..."
+                              required
+                              disabled={!broadcastIsDraft || broadcastSubmitting}
+                            />
+                          </label>
+                        ) : null}
+                        <label className="form-field form-field--wide">
+                          <span>HTML-текст</span>
+                          <textarea
+                            value={broadcastBodyHtml}
+                            onChange={(event) => {
+                              markBroadcastEditorDirty();
+                              setBroadcastBodyHtml(event.target.value);
+                            }}
+                            placeholder={"<b>Жирный текст</b>, <a href=\"https://...\">ссылка</a>, переносы строк и Telegram HTML"}
+                            rows={10}
+                            required
+                            disabled={!broadcastIsDraft || broadcastSubmitting}
+                          />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="broadcast-form-section broadcast-buttons-section">
+                      <div className="broadcast-form-section__header">
+                        <div>
+                          <span className="eyebrow">Блок 4</span>
+                          <h4>CTA-кнопки</h4>
+                        </div>
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={handleAddBroadcastButton}
+                          disabled={!broadcastIsDraft || broadcastSubmitting || broadcastButtonDrafts.length >= 3}
+                        >
+                          Добавить кнопку
+                        </button>
+                      </div>
+                      {broadcastButtonDrafts.length === 0 ? (
+                        <div className="activity-empty">Кнопки опциональны. Поддерживаются до 3 URL-кнопок.</div>
+                      ) : (
+                        <div className="broadcast-buttons-list">
+                          {broadcastButtonDrafts.map((button, index) => (
+                            <div key={button.id} className="broadcast-button-editor">
+                              <label className="form-field">
+                                <span>Текст #{index + 1}</span>
+                                <input
+                                  value={button.text}
+                                  onChange={(event) =>
+                                    handleBroadcastButtonChange(button.id, "text", event.target.value)
+                                  }
+                                  placeholder="Например: Открыть"
+                                  disabled={!broadcastIsDraft || broadcastSubmitting}
+                                />
+                              </label>
+                              <label className="form-field form-field--wide">
+                                <span>URL</span>
+                                <input
+                                  value={button.url}
+                                  onChange={(event) =>
+                                    handleBroadcastButtonChange(button.id, "url", event.target.value)
+                                  }
+                                  placeholder="https://..."
+                                  disabled={!broadcastIsDraft || broadcastSubmitting}
+                                />
+                              </label>
+                              <button
+                                className="ghost-button"
+                                type="button"
+                                onClick={() => handleRemoveBroadcastButton(button.id)}
+                                disabled={!broadcastIsDraft || broadcastSubmitting}
+                              >
+                                Удалить
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="adjustment-form__footer">
+                      <span className="form-hint">
+                        Черновик сохраняется отдельно. Live estimate считает только текущие каналы и сегмент редактора
+                        без записи в БД.
+                      </span>
+                      <button className="action-button" type="submit" disabled={!broadcastIsDraft || broadcastSubmitting}>
+                        {broadcastSubmitting
+                          ? "Сохраняем..."
+                          : broadcastEditorMode === "edit"
+                            ? "Сохранить черновик"
+                            : "Создать черновик"}
                       </button>
                     </div>
-                    {broadcastButtonDrafts.length === 0 ? (
-                      <div className="activity-empty">Кнопки опциональны. Поддерживаются до 3 URL-кнопок.</div>
-                    ) : (
-                      <div className="broadcast-buttons-list">
-                        {broadcastButtonDrafts.map((button, index) => (
-                          <div key={button.id} className="broadcast-button-editor">
-                            <label className="form-field">
-                              <span>Текст #{index + 1}</span>
-                              <input
-                                value={button.text}
-                                onChange={(event) =>
-                                  handleBroadcastButtonChange(button.id, "text", event.target.value)
-                                }
-                                placeholder="Например: Открыть"
-                                disabled={!broadcastIsDraft || broadcastSubmitting}
-                              />
-                            </label>
-                            <label className="form-field form-field--wide">
-                              <span>URL</span>
-                              <input
-                                value={button.url}
-                                onChange={(event) =>
-                                  handleBroadcastButtonChange(button.id, "url", event.target.value)
-                                }
-                                placeholder="https://..."
-                                disabled={!broadcastIsDraft || broadcastSubmitting}
-                              />
-                            </label>
-                            <button
-                              className="ghost-button"
-                              type="button"
-                              onClick={() => handleRemoveBroadcastButton(button.id)}
-                              disabled={!broadcastIsDraft || broadcastSubmitting}
-                            >
-                              Удалить
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="adjustment-form__footer">
-                    <span className="form-hint">
-                      Черновик сохраняется отдельно. Live estimate считает только текущие каналы и сегмент редактора
-                      без записи в БД.
-                    </span>
-                    <button className="action-button" type="submit" disabled={!broadcastIsDraft || broadcastSubmitting}>
-                      {broadcastSubmitting
-                        ? "Сохраняем..."
-                        : broadcastEditorMode === "edit"
-                          ? "Сохранить черновик"
-                          : "Создать черновик"}
-                    </button>
-                  </div>
-                </form>
-              </section>
-
-              <aside className="broadcast-preview-column">
-                <section className="detail-section detail-section--estimate">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Оценка аудитории</span>
-                      <h3>Текущая аудитория</h3>
-                    </div>
-                  </div>
-                  <section className="detail-facts-grid detail-facts-grid--compact">
-                    <DetailFact
-                      label="Всего"
-                      value={
-                        broadcastEstimateSnapshot ? String(broadcastEstimateSnapshot.estimated_total_accounts) : "—"
-                      }
-                    />
-                    <DetailFact
-                      label="In-app"
-                      value={
-                        broadcastEstimateSnapshot
-                          ? String(broadcastEstimateSnapshot.estimated_in_app_recipients)
-                          : "—"
-                      }
-                    />
-                    <DetailFact
-                      label="Telegram"
-                      value={
-                        broadcastEstimateSnapshot
-                          ? String(broadcastEstimateSnapshot.estimated_telegram_recipients)
-                          : "—"
-                      }
-                    />
-                    <DetailFact
-                      label="Статус"
-                      value={broadcastEstimateLoading ? "Пересчет..." : broadcastEstimateError ? "Ошибка" : "Актуально"}
-                    />
-                  </section>
-                  <div className="section-footer">
-                    <span className="form-hint">
-                      {broadcastEstimateError ||
-                        "Estimate считает текущие сегмент и каналы редактора без сохранения кампании."}
-                    </span>
-                  </div>
+                  </form>
                 </section>
+              ) : null}
 
-                <section className="detail-section detail-section--estimate">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Audience preview</span>
-                      <h3>Кто попадет в выборку</h3>
-                    </div>
-                  </div>
-                  {broadcastAudiencePreviewLoading ? (
-                    <div className="activity-empty">Собираем sample аудитории...</div>
-                  ) : broadcastAudiencePreviewError ? (
-                    <div className="activity-empty">{broadcastAudiencePreviewError}</div>
-                  ) : !broadcastAudiencePreview ? (
-                    <div className="activity-empty">По текущему сегменту sample аудитории пуст.</div>
-                  ) : (
-                    <>
-                      {broadcastAudiencePreview.manual_list_diagnostics ? (
-                        <section className="broadcast-manual-diagnostics">
-                          <div className="detail-facts-grid detail-facts-grid--compact">
-                            <DetailFact
-                              label="Запрошено"
-                              value={String(
-                                broadcastAudiencePreview.manual_list_diagnostics.requested_account_ids +
-                                  broadcastAudiencePreview.manual_list_diagnostics.requested_emails +
-                                  broadcastAudiencePreview.manual_list_diagnostics.requested_telegram_ids,
-                              )}
-                            />
-                            <DetailFact
-                              label="Найдено"
-                              value={String(broadcastAudiencePreview.manual_list_diagnostics.matched_accounts)}
-                            />
-                            <DetailFact
-                              label="В финальной аудитории"
-                              value={String(broadcastAudiencePreview.manual_list_diagnostics.final_accounts)}
-                            />
-                            <DetailFact
-                              label="Не найдено"
-                              value={String(
-                                broadcastAudiencePreview.manual_list_diagnostics.unresolved_account_ids_count +
-                                  broadcastAudiencePreview.manual_list_diagnostics.unresolved_emails_count +
-                                  broadcastAudiencePreview.manual_list_diagnostics.unresolved_telegram_ids_count,
-                              )}
-                            />
-                            <DetailFact
-                              label="Blocked"
-                              value={String(broadcastAudiencePreview.manual_list_diagnostics.excluded_blocked_count)}
-                            />
-                            <DetailFact
-                              label="Cooldown"
-                              value={String(broadcastAudiencePreview.manual_list_diagnostics.excluded_cooldown_count)}
-                            />
-                          </div>
-                          {broadcastAudiencePreview.manual_list_diagnostics.unresolved_account_ids_count > 0 ||
-                          broadcastAudiencePreview.manual_list_diagnostics.unresolved_emails_count > 0 ||
-                          broadcastAudiencePreview.manual_list_diagnostics.unresolved_telegram_ids_count > 0 ? (
-                            <div className="broadcast-manual-diagnostics__block">
-                              <strong>Не резолвится в аккаунты</strong>
-                              <div className="broadcast-manual-diagnostics__items">
-                                {broadcastAudiencePreview.manual_list_diagnostics.unresolved_account_ids_sample.map((value) => (
-                                  <span key={`missing-account-${value}`} className="status-pill status-pill--paused">
-                                    account_id {value}
-                                  </span>
-                                ))}
-                                {broadcastAudiencePreview.manual_list_diagnostics.unresolved_emails_sample.map((value) => (
-                                  <span key={`missing-email-${value}`} className="status-pill status-pill--paused">
-                                    email {value}
-                                  </span>
-                                ))}
-                                {broadcastAudiencePreview.manual_list_diagnostics.unresolved_telegram_ids_sample.map((value) => (
-                                  <span key={`missing-telegram-${value}`} className="status-pill status-pill--paused">
-                                    telegram_id {value}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                          {broadcastAudiencePreview.manual_list_diagnostics.excluded_accounts_count > 0 ? (
-                            <div className="broadcast-manual-diagnostics__block">
-                              <strong>Найдены, но исключены из финальной аудитории</strong>
-                              <div className="broadcast-audience-preview-list">
-                                {broadcastAudiencePreview.manual_list_diagnostics.excluded_accounts_sample.map((item) => (
-                                  <article key={`excluded-${item.account_id}`} className="broadcast-audience-preview-item">
-                                    <div className="broadcast-audience-preview-item__top">
-                                      <div>
-                                        <strong>
-                                          {formatAccountIdentity({
-                                            account_id: item.account_id,
-                                            display_name: item.display_name,
-                                            username: item.username,
-                                            email: item.email,
-                                          })}
-                                        </strong>
-                                        <div className="broadcast-audience-preview-item__meta">
-                                          {(item.email || item.account_id) ?? item.account_id}
-                                        </div>
-                                      </div>
-                                      <span className="status-pill status-pill--paused">
-                                        {item.account_status === "blocked" ? "blocked" : "excluded"}
-                                      </span>
-                                    </div>
-                                    <div className="broadcast-audience-preview-item__notes">
-                                      {item.reasons.map((value) => humanizeManualListExclusionReason(value)).join(" · ")}
-                                    </div>
-                                    <div className="broadcast-audience-preview-item__reasons">
-                                      {item.matched_by.map((value) => humanizeManualListMatchToken(value)).join(" · ")}
-                                    </div>
-                                  </article>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </section>
-                      ) : null}
-                      {broadcastAudiencePreview.items.length === 0 ? (
-                        <div className="activity-empty">По текущему сегменту sample аудитории пуст.</div>
-                      ) : (
-                        <>
-                          <div className="broadcast-audience-preview-list">
-                            {broadcastAudiencePreview.items.map((item) => (
-                              <article key={item.account_id} className="broadcast-audience-preview-item">
-                                <div className="broadcast-audience-preview-item__top">
-                                  <div>
-                                    <strong>
-                                      {formatAccountIdentity({
-                                        account_id: item.account_id,
-                                        display_name: item.display_name,
-                                        username: item.username,
-                                        email: item.email,
-                                      })}
-                                    </strong>
-                                    <div className="broadcast-audience-preview-item__meta">
-                                      {formatBroadcastAudiencePreviewMeta(item) || item.email || item.account_id}
-                                    </div>
-                                  </div>
-                                  <span
-                                    className={`status-pill ${
-                                      item.account_status === "active" ? "status-pill--active" : "status-pill--blocked"
-                                    }`}
-                                  >
-                                    {humanizeAccountStatus(item.account_status)}
-                                  </span>
-                                </div>
-                                <div className="broadcast-audience-preview-item__channels">
-                                  {item.delivery_channels.length > 0 ? (
-                                    item.delivery_channels.map((channel) => (
-                                      <span key={`${item.account_id}-${channel}`} className="status-pill status-pill--active">
-                                        {humanizeBroadcastChannel(channel)}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="status-pill status-pill--warning">Нет доставки по выбранным каналам</span>
-                                  )}
-                                </div>
-                                <div className="broadcast-audience-preview-item__reasons">
-                                  {item.match_reasons.join(" ")}
-                                </div>
-                                {item.delivery_notes.length > 0 ? (
-                                  <div className="broadcast-audience-preview-item__notes">
-                                    {item.delivery_notes.join(" ")}
-                                  </div>
-                                ) : null}
-                              </article>
-                            ))}
-                          </div>
-                          <div className="section-footer">
-                            <span className="form-hint">
-                              {broadcastAudiencePreview.has_more
-                                ? `Показаны первые ${broadcastAudiencePreview.preview_count} из ${broadcastAudiencePreview.total_accounts} аккаунтов по стабильному sample.`
-                                : `Показаны ${broadcastAudiencePreview.preview_count} аккаунтов из текущей выборки.`}
-                            </span>
-                          </div>
-                        </>
-                      )}
-                    </>
-                  )}
-                </section>
-
-                <section className="detail-section detail-section--estimate">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Срез runtime</span>
-                      <h3>Последний боевой запуск</h3>
-                    </div>
-                  </div>
-                  {selectedBroadcast?.latest_run ? (
-                    <>
-                      <section className="detail-facts-grid detail-facts-grid--compact">
-                        <DetailFact label="Запуск" value={`#${selectedBroadcast.latest_run.id}`} />
-                        <DetailFact
-                          label="Тип"
-                          value={humanizeBroadcastRunType(selectedBroadcast.latest_run.run_type)}
-                        />
-                        <DetailFact
-                          label="Статус"
-                          value={humanizeBroadcastRunStatus(selectedBroadcast.latest_run.status)}
-                        />
-                        <DetailFact
-                          label="Доставлено"
-                          value={`${selectedBroadcast.latest_run.delivered_deliveries}/${selectedBroadcast.latest_run.total_deliveries}`}
-                        />
-                      </section>
-                      <div className="section-footer">
-                        <span className="form-hint">
-                          {selectedBroadcast.latest_run.last_error
-                            ? selectedBroadcast.latest_run.last_error
-                            : `Старт: ${formatDateMoscow(selectedBroadcast.latest_run.started_at)}`}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="activity-empty">Кампания еще не запускалась в боевой контур.</div>
-                  )}
-                </section>
-
+              <div className="broadcast-preview-grid">
                 <article className="detail-section">
                   <div className="detail-section__header">
                     <div>
@@ -8747,11 +9700,12 @@ export default function App() {
                     </span>
                   </div>
                 </article>
-              </aside>
+              </div>
             </section>
 
-            <section className="detail-sections-grid detail-sections-grid--runtime">
-              <section className="detail-section detail-section--action">
+            {showBroadcastRuntime ? (
+              <section className="detail-sections-grid detail-sections-grid--runtime">
+                <section className="detail-section detail-section--action">
                 <div className="detail-section__header detail-section__header--stacked">
                   <div>
                     <span className="eyebrow">Runtime</span>
@@ -8868,314 +9822,10 @@ export default function App() {
                     </div>
                   </div>
                 </form>
+                </section>
               </section>
+            ) : null}
 
-              <section className="detail-section detail-section--action">
-                <div className="detail-section__header detail-section__header--stacked">
-                  <div>
-                    <span className="eyebrow">Тестовая отправка</span>
-                    <h3>Контрольная отправка</h3>
-                  </div>
-                  <span className="form-hint">
-                    Контрольная отправка работает только по сохраненному черновику. Несохраненные правки сначала
-                    фиксируются, затем отправляются на тестовых адресатов.
-                  </span>
-                </div>
-
-                <form className="adjustment-form adjustment-form--runtime" onSubmit={handleBroadcastTestSend}>
-                  <label className="form-field form-field--wide">
-                    <span>Email получателей</span>
-                    <textarea
-                      value={broadcastTestEmailsInput}
-                      onChange={(event) => setBroadcastTestEmailsInput(event.target.value)}
-                      placeholder={"user@example.com\npartner@example.com"}
-                      rows={4}
-                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                    />
-                  </label>
-                  <label className="form-field form-field--wide">
-                    <span>Telegram ID получателей</span>
-                    <textarea
-                      value={broadcastTestTelegramIdsInput}
-                      onChange={(event) => setBroadcastTestTelegramIdsInput(event.target.value)}
-                      placeholder={"777000111\n999888777"}
-                      rows={4}
-                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                    />
-                  </label>
-                  <label className="form-field form-field--wide">
-                    <span>Комментарий</span>
-                    <textarea
-                      value={broadcastTestComment}
-                      onChange={(event) => setBroadcastTestComment(event.target.value)}
-                      placeholder="Что именно проверяем и кто подтверждает результат"
-                      rows={3}
-                      required
-                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                    />
-                  </label>
-                  <div className="adjustment-form__footer">
-                    <span className="form-hint">
-                      `email` ищет локальный аккаунт. `telegram_id` может быть как локальным, так и внешним Telegram-only адресатом.
-                    </span>
-                    <button
-                      className="action-button"
-                      type="submit"
-                      disabled={selectedBroadcastId === null || !broadcastIsDraft || broadcastTestSubmitting}
-                    >
-                      {broadcastTestSubmitting ? "Отправляем..." : "Запустить test send"}
-                    </button>
-                  </div>
-                </form>
-
-                {broadcastTestResult ? (
-                  <>
-                    <section className="detail-facts-grid detail-facts-grid--compact">
-                      <DetailFact label="Получатели" value={String(broadcastTestResult.total_targets)} />
-                      <DetailFact label="Отправлено" value={String(broadcastTestResult.sent_targets)} />
-                      <DetailFact label="Частично" value={String(broadcastTestResult.partial_targets)} />
-                      <DetailFact label="Ошибки" value={String(broadcastTestResult.failed_targets)} />
-                    </section>
-                    <section className="detail-facts-grid detail-facts-grid--compact">
-                      <DetailFact label="Пропущено" value={String(broadcastTestResult.skipped_targets)} />
-                      <DetailFact label="In-app" value={String(broadcastTestResult.in_app_notifications_created)} />
-                      <DetailFact label="Telegram" value={String(broadcastTestResult.telegram_targets_sent)} />
-                      <DetailFact label="Audit ID" value={String(broadcastTestResult.audit_log_id)} />
-                    </section>
-
-                    <div className="activity-list">
-                      {broadcastTestResult.items.map((item) => (
-                        <article key={`${item.source}:${item.target}`} className="activity-item">
-                          <div>
-                            <strong>{item.target}</strong>
-                            <span>
-                              {item.source === "email" ? "email" : "telegram_id"} · {item.resolution}
-                            </span>
-                            <span>
-                              {item.channels_attempted.length > 0
-                                ? humanizeBroadcastChannels(item.channels_attempted)
-                                : "каналы не применялись"}
-                            </span>
-                            {item.detail ? <span>{item.detail}</span> : null}
-                          </div>
-                          <div className="activity-item__meta">
-                            <span
-                              className={`status-pill status-pill--${
-                                item.status === "sent"
-                                  ? "paid"
-                                  : item.status === "partial"
-                                    ? "in_progress"
-                                    : item.status === "failed"
-                                      ? "rejected"
-                                      : "new"
-                              }`}
-                            >
-                              {humanizeBroadcastTestSendStatus(item.status)}
-                            </span>
-                            {item.in_app_notification_id ? <span>In-app #{item.in_app_notification_id}</span> : null}
-                            {item.telegram_message_ids.length > 0 ? (
-                              <span>Telegram: {item.telegram_message_ids.join(", ")}</span>
-                            ) : null}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-              </section>
-            </section>
-
-            <section className="detail-section detail-section--action">
-              <div className="detail-section__header detail-section__header--stacked">
-                <div>
-                  <span className="eyebrow">Журнал запусков</span>
-                  <h3>История боевых запусков по всем кампаниям</h3>
-                </div>
-                <div className="panel-toolbar__actions">
-                  <span className="form-hint">
-                    Журнал обновляется вручную. Test send живет отдельно и не смешивается с боевыми run.
-                  </span>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() => void handleRefreshBroadcastWorkspace()}
-                    disabled={broadcastWorkspaceRefreshing}
-                  >
-                    {broadcastWorkspaceRefreshing ? "Обновляем..." : "Обновить журнал"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="detail-facts-grid detail-facts-grid--compact">
-                <DetailFact label="Всего run" value={String(broadcastRunTotal)} />
-                <DetailFact
-                  label="В работе"
-                  value={String(broadcastRunItems.filter((item) => item.status === "running").length)}
-                />
-                <DetailFact
-                  label="На паузе"
-                  value={String(broadcastRunItems.filter((item) => item.status === "paused").length)}
-                />
-                <DetailFact
-                  label="Выбран"
-                  value={selectedBroadcastRun ? `#${selectedBroadcastRun.id}` : "—"}
-                />
-              </div>
-
-              <div className="detail-sections-grid">
-                <article className="detail-section">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Фильтры</span>
-                      <h3>Список запусков</h3>
-                    </div>
-                  </div>
-                  <div className="broadcast-channel-grid">
-                    <label className="form-field">
-                      <span>Статус</span>
-                      <select
-                        value={broadcastRunStatusFilter}
-                        onChange={(event) =>
-                          setBroadcastRunStatusFilter(event.target.value as BroadcastRunStatus | "all")
-                        }
-                      >
-                        <option value="all">Все</option>
-                        <option value="running">В работе</option>
-                        <option value="paused">Пауза</option>
-                        <option value="completed">Завершен</option>
-                        <option value="failed">Ошибка</option>
-                        <option value="cancelled">Отменен</option>
-                      </select>
-                    </label>
-                    <label className="form-field">
-                      <span>Тип запуска</span>
-                      <select
-                        value={broadcastRunTypeFilter}
-                        onChange={(event) =>
-                          setBroadcastRunTypeFilter(event.target.value as BroadcastRunType | "all")
-                        }
-                      >
-                        <option value="all">Все</option>
-                        <option value="send_now">Отправить сейчас</option>
-                        <option value="scheduled">По расписанию</option>
-                      </select>
-                    </label>
-                    <label className="form-field">
-                      <span>Канал</span>
-                      <select
-                        value={broadcastRunChannelFilter}
-                        onChange={(event) =>
-                          setBroadcastRunChannelFilter(event.target.value as BroadcastChannel | "all")
-                        }
-                      >
-                        <option value="all">Все</option>
-                        <option value="in_app">In-app</option>
-                        <option value="telegram">Telegram</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="activity-list">
-                    {broadcastRunsLoading ? (
-                      <div className="activity-empty">Загружаем журнал запусков...</div>
-                    ) : broadcastRunItems.length === 0 ? (
-                      <div className="activity-empty">Под текущие фильтры run-ов пока нет.</div>
-                    ) : (
-                      broadcastRunItems.map((run) => (
-                        <article
-                          key={run.id}
-                          className={
-                            selectedBroadcastRunId === run.id
-                              ? "activity-item activity-item--selectable activity-item--active"
-                              : "activity-item activity-item--selectable"
-                          }
-                          onClick={() => setSelectedBroadcastRunId(run.id)}
-                        >
-                          <div>
-                            <strong>Run #{run.id} · broadcast #{run.broadcast_id}</strong>
-                            <span>
-                              {humanizeBroadcastRunType(run.run_type)} · {formatDateMoscow(run.started_at)}
-                            </span>
-                            <span>
-                              delivered {run.delivered_deliveries}/{run.total_deliveries} · pending {run.pending_deliveries}
-                            </span>
-                            {run.last_error ? <span>{run.last_error}</span> : null}
-                          </div>
-                          <div className="activity-item__meta">
-                            <span className={`status-pill status-pill--${run.status}`}>
-                              {humanizeBroadcastRunStatus(run.status)}
-                            </span>
-                          </div>
-                        </article>
-                      ))
-                    )}
-                  </div>
-                </article>
-
-                <article className="detail-section">
-                  <div className="detail-section__header detail-section__header--stacked">
-                    <div>
-                      <span className="eyebrow">Run detail</span>
-                      <h3>Delivery drill-down</h3>
-                    </div>
-                  </div>
-                  {broadcastRunDetailLoading ? (
-                    <div className="activity-empty">Загружаем delivery detail...</div>
-                  ) : !selectedBroadcastRun ? (
-                    <div className="activity-empty">Выбери run слева, чтобы посмотреть детали доставки.</div>
-                  ) : (
-                    <>
-                      <section className="detail-facts-grid detail-facts-grid--compact">
-                        <DetailFact label="Total" value={String(selectedBroadcastRun.total_deliveries)} />
-                        <DetailFact label="Delivered" value={String(selectedBroadcastRun.delivered_deliveries)} />
-                        <DetailFact label="Pending" value={String(selectedBroadcastRun.pending_deliveries)} />
-                        <DetailFact label="Failed" value={String(selectedBroadcastRun.failed_deliveries)} />
-                      </section>
-                      <section className="detail-facts-grid detail-facts-grid--compact">
-                        <DetailFact label="Skipped" value={String(selectedBroadcastRun.skipped_deliveries)} />
-                        <DetailFact label="In-app" value={String(selectedBroadcastRun.in_app_delivered)} />
-                        <DetailFact label="Telegram" value={String(selectedBroadcastRun.telegram_delivered)} />
-                        <DetailFact label="Started" value={formatDateMoscow(selectedBroadcastRun.started_at)} />
-                      </section>
-
-                      <div className="activity-list">
-                        {broadcastRunDeliveries.length === 0 ? (
-                          <div className="activity-empty">У выбранного run пока нет delivery-строк.</div>
-                        ) : (
-                          broadcastRunDeliveries.map((delivery) => (
-                            <article key={delivery.id} className="activity-item">
-                              <div>
-                                <strong>
-                                  {delivery.account_display_name ||
-                                    delivery.account_username ||
-                                    delivery.account_email ||
-                                    delivery.account_id}
-                                </strong>
-                                <span>
-                                  {humanizeBroadcastChannel(delivery.channel)} · {humanizeBroadcastDeliveryStatus(delivery.status)}
-                                </span>
-                                <span>
-                                  attempts {delivery.attempts_count}
-                                  {delivery.provider_message_id ? ` · provider ${delivery.provider_message_id}` : ""}
-                                  {delivery.notification_id ? ` · notification #${delivery.notification_id}` : ""}
-                                </span>
-                                {delivery.error_message ? <span>{delivery.error_message}</span> : null}
-                              </div>
-                              <div className="activity-item__meta">
-                                <span className={`status-pill status-pill--${delivery.status}`}>
-                                  {humanizeBroadcastDeliveryStatus(delivery.status)}
-                                </span>
-                                <span>{formatDateMoscow(delivery.updated_at)}</span>
-                              </div>
-                            </article>
-                          ))
-                        )}
-                      </div>
-                    </>
-                  )}
-                </article>
-              </div>
-            </section>
           </div>
         </section>
       ) : (

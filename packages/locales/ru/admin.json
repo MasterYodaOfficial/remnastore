@@ -21,6 +21,7 @@
       "accounts": "Пользователи",
       "events": "События",
       "broadcasts": "Рассылки",
+      "plans": "Тарифы",
       "promos": "Промокоды",
       "withdrawals": "Выводы"
     },
@@ -145,6 +146,12 @@
         "loadMore": "Загрузить ещё",
         "loadingMore": "Загружаем ещё..."
       },
+      "export": {
+        "action": "Выгрузить в Excel / LibreOffice",
+        "loading": "Готовим файл...",
+        "success": "Файл с пользователями выгружен.",
+        "failed": "Не удалось выгрузить список пользователей."
+      },
       "table": {
         "resetFilters": "Сбросить фильтры",
         "filterHint": "Фильтры в шапке ищут по части текста или цифр и применяются автоматически.",
@@ -236,13 +243,36 @@
         "name": "Имя",
         "locale": "Язык",
         "referralCode": "Реферальный код",
-        "referrals": "Приглашено"
+        "referrals": "Приглашено",
+        "lastSeen": "Последний визит"
+      },
+      "subscription": {
+        "eyebrow": "Подписка",
+        "status": "Статус",
+        "expires": "Истекает",
+        "trial": "Пробный период",
+        "trialUsed": "Пробный период использован",
+        "sync": "Последняя синхронизация",
+        "externalId": "ID во внешнем сервисе",
+        "openLink": "Открыть ссылку подписки",
+        "yes": "Да",
+        "no": "Нет",
+        "none": "Нет подписки"
+      },
+      "metrics": {
+        "ledgerEntries": "Операции по балансу",
+        "payments": "Платежи",
+        "pendingPayments": "Платежи в ожидании",
+        "withdrawals": "Выводы"
       },
       "referrals": {
         "noReward": "Награды нет",
         "rewardedAt": "Начислено {date}",
         "waitingFirstPayment": "Ждёт первую успешную оплату",
         "purchaseRate": "Покупка {amount} · ставка {rate}"
+      },
+      "referralChain": {
+        "eyebrow": "Реферальные связи"
       },
       "authIdentities": {
         "eyebrow": "Способы входа",
@@ -271,6 +301,113 @@
         "submitBlock": "Заблокировать пользователя"
       }
     },
+    "plans": {
+      "overview": {
+        "eyebrow": "Тарифы",
+        "title": "Каталог тарифов",
+        "description": "Здесь создаются и обновляются тарифы, которые доступны в оплатах, ручной выдаче доступа и промокампаниях.",
+        "newPlan": "Новый тариф",
+        "summary": {
+          "total": "Всего тарифов",
+          "popular": "Основные тарифы",
+          "starsEnabled": "Есть оплата в Stars",
+          "longestDuration": "Самый долгий срок",
+          "longestDurationEmpty": "Пока нет"
+        }
+      },
+      "table": {
+        "eyebrow": "Список тарифов",
+        "title": "Все тарифы в таблице",
+        "description": "Выберите строку, чтобы открыть тариф и изменить его параметры ниже.",
+        "selectedHint": "Открыт тариф: {name}",
+        "loading": "Загружаем тарифы...",
+        "empty": "Тарифы пока не настроены. Создайте первый тариф.",
+        "popular": "Основной",
+        "regular": "Обычный",
+        "starsEmpty": "Не задана",
+        "deviceLimitEmpty": "По умолчанию",
+        "deviceLimitValue": "{count} устр.",
+        "durationValue": "{days} дн.",
+        "featuresValue": "{count} пунктов",
+        "moreFeatures": "+ ещё {count}",
+        "columns": {
+          "code": "Код",
+          "plan": "Тариф",
+          "duration": "Срок",
+          "priceRub": "Цена, RUB",
+          "priceStars": "Цена, Stars",
+          "devices": "Устройств",
+          "features": "Преимущества",
+          "status": "Статус"
+        }
+      },
+      "form": {
+        "createEyebrow": "Новый тариф",
+        "editEyebrow": "Редактирование тарифа",
+        "createTitle": "Создать новый тариф",
+        "editTitle": "Изменить выбранный тариф",
+        "createDescription": "Заполните параметры тарифа. После сохранения он появится в выдаче доступа, промокампаниях и оплатах.",
+        "editDescription": "Меняйте стоимость, срок и состав тарифа в одной форме. Код тарифа остаётся фиксированным.",
+        "basicsEyebrow": "Основа тарифа",
+        "basicsTitle": "Название и срок доступа",
+        "basicsHint": "Эти поля помогают сотрудникам быстро понять, что именно получает пользователь.",
+        "pricingEyebrow": "Стоимость и лимиты",
+        "pricingTitle": "Цена и ограничения",
+        "pricingHint": "Можно задать цену в рублях, цену в Telegram Stars и отдельный лимит устройств.",
+        "featuresEyebrow": "Состав тарифа",
+        "featuresTitle": "Что входит в тариф",
+        "featuresHint": "Пишите каждое преимущество с новой строки, чтобы список было легко поддерживать.",
+        "saveHint": "Изменения сохраняются сразу и становятся доступны в связанных сценариях админки.",
+        "fields": {
+          "code": "Код тарифа",
+          "codePlaceholder": "Например: plan_3m",
+          "name": "Название тарифа",
+          "namePlaceholder": "Например: 3 месяца",
+          "duration": "Срок, дней",
+          "durationPlaceholder": "Например: 90",
+          "priceRub": "Цена в рублях",
+          "priceRubPlaceholder": "Например: 990",
+          "priceStars": "Цена в Telegram Stars",
+          "priceStarsPlaceholder": "Оставьте пустым, если оплата в Stars не нужна",
+          "deviceLimit": "Лимит устройств",
+          "deviceLimitPlaceholder": "Пусто = используется лимит по умолчанию",
+          "popular": "Показывать как основной тариф",
+          "features": "Преимущества тарифа",
+          "featuresPlaceholder": "Например:\nВсе серверы\nПриоритетная поддержка\nПодключение нескольких устройств"
+        },
+        "preview": {
+          "duration": "Срок доступа: {days} дн.",
+          "rub": "Оплата в рублях: {amount}",
+          "stars": "Оплата в Stars: {amount} XTR",
+          "starsEmpty": "Оплата в Stars не настроена",
+          "devices": "Лимит устройств: {value}"
+        },
+        "buttons": {
+          "create": "Создать тариф",
+          "creating": "Создаём...",
+          "save": "Сохранить изменения",
+          "saving": "Сохраняем...",
+          "delete": "Удалить тариф",
+          "deleting": "Удаляем..."
+        },
+        "validation": {
+          "codeRequired": "Укажите код тарифа.",
+          "nameRequired": "Укажите название тарифа.",
+          "priceRubInvalid": "Цена в рублях должна быть целым числом больше нуля.",
+          "priceStarsInvalid": "Цена в Telegram Stars должна быть целым числом больше нуля.",
+          "durationInvalid": "Срок тарифа должен быть целым числом больше нуля.",
+          "deviceLimitInvalid": "Лимит устройств должен быть целым числом больше нуля или пустым.",
+          "featuresRequired": "Добавьте хотя бы одно преимущество тарифа."
+        },
+        "notices": {
+          "created": "Тариф «{name}» создан.",
+          "updated": "Тариф «{name}» обновлён.",
+          "deleted": "Тариф «{name}» удалён.",
+          "failed": "Не удалось сохранить тариф."
+        },
+        "deleteConfirm": "Удалить тариф «{name}»?"
+      }
+    },
     "helpers": {
       "integerMin": "{fieldLabel} должно быть целым числом не меньше {minimum}",
       "manualAudienceTokenInvalid": "Не удалось распознать идентификатор из списка: {token}. Используйте account_id, email или telegram_id.",
@@ -294,6 +431,10 @@
       "promoBatchConflict": "Не удалось выпустить пакет промокодов из-за конфликта значений. Попробуйте ещё раз.",
       "promoImportConflict": "Один или несколько импортируемых промокодов уже существуют.",
       "promoInvalidAccountId": "Некорректный идентификатор аккаунта.",
+      "planValidationFailed": "Проверьте параметры тарифа и попробуйте снова.",
+      "planConflict": "Тариф с таким кодом уже существует или не может быть сохранён.",
+      "planNotFound": "Тариф не найден.",
+      "planInUse": "Тариф уже используется в оплатах, ручной выдаче или промокампаниях.",
       "broadcastNotFound": "Рассылка не найдена.",
       "broadcastRunNotFound": "Запуск рассылки не найден.",
       "broadcastAudiencePresetNotFound": "Сохранённая аудитория рассылки не найдена.",
@@ -437,9 +578,9 @@
         "paidBeforeNotActiveNow": "Платили раньше, но сейчас не активны"
       },
       "summary": {
-        "manualAccountIds": "account_id: {count}",
-        "manualEmails": "email: {count}",
-        "manualTelegramIds": "telegram_id: {count}",
+        "manualAccountIds": "ID аккаунтов: {count}",
+        "manualEmails": "Email: {count}",
+        "manualTelegramIds": "Telegram ID: {count}",
         "inactiveOlderThanDays": "не заходили {days}+ дн.",
         "includeNeverSeen": "включая тех, кто ещё не заходил",
         "pendingFromMinutes": "задержка от {minutes} мин",
@@ -449,7 +590,7 @@
         "expiredFromDays": "от {days} дн. после окончания",
         "expiredToDays": "до {days} дн. после окончания",
         "cooldownDays": "пауза {days} дн.",
-        "cooldownFamily": "семейство {key}",
+        "cooldownFamily": "группа {key}",
         "quietHours": "тихие часы Telegram {start}-{end}"
       },
       "preview": {
@@ -495,6 +636,128 @@
         "delivered": "Доставлено",
         "failed": "Ошибка",
         "skipped": "Пропущено"
+      },
+      "overview": {
+        "eyebrow": "Сводка по рассылкам",
+        "title": "Кампании и аудитория",
+        "description": "Здесь видно текущий охват, активность кампаний и выбранную рассылку для работы.",
+        "newDraft": "Новый черновик",
+        "generalEyebrow": "Общая картина",
+        "generalTitle": "Все кампании",
+        "generalDescription": "Главные показатели по всем рассылкам и их запускам.",
+        "selectionEyebrow": "Текущая кампания",
+        "selectionDescription": "Эта зона обновляется при выборе кампании и показывает текущий охват редактора.",
+        "selectionDraftTitle": "Новый черновик",
+        "selectionHint": "Оценка считает текущий сегмент и каналы редактора без сохранения кампании.",
+        "stats": {
+          "campaignsTotal": "Всего кампаний",
+          "drafts": "Черновики",
+          "active": "В работе",
+          "runsTotal": "Запусков",
+          "status": "Статус",
+          "channels": "Каналы",
+          "channelsEmpty": "Не выбраны",
+          "audience": "Аудитория",
+          "audienceTotal": "Охват сейчас",
+          "inApp": "В приложении",
+          "telegram": "В Telegram",
+          "selected": "Выбрана",
+          "selectedNone": "Новый черновик",
+          "estimateStatus": "Состояние оценки",
+          "estimateReady": "Актуально",
+          "estimateRefreshing": "Пересчитываем",
+          "estimateError": "Нужна проверка",
+          "updated": "Обновлено",
+          "updatedEmpty": "Пока не сохранено"
+        }
+      },
+      "campaignTable": {
+        "eyebrow": "Список кампаний",
+        "title": "Все кампании",
+        "description": "Строка открывает выбранную кампанию в редакторе ниже.",
+        "loading": "Загружаем кампании...",
+        "empty": "Кампаний пока нет. Создайте первый черновик.",
+        "columns": {
+          "campaign": "Кампания",
+          "status": "Статус",
+          "channels": "Каналы",
+          "audience": "Аудитория",
+          "recipients": "Охват",
+          "lastRun": "Последний запуск",
+          "updated": "Обновлено"
+        },
+        "untitled": "Без заголовка",
+        "estimatedRecipients": "{count} получателей",
+        "runNever": "Запусков ещё не было",
+        "draftOnly": "Только черновик",
+        "delivered": "Доставлено {delivered} из {total}"
+      },
+      "audienceLibrary": {
+        "eyebrow": "Сегменты получателей",
+        "title": "Сохранённые сегменты и каналы",
+        "description": "Сначала настройте сегмент и сохраните его здесь. Потом этот сегмент можно выбрать в любой кампании.",
+        "editorEyebrow": "Настройка сегмента",
+        "editorTitle": "Параметры нового или выбранного сегмента",
+        "listEyebrow": "Список сегментов",
+        "listTitle": "Готовые варианты для кампаний",
+        "listCount": "Сохранено: {count}",
+        "loading": "Загружаем сохранённые сегменты...",
+        "empty": "Пока нет ни одного сегмента. Создайте первый и используйте его в кампаниях.",
+        "inCampaign": "В кампании",
+        "fields": {
+          "name": "Название сегмента",
+          "description": "Короткое описание",
+          "segment": "Кого включить",
+          "manualList": "Получатели вручную",
+          "inactiveDays": "Не заходили дольше, чем дней",
+          "includeNeverSeen": "Включать тех, кто ещё ни разу не заходил",
+          "pendingOlderThanMinutes": "Платёж завис дольше, чем минут",
+          "pendingWithinDays": "Искать за последние дни",
+          "failedWithinDays": "Искать неуспешные оплаты за дни",
+          "expiredFromDays": "От скольких дней после окончания",
+          "expiredToDays": "До скольких дней после окончания",
+          "cooldownDays": "Не повторять, дней",
+          "cooldownKey": "Группа повторной отправки",
+          "telegramQuietStart": "Не беспокоить в Telegram: с",
+          "telegramQuietEnd": "Не беспокоить в Telegram: до",
+          "excludeBlocked": "Не включать полностью заблокированных"
+        },
+        "placeholders": {
+          "name": "Например: Возврат после неуспешной оплаты",
+          "description": "Кому предназначен сегмент и в каком случае его использовать",
+          "manualList": "Можно вставить список ID аккаунтов, email или Telegram ID. Подойдут переносы строк, запятые, ; и пробелы.",
+          "cooldownKey": "Например: payment_recovery"
+        },
+        "actions": {
+          "new": "Новый сегмент",
+          "save": "Сохранить сегмент",
+          "saving": "Сохраняем...",
+          "update": "Обновить сегмент",
+          "delete": "Удалить",
+          "open": "Открыть",
+          "selected": "Открыт",
+          "useInCampaign": "Использовать в кампании"
+        }
+      },
+      "segmentPicker": {
+        "eyebrow": "Сегмент кампании",
+        "title": "Кого получит эта рассылка",
+        "description": "Выберите один из сохранённых сегментов. Подробная настройка делается в блоке выше.",
+        "label": "Сохранённый сегмент",
+        "placeholder": "Выберите сегмент из сохранённых",
+        "custom": "Сегмент не выбран",
+        "savedSummary": "Сохранённый сегмент уже применён к этой кампании.",
+        "customSummary": "Для этой кампании пока используется индивидуальная настройка."
+      },
+      "editorHeader": {
+        "eyebrow": "Редактор рассылки",
+        "previewEyebrow": "Просмотр рассылки",
+        "newTitle": "Новый черновик",
+        "description": "Подготовьте сообщение, выберите аудиторию и проверьте превью перед запуском.",
+        "previewDescription": "Здесь показано, как рассылка выглядит для пользователя после запуска.",
+        "dirty": "Есть несохранённые изменения",
+        "synced": "Черновик сохранён",
+        "newStatus": "Новый черновик"
       }
     },
     "promos": {
@@ -538,6 +801,262 @@
         "discountPart": " · скидка {discount}",
         "grantedDays": "Выдано {days} дн.",
         "balanceCredit": "Начислено {amount}"
+      },
+      "workspace": {
+        "common": {
+          "allPlans": "Все тарифы",
+          "unlimited": "Без лимита",
+          "noDescription": "Описание не заполнено",
+          "limitedWindow": "Ограничено",
+          "openWindow": "Открыто",
+          "yes": "Да",
+          "no": "Нет"
+        },
+        "overview": {
+          "eyebrow": "Промокоды",
+          "title": "Кампании, коды и активации",
+          "description": "Здесь удобно вести все промоакции: создавать кампании, выпускать коды и смотреть, как они срабатывают.",
+          "newCampaign": "Новая кампания",
+          "clearForm": "Очистить форму",
+          "filterLabel": "Показать кампании",
+          "filterAll": "Все статусы",
+          "summary": "Показано {shown} из {total} кампаний · черновиков {draft}",
+          "cards": {
+            "totalCampaigns": "Всего кампаний",
+            "activeCampaigns": "Активные",
+            "totalCodes": "Кодов в работе",
+            "activations": "Всего активаций"
+          }
+        },
+        "campaignTable": {
+          "eyebrow": "Список кампаний",
+          "title": "Все промокампании в таблице",
+          "description": "Нажмите на строку, чтобы открыть кампанию и перейти к кодам и истории активаций.",
+          "loading": "Загружаем кампании...",
+          "empty": "Кампаний пока нет. Создайте первую кампанию ниже.",
+          "activationsValue": "{count} активаций",
+          "columns": {
+            "campaign": "Кампания",
+            "status": "Статус",
+            "effect": "Предложение",
+            "plans": "Тарифы",
+            "window": "Срок действия",
+            "codes": "Коды",
+            "updatedAt": "Обновлена"
+          }
+        },
+        "campaignForm": {
+          "createEyebrow": "Новая кампания",
+          "editEyebrow": "Редактирование кампании",
+          "createTitle": "Настройка новой промокампании",
+          "editTitle": "Обновление выбранной промокампании",
+          "createDescription": "Сначала задайте предложение и правила применения, затем выпускайте коды для этой кампании.",
+          "editDescription": "Форма загружена из выбранной кампании. После сохранения таблица и карточка обновятся.",
+          "basicsEyebrow": "Основа кампании",
+          "basicsTitle": "Что получит пользователь",
+          "basicsHint": "Название акции, её статус и само предложение.",
+          "rulesEyebrow": "Правила применения",
+          "rulesTitle": "Кому и когда доступна акция",
+          "rulesHint": "Ограничения по времени, подписке, первому платежу и тарифам.",
+          "effectPreview": "Пользователь получит: {effect}",
+          "buttons": {
+            "create": "Создать кампанию",
+            "creating": "Создаём...",
+            "save": "Сохранить изменения",
+            "saving": "Сохраняем..."
+          },
+          "fields": {
+            "name": "Название кампании",
+            "namePlaceholder": "Например: Весеннее возвращение",
+            "status": "Статус",
+            "effectType": "Тип предложения",
+            "effectValue": "Значение",
+            "effectValuePercentPlaceholder": "Например: 30",
+            "effectValueDaysPlaceholder": "Например: 7",
+            "effectValueAmountPlaceholder": "Например: 199",
+            "currency": "Валюта",
+            "currencyPlaceholder": "RUB",
+            "startsAt": "Начало, Москва",
+            "endsAt": "Окончание, Москва",
+            "totalLimit": "Общий лимит активаций",
+            "perAccountLimit": "Лимит на одного пользователя",
+            "limitPlaceholder": "Пусто = без лимита",
+            "description": "Описание для команды",
+            "descriptionPlaceholder": "Коротко опишите, для какой акции или партнёра нужна эта кампания.",
+            "firstPurchaseOnly": "Только для первой оплаты",
+            "requiresActiveSubscription": "Только для пользователей с активной подпиской",
+            "requiresNoActiveSubscription": "Только для пользователей без активной подписки",
+            "planCodes": "Доступные тарифы",
+            "plansLoading": "Загружаем тарифы...",
+            "plansEmpty": "Тарифы пока недоступны",
+            "plansHint": "Если ничего не выбирать, промокампания будет работать для всех тарифов.",
+            "planOption": "{name} · {days} дн."
+          }
+        },
+        "selectedCampaign": {
+          "eyebrow": "Выбранная кампания",
+          "edit": "Редактировать",
+          "emptyEyebrow": "Выбор кампании",
+          "emptyTitle": "Сначала выберите кампанию из таблицы",
+          "emptyDescription": "После выбора откроются её коды, история активаций и быстрые действия.",
+          "facts": {
+            "effect": "Предложение",
+            "codes": "Кодов",
+            "activations": "Активаций",
+            "history": "В истории",
+            "window": "Срок"
+          }
+        },
+        "campaignDetail": {
+          "rulesEyebrow": "Правила кампании",
+          "serviceEyebrow": "Тарифы и служебные данные",
+          "effectType": "Тип предложения",
+          "window": "Срок действия",
+          "firstPurchase": "Только первая оплата",
+          "subscriptionRequirementLabel": "Требование по подписке",
+          "totalLimit": "Общий лимит",
+          "perAccountLimit": "Лимит на пользователя",
+          "plans": "Тарифы",
+          "createdAt": "Создана",
+          "updatedAt": "Обновлена",
+          "createdBy": "Сотрудник",
+          "subscriptionRequirement": {
+            "active": "Только с активной подпиской",
+            "inactive": "Только без активной подписки",
+            "any": "Без ограничения"
+          }
+        },
+        "singleCode": {
+          "eyebrow": "Отдельный код",
+          "title": "Выпустить один код",
+          "description": "Подходит для точечной выдачи, ручной компенсации или персонального предложения.",
+          "effectSummary": "Код будет применять предложение: {effect}",
+          "buttons": {
+            "create": "Создать код",
+            "creating": "Создаём..."
+          },
+          "fields": {
+            "code": "Код",
+            "codePlaceholder": "Например: SPRING-30",
+            "limit": "Лимит активаций",
+            "accountId": "ID пользователя",
+            "accountIdPlaceholder": "Необязательно. Ограничит код одним пользователем.",
+            "isActive": "Сделать код активным сразу"
+          }
+        },
+        "batch": {
+          "eyebrow": "Пачка кодов",
+          "title": "Сгенерировать серию кодов",
+          "description": "Удобно для партнёров, рассылок и массовых акций с едиными правилами.",
+          "example": "Пример кода: {example}",
+          "lastBatchTitle": "Последняя сгенерированная пачка",
+          "buttons": {
+            "create": "Сгенерировать коды",
+            "creating": "Генерируем..."
+          },
+          "fields": {
+            "quantity": "Количество",
+            "prefix": "Префикс",
+            "prefixPlaceholder": "Например: PARTNER",
+            "suffixLength": "Длина окончания",
+            "limit": "Лимит активаций",
+            "accountId": "ID пользователя",
+            "accountIdPlaceholder": "Необязательно. Ограничит всю пачку одним пользователем.",
+            "isActive": "Сделать все коды активными сразу"
+          }
+        },
+        "importExport": {
+          "eyebrow": "Импорт и выгрузка",
+          "title": "Загрузка своих кодов и выгрузка списка",
+          "description": "Можно добавить заранее подготовленные коды и в любой момент выгрузить весь список кампании.",
+          "importHint": "Список можно вставлять через новую строку, запятую или точку с запятой.",
+          "skippedTitle": "Уже существующие коды пропущены",
+          "exportEyebrow": "Выгрузка",
+          "exportTitle": "Список кодов кампании",
+          "exportField": "Коды для копирования",
+          "exportPlaceholder": "После выгрузки здесь появится полный список кодов кампании.",
+          "buttons": {
+            "import": "Импортировать коды",
+            "importing": "Импортируем...",
+            "export": "Выгрузить",
+            "exporting": "Готовим..."
+          },
+          "fields": {
+            "codes": "Коды для загрузки",
+            "codesPlaceholder": "Например:\nSPRING-50\nPARTNER-99\nBLOGGER-7D",
+            "limit": "Лимит активаций",
+            "accountId": "ID пользователя",
+            "accountIdPlaceholder": "Необязательно. Ограничит все импортированные коды одним пользователем.",
+            "isActive": "Сделать импортированные коды активными",
+            "skipDuplicates": "Пропускать дубликаты вместо ошибки"
+          }
+        },
+        "codeTable": {
+          "eyebrow": "Коды кампании",
+          "title": "Все коды выбранной кампании",
+          "summary": "Всего кодов: {total}",
+          "loading": "Загружаем коды...",
+          "empty": "У этой кампании пока нет кодов.",
+          "statusActive": "Активен",
+          "statusInactive": "Выключен",
+          "noBinding": "Без привязки к пользователю",
+          "accountBinding": "Только для {accountId}",
+          "noLimit": "Без лимита",
+          "limitValue": "До {count} активаций",
+          "redemptionsValue": "{count} активаций",
+          "buttons": {
+            "enable": "Включить",
+            "disable": "Выключить",
+            "saving": "Сохраняем..."
+          },
+          "columns": {
+            "code": "Код",
+            "status": "Статус",
+            "account": "Пользователь",
+            "limit": "Лимит",
+            "createdAt": "Создан",
+            "actions": "Действие"
+          }
+        },
+        "redemptions": {
+          "eyebrow": "История активаций",
+          "title": "Как срабатывали промокоды",
+          "summary": "Показано {shown} из {total}",
+          "loading": "Загружаем историю активаций...",
+          "empty": "У этой кампании пока нет активаций.",
+          "planValue": "Тариф: {planCode}",
+          "planEmpty": "Тариф не указан",
+          "appliedValue": "Применён {date}",
+          "appliedEmpty": "Ещё не применён",
+          "referenceFailure": "Причина: {reason}",
+          "referenceValue": "Основание: {reference}",
+          "referenceEmpty": "Без дополнительных данных",
+          "referenceFallback": "источник",
+          "filters": {
+            "status": "Статус",
+            "context": "Где сработал код",
+            "code": "Поиск по коду",
+            "codePlaceholder": "Например: WINBACK",
+            "account": "ID пользователя",
+            "accountPlaceholder": "Необязательно",
+            "allStatuses": "Все статусы",
+            "allContexts": "Все варианты",
+            "activeHint": "Показаны события с учётом выбранных фильтров.",
+            "defaultHint": "Фильтры не заданы. Показаны последние события кампании.",
+            "reset": "Сбросить",
+            "apply": "Применить",
+            "applying": "Применяем..."
+          },
+          "columns": {
+            "code": "Код",
+            "status": "Статус",
+            "context": "Сценарий",
+            "account": "Пользователь",
+            "result": "Результат",
+            "createdAt": "Когда",
+            "details": "Подробности"
+          }
+        }
       }
     }
   }

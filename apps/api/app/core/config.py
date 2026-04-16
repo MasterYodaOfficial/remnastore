@@ -62,6 +62,18 @@ class Settings(BaseSettings):
         default=20.0,
         validation_alias="DEFAULT_REFERRAL_REWARD_RATE",
     )
+    referral_reward_payment_commission_rate_rub: float = Field(
+        default=0.0,
+        validation_alias="REFERRAL_REWARD_PAYMENT_COMMISSION_RATE_RUB",
+        ge=0,
+        le=100,
+    )
+    referral_reward_payment_commission_rate_xtr: float = Field(
+        default=0.0,
+        validation_alias="REFERRAL_REWARD_PAYMENT_COMMISSION_RATE_XTR",
+        ge=0,
+        le=100,
+    )
     min_withdrawal_amount_rub: int = Field(
         default=300,
         validation_alias="MIN_WITHDRAWAL_AMOUNT_RUB",

@@ -55,6 +55,84 @@ const accountListResponse = {
   offset: 0,
 };
 
+const broadcastAudience = {
+  segment: "all",
+  exclude_blocked: true,
+  manual_account_ids: [],
+  manual_emails: [],
+  manual_telegram_ids: [],
+  last_seen_older_than_days: null,
+  include_never_seen: false,
+  pending_payment_older_than_minutes: null,
+  pending_payment_within_last_days: null,
+  failed_payment_within_last_days: null,
+  subscription_expired_from_days: null,
+  subscription_expired_to_days: null,
+  cooldown_days: null,
+  cooldown_key: null,
+  telegram_quiet_hours_start: null,
+  telegram_quiet_hours_end: null,
+};
+
+const broadcastListResponse = {
+  items: [
+    {
+      id: 1,
+      name: "welcome-campaign",
+      title: "Добро пожаловать",
+      body_html: "<b>Тестовая рассылка</b>",
+      content_type: "text",
+      image_url: null,
+      channels: ["in_app"],
+      buttons: [],
+      audience: broadcastAudience,
+      status: "draft",
+      estimated_total_accounts: 128,
+      estimated_in_app_recipients: 128,
+      estimated_telegram_recipients: 92,
+      created_by_admin_id: "admin-1",
+      updated_by_admin_id: "admin-1",
+      scheduled_at: null,
+      launched_at: null,
+      completed_at: null,
+      cancelled_at: null,
+      last_error: null,
+      latest_run: null,
+      created_at: "2026-04-10T08:00:00Z",
+      updated_at: "2026-04-15T09:00:00Z",
+    },
+  ],
+  total: 1,
+  limit: 50,
+  offset: 0,
+};
+
+const broadcastEstimateResponse = {
+  channels: ["in_app"],
+  audience: broadcastAudience,
+  estimated_total_accounts: 128,
+  estimated_in_app_recipients: 128,
+  estimated_telegram_recipients: 92,
+};
+
+const broadcastPreviewResponse = {
+  channels: ["in_app"],
+  audience: broadcastAudience,
+  total_accounts: 128,
+  preview_count: 0,
+  limit: 25,
+  has_more: false,
+  items: [],
+  manual_list_diagnostics: null,
+};
+
+const broadcastRunsResponse = {
+  items: [],
+  total: 0,
+  limit: 20,
+  offset: 0,
+};
+
 async function mockAdminSession(page: Parameters<typeof test>[0]["page"]) {
   await page.route("**/api/v1/admin/auth/login", async (route) => {
     await route.fulfill({
@@ -97,6 +175,59 @@ async function mockAdminSession(page: Parameters<typeof test>[0]["page"]) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify([]),
+    });
+  });
+
+  await page.route("**/api/v1/admin/broadcasts?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(broadcastListResponse),
+    });
+  });
+
+  await page.route("**/api/v1/admin/broadcasts/audiences?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [],
+        total: 0,
+        limit: 25,
+        offset: 0,
+      }),
+    });
+  });
+
+  await page.route("**/api/v1/admin/broadcasts/runs?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(broadcastRunsResponse),
+    });
+  });
+
+  await page.route("**/api/v1/admin/broadcasts/estimate", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(broadcastEstimateResponse),
+    });
+  });
+
+  await page.route("**/api/v1/admin/broadcasts/preview", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(broadcastPreviewResponse),
+    });
+  });
+
+  await page.route("**/api/v1/admin/broadcasts/1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(broadcastListResponse.items[0]),
     });
   });
 }
@@ -173,5 +304,33 @@ test.describe("admin browser smoke", () => {
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("remnastore_admin_token")))
       .toBeNull();
+  });
+
+  test("keeps new broadcast draft form values while typing", async ({ page }) => {
+    await mockAdminSession(page);
+    await page.goto("/");
+
+    await page.getByLabel("Логин").fill("root@example.com");
+    await page.getByLabel("Пароль").fill("test-password");
+    await page.getByRole("button", { name: "Войти" }).click();
+
+    await page.getByRole("button", { name: "Рассылки" }).click();
+    await expect(page.getByRole("heading", { name: "Кампании и аудитория" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Новый черновик" }).click();
+
+    const nameInput = page.getByLabel("Внутреннее название");
+    const titleInput = page.getByLabel("Заголовок");
+
+    await nameInput.fill("Весенняя акция");
+    await titleInput.fill("Специальное предложение");
+
+    await expect(nameInput).toHaveValue("Весенняя акция");
+    await expect(titleInput).toHaveValue("Специальное предложение");
+
+    await page.waitForTimeout(700);
+
+    await expect(nameInput).toHaveValue("Весенняя акция");
+    await expect(titleInput).toHaveValue("Специальное предложение");
   });
 });
