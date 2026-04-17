@@ -195,6 +195,7 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
         async with self._session_factory() as session:
             account_one = Account(
                 email="a@example.com",
+                telegram_id=777000111,
                 subscription_status="active",
                 balance=700,
                 referral_earnings=150,
@@ -259,7 +260,7 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
                     flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
                     status=PaymentStatus.SUCCEEDED,
                     amount=1200,
-                    currency="RUB",
+                    currency="XTR",
                     provider_payment_id="admin-summary-direct-plan",
                     finalized_at=now - timedelta(days=1),
                 )
@@ -283,6 +284,8 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
             {
                 "total_accounts": 2,
                 "active_subscriptions": 1,
+                "accounts_with_telegram": 1,
+                "paying_accounts_last_30d": 1,
                 "pending_withdrawals": 1,
                 "pending_payments": 1,
                 "blocked_accounts": 1,
@@ -291,9 +294,12 @@ class AdminAuthFlowTests(unittest.IsolatedAsyncioTestCase):
                 "total_referral_earnings": 170,
                 "pending_withdrawals_amount": 300,
                 "paid_withdrawals_amount_last_30d": 150,
-                "successful_payments_last_30d": 2,
-                "successful_payments_amount_last_30d": 2100,
+                "successful_payments_rub_last_30d": 1,
+                "successful_payments_amount_rub_last_30d": 900,
                 "wallet_topups_amount_last_30d": 900,
-                "direct_plan_revenue_last_30d": 1200,
+                "direct_plan_purchases_rub_last_30d": 0,
+                "direct_plan_revenue_rub_last_30d": 0,
+                "direct_plan_purchases_stars_last_30d": 1,
+                "direct_plan_revenue_stars_last_30d": 1200,
             },
         )

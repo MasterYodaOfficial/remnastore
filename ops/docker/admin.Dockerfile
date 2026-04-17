@@ -8,6 +8,7 @@ WORKDIR /app/apps/admin
 RUN npm ci --no-progress --registry=${NPM_REGISTRY}
 
 COPY apps/admin ./
+COPY packages/locales /app/packages/locales
 
 RUN npm run build
 

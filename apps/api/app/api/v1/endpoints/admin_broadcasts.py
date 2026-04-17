@@ -343,6 +343,7 @@ async def create_admin_broadcast_audience_preset(
             admin_id=current_admin.id,
             name=payload.name,
             description=payload.description,
+            channels=payload.channels,
             audience=payload.audience.model_dump(mode="python"),
         )
     except BroadcastValidationError as exc:
@@ -371,6 +372,7 @@ async def update_admin_broadcast_audience_preset(
             admin_id=current_admin.id,
             name=payload.name,
             description=payload.description,
+            channels=payload.channels,
             audience=payload.audience.model_dump(mode="python"),
         )
     except BroadcastAudiencePresetNotFoundError as exc:

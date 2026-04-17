@@ -5,6 +5,7 @@ from app.api.v1.endpoints.admin_accounts import router as admin_accounts_router
 from app.api.v1.endpoints.admin_auth import router as admin_auth_router
 from app.api.v1.endpoints.admin_broadcasts import router as admin_broadcasts_router
 from app.api.v1.endpoints.admin_dashboard import router as admin_dashboard_router
+from app.api.v1.endpoints.admin_plans import router as admin_plans_router
 from app.api.v1.endpoints.admin_promocodes import router as admin_promocodes_router
 from app.api.v1.endpoints.admin_withdrawals import router as admin_withdrawals_router
 from app.api.v1.endpoints.health import router as health_router
@@ -66,6 +67,7 @@ admin_router.include_router(
 admin_router.include_router(
     admin_dashboard_router, prefix="/dashboard", tags=["admin-dashboard"]
 )
+admin_router.include_router(admin_plans_router, prefix="/plans", tags=["admin-plans"])
 admin_router.include_router(
     admin_promocodes_router, prefix="/promos", tags=["admin-promos"]
 )

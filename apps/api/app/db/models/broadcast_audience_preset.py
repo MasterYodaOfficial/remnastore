@@ -23,6 +23,7 @@ class BroadcastAudiencePreset(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text())
+    channels: Mapped[list[str]] = mapped_column(JSON(), nullable=False)
     audience: Mapped[dict] = mapped_column(JSON(), nullable=False)
     created_by_admin_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), nullable=False

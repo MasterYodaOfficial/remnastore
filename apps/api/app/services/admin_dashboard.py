@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Account, Payment, Withdrawal
 from app.db.models.account import AccountStatus
-from app.domain.payments import PaymentFlowType, PaymentStatus
+from app.domain.payments import PaymentFlowType, PaymentProvider, PaymentStatus
 from app.db.models.withdrawal import WithdrawalStatus
 
 
@@ -23,6 +23,7 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
     now = _utcnow()
     seven_days_ago = now - timedelta(days=7)
     thirty_days_ago = now - timedelta(days=30)
+    rub_currency = "RUB"
     pending_withdrawal_statuses = (WithdrawalStatus.NEW, WithdrawalStatus.IN_PROGRESS)
     pending_payment_statuses = (
         PaymentStatus.CREATED,
@@ -45,6 +46,21 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
         select(func.count())
         .select_from(Account)
         .where(Account.subscription_status == "active"),
+    )
+    accounts_with_telegram = await _read_int_stat(
+        session,
+        select(func.count())
+        .select_from(Account)
+        .where(Account.telegram_id.is_not(None)),
+    )
+    paying_accounts_last_30d = await _read_int_stat(
+        session,
+        select(func.count(func.distinct(Payment.account_id)))
+        .select_from(Payment)
+        .where(
+            Payment.status == PaymentStatus.SUCCEEDED,
+            successful_payment_timestamp >= thirty_days_ago,
+        ),
     )
     pending_withdrawals = await _read_int_stat(
         session,
@@ -96,21 +112,23 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
             paid_withdrawal_timestamp >= thirty_days_ago,
         ),
     )
-    successful_payments_last_30d = await _read_int_stat(
+    successful_payments_rub_last_30d = await _read_int_stat(
         session,
         select(func.count())
         .select_from(Payment)
         .where(
             Payment.status == PaymentStatus.SUCCEEDED,
+            Payment.currency == rub_currency,
             successful_payment_timestamp >= thirty_days_ago,
         ),
     )
-    successful_payments_amount_last_30d = await _read_int_stat(
+    successful_payments_amount_rub_last_30d = await _read_int_stat(
         session,
         select(func.sum(Payment.amount))
         .select_from(Payment)
         .where(
             Payment.status == PaymentStatus.SUCCEEDED,
+            Payment.currency == rub_currency,
             successful_payment_timestamp >= thirty_days_ago,
         ),
     )
@@ -124,13 +142,47 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
             successful_payment_timestamp >= thirty_days_ago,
         ),
     )
-    direct_plan_revenue_last_30d = await _read_int_stat(
+    direct_plan_purchases_rub_last_30d = await _read_int_stat(
+        session,
+        select(func.count())
+        .select_from(Payment)
+        .where(
+            Payment.status == PaymentStatus.SUCCEEDED,
+            Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+            Payment.currency == rub_currency,
+            successful_payment_timestamp >= thirty_days_ago,
+        ),
+    )
+    direct_plan_revenue_rub_last_30d = await _read_int_stat(
         session,
         select(func.sum(Payment.amount))
         .select_from(Payment)
         .where(
             Payment.status == PaymentStatus.SUCCEEDED,
             Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+            Payment.currency == rub_currency,
+            successful_payment_timestamp >= thirty_days_ago,
+        ),
+    )
+    direct_plan_purchases_stars_last_30d = await _read_int_stat(
+        session,
+        select(func.count())
+        .select_from(Payment)
+        .where(
+            Payment.status == PaymentStatus.SUCCEEDED,
+            Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+            Payment.provider == PaymentProvider.TELEGRAM_STARS,
+            successful_payment_timestamp >= thirty_days_ago,
+        ),
+    )
+    direct_plan_revenue_stars_last_30d = await _read_int_stat(
+        session,
+        select(func.sum(Payment.amount))
+        .select_from(Payment)
+        .where(
+            Payment.status == PaymentStatus.SUCCEEDED,
+            Payment.flow_type == PaymentFlowType.DIRECT_PLAN_PURCHASE,
+            Payment.provider == PaymentProvider.TELEGRAM_STARS,
             successful_payment_timestamp >= thirty_days_ago,
         ),
     )
@@ -138,6 +190,8 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
     return {
         "total_accounts": total_accounts,
         "active_subscriptions": active_subscriptions,
+        "accounts_with_telegram": accounts_with_telegram,
+        "paying_accounts_last_30d": paying_accounts_last_30d,
         "pending_withdrawals": pending_withdrawals,
         "pending_payments": pending_payments,
         "blocked_accounts": blocked_accounts,
@@ -146,8 +200,11 @@ async def get_admin_dashboard_summary(session: AsyncSession) -> dict[str, int]:
         "total_referral_earnings": total_referral_earnings,
         "pending_withdrawals_amount": pending_withdrawals_amount,
         "paid_withdrawals_amount_last_30d": paid_withdrawals_amount_last_30d,
-        "successful_payments_last_30d": successful_payments_last_30d,
-        "successful_payments_amount_last_30d": successful_payments_amount_last_30d,
+        "successful_payments_rub_last_30d": successful_payments_rub_last_30d,
+        "successful_payments_amount_rub_last_30d": successful_payments_amount_rub_last_30d,
         "wallet_topups_amount_last_30d": wallet_topups_amount_last_30d,
-        "direct_plan_revenue_last_30d": direct_plan_revenue_last_30d,
+        "direct_plan_purchases_rub_last_30d": direct_plan_purchases_rub_last_30d,
+        "direct_plan_revenue_rub_last_30d": direct_plan_revenue_rub_last_30d,
+        "direct_plan_purchases_stars_last_30d": direct_plan_purchases_stars_last_30d,
+        "direct_plan_revenue_stars_last_30d": direct_plan_revenue_stars_last_30d,
     }
