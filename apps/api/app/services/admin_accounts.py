@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, asc, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, selectinload
 
 from app.db.models import (
     Account,
@@ -27,6 +28,189 @@ def _normalize_query(query: str) -> str:
     if not normalized:
         raise ValueError("query is required")
     return normalized
+
+
+def _try_parse_account_id(value: str) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(value)
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+def _build_account_search_conditions(query: str):
+    normalized_query = _normalize_query(query)
+    lowered_query = normalized_query.lower()
+    lowered_like = f"%{lowered_query}%"
+
+    auth_email_account_ids = select(AuthAccount.account_id).where(
+        func.lower(func.coalesce(AuthAccount.email, "")).like(lowered_like)
+    )
+
+    conditions = [
+        func.lower(func.coalesce(Account.email, "")).like(lowered_like),
+        func.lower(func.coalesce(Account.username, "")).like(lowered_like),
+        func.lower(func.coalesce(Account.display_name, "")).like(lowered_like),
+        Account.id.in_(auth_email_account_ids),
+    ]
+
+    if normalized_query.isdigit():
+        conditions.append(Account.telegram_id == int(normalized_query))
+
+    account_id = _try_parse_account_id(normalized_query)
+    if account_id is not None:
+        conditions.append(Account.id == account_id)
+
+    return conditions
+
+
+def _build_account_user_search_conditions(query: str):
+    normalized_query = _normalize_query(query)
+    lowered_query = normalized_query.lower()
+    lowered_like = f"%{lowered_query}%"
+
+    conditions = [
+        func.lower(func.coalesce(Account.display_name, "")).like(lowered_like),
+        func.lower(func.coalesce(Account.username, "")).like(lowered_like),
+        cast(Account.id, String).like(f"%{normalized_query}%"),
+    ]
+
+    account_id = _try_parse_account_id(normalized_query)
+    if account_id is not None:
+        conditions.append(Account.id == account_id)
+
+    return conditions
+
+
+def _build_account_email_search_conditions(query: str):
+    normalized_query = _normalize_query(query)
+    lowered_query = normalized_query.lower()
+    lowered_like = f"%{lowered_query}%"
+
+    auth_email_account_ids = select(AuthAccount.account_id).where(
+        func.lower(func.coalesce(AuthAccount.email, "")).like(lowered_like)
+    )
+
+    return [
+        func.lower(func.coalesce(Account.email, "")).like(lowered_like),
+        Account.id.in_(auth_email_account_ids),
+    ]
+
+
+def _build_account_telegram_search_conditions(query: str):
+    normalized_query = _normalize_query(query)
+
+    conditions = [cast(Account.telegram_id, String).like(f"%{normalized_query}%")]
+    if normalized_query.isdigit():
+        conditions.append(Account.telegram_id == int(normalized_query))
+
+    return conditions
+
+
+def _build_account_ordering(*, sort_by: str, sort_order: str):
+    descending = sort_order == "desc"
+
+    if sort_by == "user":
+        primary = func.lower(
+            func.coalesce(
+                Account.display_name,
+                Account.username,
+                Account.email,
+                cast(Account.telegram_id, String),
+                cast(Account.id, String),
+            )
+        )
+    elif sort_by == "telegram_id":
+        primary = Account.telegram_id
+    elif sort_by == "email":
+        primary = func.lower(func.coalesce(Account.email, ""))
+    elif sort_by == "balance":
+        primary = Account.balance
+    elif sort_by == "subscription_expires_at":
+        primary = Account.subscription_expires_at
+    elif sort_by == "referrals_count":
+        primary = Account.referrals_count
+    elif sort_by == "last_seen_at":
+        primary = Account.last_seen_at
+    else:
+        primary = Account.created_at
+
+    ordered_primary = desc(primary) if descending else asc(primary)
+    ordered_created = (
+        desc(Account.created_at) if descending else asc(Account.created_at)
+    )
+    ordered_id = desc(Account.id) if descending else asc(Account.id)
+
+    if sort_by in {"telegram_id", "subscription_expires_at", "last_seen_at"}:
+        return [primary.is_(None), ordered_primary, ordered_created, ordered_id]
+    if sort_by in {"email", "user"}:
+        return [primary.is_(None), ordered_primary, ordered_created, ordered_id]
+    return [ordered_primary, ordered_id]
+
+
+def _build_account_list_filters(
+    *,
+    query: str | None = None,
+    user_query: str | None = None,
+    telegram_query: str | None = None,
+    email_query: str | None = None,
+    status: str | None = None,
+    subscription_state: str | None = None,
+    telegram_state: str | None = None,
+) -> list[Any]:
+    filters: list[Any] = []
+
+    if query is not None and query.strip():
+        filters.append(or_(*_build_account_search_conditions(query)))
+    if user_query is not None and user_query.strip():
+        filters.append(or_(*_build_account_user_search_conditions(user_query)))
+    if telegram_query is not None and telegram_query.strip():
+        filters.append(or_(*_build_account_telegram_search_conditions(telegram_query)))
+    if email_query is not None and email_query.strip():
+        filters.append(or_(*_build_account_email_search_conditions(email_query)))
+
+    if status is not None:
+        filters.append(Account.status == status)
+
+    if subscription_state == "active":
+        filters.append(Account.subscription_status == "active")
+    elif subscription_state == "inactive":
+        filters.extend(
+            [
+                Account.subscription_status.is_not(None),
+                Account.subscription_status != "active",
+            ]
+        )
+    elif subscription_state == "none":
+        filters.append(Account.subscription_status.is_(None))
+
+    if telegram_state == "connected":
+        filters.append(Account.telegram_id.is_not(None))
+    elif telegram_state == "not_connected":
+        filters.append(Account.telegram_id.is_(None))
+
+    return filters
+
+
+def _build_account_list_statement(
+    *,
+    filters: list[Any],
+    sort_by: str,
+    sort_order: str,
+    include_auth_accounts: bool,
+    limit: int | None = None,
+    offset: int | None = None,
+):
+    statement = select(Account)
+    if include_auth_accounts:
+        statement = statement.options(selectinload(Account.auth_accounts))
+    statement = statement.where(*filters).order_by(
+        *_build_account_ordering(sort_by=sort_by, sort_order=sort_order)
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    if offset is not None:
+        statement = statement.offset(offset)
+    return statement
 
 
 def _normalize_filter_values(
@@ -183,29 +367,87 @@ async def search_admin_accounts(
     query: str,
     limit: int = 20,
 ) -> list[Account]:
-    normalized_query = _normalize_query(query)
-    lowered_query = normalized_query.lower()
-    lowered_like = f"%{lowered_query}%"
-
-    auth_email_account_ids = select(AuthAccount.account_id).where(
-        func.lower(func.coalesce(AuthAccount.email, "")).like(lowered_like)
-    )
-
-    conditions = [
-        func.lower(func.coalesce(Account.email, "")).like(lowered_like),
-        func.lower(func.coalesce(Account.username, "")).like(lowered_like),
-        func.lower(func.coalesce(Account.display_name, "")).like(lowered_like),
-        Account.id.in_(auth_email_account_ids),
-    ]
-
-    if normalized_query.isdigit():
-        conditions.append(Account.telegram_id == int(normalized_query))
-
+    conditions = _build_account_search_conditions(query)
     result = await session.execute(
         select(Account)
         .where(or_(*conditions))
         .order_by(Account.created_at.desc())
         .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def list_admin_accounts(
+    session: AsyncSession,
+    *,
+    query: str | None = None,
+    user_query: str | None = None,
+    telegram_query: str | None = None,
+    email_query: str | None = None,
+    status: str | None = None,
+    subscription_state: str | None = None,
+    telegram_state: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[Account], int]:
+    filters = _build_account_list_filters(
+        query=query,
+        user_query=user_query,
+        telegram_query=telegram_query,
+        email_query=email_query,
+        status=status,
+        subscription_state=subscription_state,
+        telegram_state=telegram_state,
+    )
+
+    total = int(
+        await session.scalar(select(func.count()).select_from(Account).where(*filters))
+        or 0
+    )
+    result = await session.execute(
+        _build_account_list_statement(
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            include_auth_accounts=True,
+            limit=limit,
+            offset=offset,
+        )
+    )
+    return list(result.scalars().all()), total
+
+
+async def export_admin_accounts(
+    session: AsyncSession,
+    *,
+    query: str | None = None,
+    user_query: str | None = None,
+    telegram_query: str | None = None,
+    email_query: str | None = None,
+    status: str | None = None,
+    subscription_state: str | None = None,
+    telegram_state: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> list[Account]:
+    filters = _build_account_list_filters(
+        query=query,
+        user_query=user_query,
+        telegram_query=telegram_query,
+        email_query=email_query,
+        status=status,
+        subscription_state=subscription_state,
+        telegram_state=telegram_state,
+    )
+    result = await session.execute(
+        _build_account_list_statement(
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            include_auth_accounts=True,
+        )
     )
     return list(result.scalars().all())
 

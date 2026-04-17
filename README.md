@@ -62,8 +62,8 @@ docker compose logs -f --tail=100
 
 ```bash
 cd /opt/remnastore
-mkdir -p old_db migration-reports
-cp /path/to/db_2.sqlite3 old_db/db_2.sqlite3
+mkdir -p testdb_db migration-reports
+cp /path/to/db_2.sqlite3 testdb_db/db_2.sqlite3
 docker compose --profile tools run --rm legacy-migration --dry-run \
   --output-json /app/migration-reports/legacy-dry-run.json
 docker compose --profile tools run --rm legacy-migration --apply-db \

@@ -1725,17 +1725,20 @@ async def create_broadcast_audience_preset(
     admin_id: uuid.UUID,
     name: str,
     description: str | None,
+    channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
     audience: dict[str, object] | None,
 ) -> BroadcastAudiencePreset:
     normalized_name = _normalize_broadcast_audience_preset_name(name)
     normalized_description = _normalize_broadcast_audience_preset_description(
         description
     )
+    normalized_channels = normalize_broadcast_channels(channels)
     audience_config = normalize_broadcast_audience_config(audience=audience)
 
     preset = BroadcastAudiencePreset(
         name=normalized_name,
         description=normalized_description,
+        channels=normalized_channels,
         audience=build_broadcast_audience_payload(audience=audience_config),
         created_by_admin_id=admin_id,
         updated_by_admin_id=admin_id,
@@ -1750,6 +1753,7 @@ async def create_broadcast_audience_preset(
             payload={
                 "preset_id": preset.id,
                 "operation": "create",
+                "channels": preset.channels,
                 "audience": preset.audience,
             },
         )
@@ -1765,6 +1769,7 @@ async def update_broadcast_audience_preset(
     admin_id: uuid.UUID,
     name: str,
     description: str | None,
+    channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
     audience: dict[str, object] | None,
 ) -> BroadcastAudiencePreset:
     preset = await session.get(BroadcastAudiencePreset, preset_id)
@@ -1777,10 +1782,12 @@ async def update_broadcast_audience_preset(
     normalized_description = _normalize_broadcast_audience_preset_description(
         description
     )
+    normalized_channels = normalize_broadcast_channels(channels)
     audience_config = normalize_broadcast_audience_config(audience=audience)
 
     preset.name = normalized_name
     preset.description = normalized_description
+    preset.channels = normalized_channels
     preset.audience = build_broadcast_audience_payload(audience=audience_config)
     preset.updated_by_admin_id = admin_id
     await session.flush()
@@ -1792,6 +1799,7 @@ async def update_broadcast_audience_preset(
             payload={
                 "preset_id": preset.id,
                 "operation": "update",
+                "channels": preset.channels,
                 "audience": preset.audience,
             },
         )

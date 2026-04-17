@@ -80,8 +80,16 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self._original_default_referral_reward_rate = (
             settings.default_referral_reward_rate
         )
+        self._original_referral_reward_payment_commission_rate_rub = (
+            settings.referral_reward_payment_commission_rate_rub
+        )
+        self._original_referral_reward_payment_commission_rate_xtr = (
+            settings.referral_reward_payment_commission_rate_xtr
+        )
         self._original_api_token = settings.api_token
         settings.default_referral_reward_rate = 20.0
+        settings.referral_reward_payment_commission_rate_rub = 0.0
+        settings.referral_reward_payment_commission_rate_xtr = 0.0
         settings.api_token = "test-api-token"
 
         self.app = create_app()
@@ -118,6 +126,12 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides.clear()
         settings.default_referral_reward_rate = (
             self._original_default_referral_reward_rate
+        )
+        settings.referral_reward_payment_commission_rate_rub = (
+            self._original_referral_reward_payment_commission_rate_rub
+        )
+        settings.referral_reward_payment_commission_rate_xtr = (
+            self._original_referral_reward_payment_commission_rate_xtr
         )
         settings.api_token = self._original_api_token
         self._cache_module._cache = self._original_cache
@@ -202,6 +216,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         amount: int = PLAN_1M_PRICE_RUB,
         purchase_source: str = "wallet",
         reference_type: str = "wallet_purchase",
+        currency: str = "RUB",
     ) -> SubscriptionGrant:
         async with self._session_factory() as session:
             now = datetime.now(UTC)
@@ -213,7 +228,7 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
                 reference_id=f"test-{uuid.uuid4().hex}",
                 plan_code=plan_code,
                 amount=amount,
-                currency="RUB",
+                currency=currency,
                 duration_days=30,
                 base_expires_at=now,
                 target_expires_at=now + timedelta(days=30),
@@ -775,6 +790,116 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             notifications[0].type, NotificationType.REFERRAL_REWARD_RECEIVED
         )
+
+    async def test_direct_rub_reward_deducts_configured_payment_commission(
+        self,
+    ) -> None:
+        settings.referral_reward_payment_commission_rate_rub = 4.0
+        referrer = await self._create_account(referral_code="ref-rub-commission")
+        referred = await self._create_account(referral_code="ref-rub-buyer")
+
+        async with self._session_factory() as session:
+            await referrals_service.claim_referral_code(
+                session,
+                account_id=referred.id,
+                referral_code="ref-rub-commission",
+            )
+            grant = SubscriptionGrant(
+                account_id=referred.id,
+                payment_id=None,
+                purchase_source="direct_payment",
+                reference_type="payment",
+                reference_id="rub-commission-1",
+                plan_code="plan_1m",
+                amount=PLAN_1M_PRICE_RUB,
+                currency="RUB",
+                duration_days=30,
+                base_expires_at=datetime.now(UTC),
+                target_expires_at=datetime.now(UTC) + timedelta(days=30),
+                applied_at=datetime.now(UTC),
+            )
+            session.add(grant)
+            await session.flush()
+            reward = await referrals_service.apply_first_referral_reward_for_grant(
+                session,
+                grant=grant,
+            )
+            await session.commit()
+
+        self.assertIsNotNone(reward)
+        assert reward is not None
+        expected_purchase_amount_rub = (
+            referrals_service.calculate_referral_reward_purchase_amount_rub(
+                gross_purchase_amount_rub=PLAN_1M_PRICE_RUB,
+                payment_commission_rate=Decimal("4.0"),
+            )
+        )
+        expected_reward_amount = _referral_reward_for_amount(
+            expected_purchase_amount_rub,
+            rate=settings.default_referral_reward_rate,
+        )
+        self.assertEqual(reward.purchase_amount_rub, expected_purchase_amount_rub)
+        self.assertEqual(reward.reward_amount, expected_reward_amount)
+
+        stored_referrer = await self._get_account(referrer.id)
+        self.assertIsNotNone(stored_referrer)
+        assert stored_referrer is not None
+        self.assertEqual(stored_referrer.referral_earnings, expected_reward_amount)
+
+    async def test_direct_stars_reward_deducts_configured_payment_commission(
+        self,
+    ) -> None:
+        settings.referral_reward_payment_commission_rate_xtr = 30.0
+        referrer = await self._create_account(referral_code="ref-xtr-commission")
+        referred = await self._create_account(referral_code="ref-xtr-buyer")
+
+        async with self._session_factory() as session:
+            await referrals_service.claim_referral_code(
+                session,
+                account_id=referred.id,
+                referral_code="ref-xtr-commission",
+            )
+            grant = SubscriptionGrant(
+                account_id=referred.id,
+                payment_id=None,
+                purchase_source="direct_payment",
+                reference_type="payment",
+                reference_id="xtr-commission-1",
+                plan_code="plan_1m",
+                amount=PLAN_1M.price_stars or 0,
+                currency="XTR",
+                duration_days=30,
+                base_expires_at=datetime.now(UTC),
+                target_expires_at=datetime.now(UTC) + timedelta(days=30),
+                applied_at=datetime.now(UTC),
+            )
+            session.add(grant)
+            await session.flush()
+            reward = await referrals_service.apply_first_referral_reward_for_grant(
+                session,
+                grant=grant,
+            )
+            await session.commit()
+
+        self.assertIsNotNone(reward)
+        assert reward is not None
+        expected_purchase_amount_rub = (
+            referrals_service.calculate_referral_reward_purchase_amount_rub(
+                gross_purchase_amount_rub=PLAN_1M_PRICE_RUB,
+                payment_commission_rate=Decimal("30.0"),
+            )
+        )
+        expected_reward_amount = _referral_reward_for_amount(
+            expected_purchase_amount_rub,
+            rate=settings.default_referral_reward_rate,
+        )
+        self.assertEqual(reward.purchase_amount_rub, expected_purchase_amount_rub)
+        self.assertEqual(reward.reward_amount, expected_reward_amount)
+
+        stored_referrer = await self._get_account(referrer.id)
+        self.assertIsNotNone(stored_referrer)
+        assert stored_referrer is not None
+        self.assertEqual(stored_referrer.referral_earnings, expected_reward_amount)
 
 
 if __name__ == "__main__":

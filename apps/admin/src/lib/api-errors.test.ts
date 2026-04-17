@@ -84,8 +84,7 @@ describe("parseAdminApiErrorPayload", () => {
         "fallback",
       ),
     ).toEqual({
-      detail:
-        "Не удалось изменить статус аккаунта из-за конфликта состояния. Обновите данные и попробуйте снова.",
+      detail: "Не удалось изменить статус аккаунта. Обновите данные и попробуйте снова.",
       errorCode: "admin_account_status_conflict",
     });
   });
@@ -180,7 +179,7 @@ describe("parseAdminApiErrorPayload", () => {
         "fallback",
       ),
     ).toEqual({
-      detail: "Сохраненная аудитория рассылки не найдена.",
+      detail: "Сохранённая аудитория рассылки не найдена.",
       errorCode: "admin_broadcast_audience_preset_not_found",
     });
   });

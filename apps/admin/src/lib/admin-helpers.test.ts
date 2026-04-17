@@ -47,7 +47,7 @@ describe("parseManualAudienceTargetsInput", () => {
 
   it("throws when an unsupported token appears in the manual list", () => {
     expect(() => parseManualAudienceTargetsInput("not-an-identifier")).toThrow(
-      "Не удалось распознать идентификатор из ручного списка: not-an-identifier. Используй account_id, email или telegram_id.",
+      "Не удалось распознать идентификатор из списка: not-an-identifier. Используйте account_id, email или telegram_id.",
     );
   });
 });
@@ -82,6 +82,6 @@ describe("formatAccountIdentity", () => {
   });
 
   it("falls back to a placeholder when identity is empty", () => {
-    expect(formatAccountIdentity({})).toBe("Безымянный аккаунт");
+    expect(formatAccountIdentity({})).toBe("Пользователь без имени");
   });
 });

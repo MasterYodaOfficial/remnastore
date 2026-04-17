@@ -20,14 +20,14 @@ BASE_ROOT = SCRIPT_ROOT.parent
 if (BASE_ROOT / "apps" / "api" / "app").exists():
     REPO_ROOT = BASE_ROOT
     API_APP_ROOT = REPO_ROOT / "apps" / "api"
-    DEFAULT_LEGACY_DB = REPO_ROOT / "old_db" / "db_2.sqlite3"
+    DEFAULT_LEGACY_DB = REPO_ROOT / "testdb_db" / "db_2.sqlite3"
     DEFAULT_PLANS_JSON = (
         REPO_ROOT / "apps" / "api" / "app" / "config" / "subscription-plans.json"
     )
 elif (BASE_ROOT / "app").exists():
     REPO_ROOT = BASE_ROOT
     API_APP_ROOT = BASE_ROOT
-    DEFAULT_LEGACY_DB = BASE_ROOT / "old_db" / "db_2.sqlite3"
+    DEFAULT_LEGACY_DB = BASE_ROOT / "testdb_db" / "db_2.sqlite3"
     DEFAULT_PLANS_JSON = BASE_ROOT / "app" / "config" / "subscription-plans.json"
 else:
     raise RuntimeError(

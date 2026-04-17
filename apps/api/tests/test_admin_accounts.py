@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 import tempfile
 import unittest
 import uuid
@@ -221,6 +223,211 @@ class AdminAccountEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response_by_telegram.status_code, 200)
         self.assertEqual(len(response_by_telegram.json()["items"]), 1)
+
+    async def test_list_accounts_supports_filters_sorting_and_pagination(self) -> None:
+        token = await self._create_admin_token()
+        now = datetime.now(UTC)
+
+        async with self._session_factory() as session:
+            highest_balance = Account(
+                email="highest@example.com",
+                display_name="Highest",
+                telegram_id=111000111,
+                username="highest",
+                status=AccountStatus.ACTIVE,
+                balance=1200,
+                subscription_status="active",
+                referrals_count=5,
+                last_seen_at=now - timedelta(hours=1),
+                created_at=now - timedelta(days=1),
+            )
+            inactive_connected = Account(
+                email="inactive@example.com",
+                display_name="Inactive",
+                telegram_id=222000222,
+                username="inactive",
+                status=AccountStatus.ACTIVE,
+                balance=700,
+                subscription_status="expired",
+                referrals_count=1,
+                last_seen_at=now - timedelta(days=2),
+                created_at=now - timedelta(days=2),
+            )
+            blocked_account = Account(
+                email=None,
+                display_name="Blocked",
+                telegram_id=None,
+                username="blocked",
+                status=AccountStatus.BLOCKED,
+                balance=50,
+                subscription_status=None,
+                referrals_count=0,
+                last_seen_at=None,
+                created_at=now - timedelta(days=3),
+            )
+            session.add_all([highest_balance, inactive_connected, blocked_account])
+            await session.flush()
+            session.add(
+                AuthAccount(
+                    account_id=blocked_account.id,
+                    provider=AuthProvider.GOOGLE,
+                    provider_uid="blocked-google",
+                    email="blocked@example.com",
+                    display_name="Blocked",
+                )
+            )
+            await session.commit()
+
+        response_page_one = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "sort_by": "balance",
+                "sort_order": "desc",
+                "limit": 2,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_page_one.status_code, 200)
+        body_page_one = response_page_one.json()
+        self.assertEqual(body_page_one["total"], 3)
+        self.assertEqual(body_page_one["limit"], 2)
+        self.assertEqual(body_page_one["offset"], 0)
+        self.assertEqual(
+            [item["username"] for item in body_page_one["items"]],
+            ["highest", "inactive"],
+        )
+
+        response_filtered = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "status": "active",
+                "telegram_state": "connected",
+                "subscription_state": "inactive",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "limit": 20,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_filtered.status_code, 200)
+        filtered_body = response_filtered.json()
+        self.assertEqual(filtered_body["total"], 1)
+        self.assertEqual(len(filtered_body["items"]), 1)
+        self.assertEqual(filtered_body["items"][0]["username"], "inactive")
+        self.assertEqual(filtered_body["items"][0]["referrals_count"], 1)
+
+        response_column_filters = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "user_query": "block",
+                "email_query": "blocked@example.com",
+                "sort_by": "email",
+                "sort_order": "asc",
+                "limit": 20,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_column_filters.status_code, 200)
+        column_filtered_body = response_column_filters.json()
+        self.assertEqual(column_filtered_body["total"], 1)
+        self.assertEqual(column_filtered_body["items"][0]["username"], "blocked")
+        self.assertEqual(
+            column_filtered_body["items"][0]["email"], "blocked@example.com"
+        )
+
+        response_telegram_filter = await self.client.get(
+            "/api/v1/admin/accounts",
+            params={
+                "telegram_query": "000",
+                "sort_by": "telegram_id",
+                "sort_order": "asc",
+                "limit": 20,
+                "offset": 0,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(response_telegram_filter.status_code, 200)
+        telegram_filtered_body = response_telegram_filter.json()
+        self.assertEqual(
+            [item["username"] for item in telegram_filtered_body["items"]],
+            ["highest", "inactive"],
+        )
+
+    async def test_export_accounts_returns_all_filtered_rows_as_csv(self) -> None:
+        token = await self._create_admin_token()
+        now = datetime(2026, 4, 15, 12, 30, tzinfo=UTC)
+
+        async with self._session_factory() as session:
+            exported_account = Account(
+                email=None,
+                display_name="Export Target",
+                telegram_id=700100200,
+                username="export_target",
+                status=AccountStatus.ACTIVE,
+                balance=4200,
+                subscription_status="active",
+                subscription_expires_at=now + timedelta(days=30),
+                created_at=now,
+                updated_at=now + timedelta(days=1),
+            )
+            hidden_account = Account(
+                email="hidden@example.com",
+                display_name="Hidden",
+                telegram_id=700999000,
+                username="hidden",
+                status=AccountStatus.BLOCKED,
+                balance=120,
+                created_at=now - timedelta(days=10),
+            )
+            session.add_all([exported_account, hidden_account])
+            await session.flush()
+            session.add(
+                AuthAccount(
+                    account_id=exported_account.id,
+                    provider=AuthProvider.GOOGLE,
+                    provider_uid="export-google",
+                    email="export@example.com",
+                    display_name="Export Target",
+                )
+            )
+            await session.commit()
+
+        response = await self.client.get(
+            "/api/v1/admin/accounts/export",
+            params={
+                "user_query": "export",
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("text/csv"))
+        self.assertIn(
+            'attachment; filename="accounts-export-',
+            response.headers["content-disposition"],
+        )
+
+        rows = list(
+            csv.DictReader(
+                StringIO(response.text.lstrip("\ufeff")),
+                delimiter=";",
+            )
+        )
+        self.assertEqual(len(rows), 1)
+        exported_row = rows[0]
+        self.assertEqual(exported_row["username"], "export_target")
+        self.assertEqual(exported_row["telegram_id"], "700100200")
+        self.assertEqual(exported_row["auth_email_primary"], "export@example.com")
+        self.assertEqual(exported_row["auth_providers"], "google")
+        self.assertEqual(exported_row["created_at"], "2026-04-15")
+        self.assertEqual(exported_row["updated_at"], "2026-04-16")
+        self.assertEqual(exported_row["subscription_expires_at"], "2026-05-15")
 
     async def test_subscription_plans_endpoint_returns_catalog(self) -> None:
         token = await self._create_admin_token()

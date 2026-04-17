@@ -310,6 +310,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "name": "  Expired 30+  ",
                 "description": "  Win-back после долгого перерыва  ",
+                "channels": ["in_app", "telegram"],
                 "audience": {
                     "segment": "expired",
                     "exclude_blocked": True,
@@ -327,6 +328,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         created = create_response.json()
         self.assertEqual(created["name"], "Expired 30+")
         self.assertEqual(created["description"], "Win-back после долгого перерыва")
+        self.assertEqual(created["channels"], ["in_app", "telegram"])
         self.assertEqual(created["audience"]["segment"], "expired")
         self.assertEqual(created["audience"]["subscription_expired_from_days"], 30)
         self.assertEqual(created["audience"]["subscription_expired_to_days"], 90)
@@ -352,6 +354,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "name": "Payment recovery",
                 "description": None,
+                "channels": ["telegram"],
                 "audience": {
                     "segment": "failed_payment",
                     "exclude_blocked": True,
@@ -366,6 +369,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["id"], preset_id)
         self.assertEqual(updated["name"], "Payment recovery")
         self.assertIsNone(updated["description"])
+        self.assertEqual(updated["channels"], ["telegram"])
         self.assertEqual(updated["audience"]["segment"], "failed_payment")
         self.assertEqual(updated["audience"]["failed_payment_within_last_days"], 14)
         self.assertEqual(updated["audience"]["cooldown_days"], 3)
@@ -402,6 +406,7 @@ class AdminBroadcastEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "name": "Missing preset",
                 "description": None,
+                "channels": ["in_app"],
                 "audience": {
                     "segment": "all",
                     "exclude_blocked": True,

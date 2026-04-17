@@ -137,6 +137,38 @@ def calculate_referral_reward_amount(
     return int(reward_amount)
 
 
+def get_referral_reward_payment_commission_rate(grant: SubscriptionGrant) -> Decimal:
+    if grant.purchase_source != "direct_payment":
+        return Decimal("0")
+
+    currency = (grant.currency or "").strip().upper()
+    if currency == "RUB":
+        return _to_decimal_rate(settings.referral_reward_payment_commission_rate_rub)
+    if currency == "XTR":
+        return _to_decimal_rate(settings.referral_reward_payment_commission_rate_xtr)
+    return Decimal("0")
+
+
+def calculate_referral_reward_purchase_amount_rub(
+    *, gross_purchase_amount_rub: int, payment_commission_rate: Decimal
+) -> int:
+    if gross_purchase_amount_rub <= 0:
+        return 0
+    if payment_commission_rate <= 0:
+        return gross_purchase_amount_rub
+    if payment_commission_rate >= Decimal("100"):
+        return 0
+    net_purchase_amount = (
+        Decimal(gross_purchase_amount_rub)
+        * (Decimal("100") - payment_commission_rate)
+        / Decimal("100")
+    ).quantize(
+        Decimal("1"),
+        rounding=ROUND_DOWN,
+    )
+    return int(net_purchase_amount)
+
+
 def _display_name_for_referral(account: Account | None) -> str:
     if account is None:
         return translate("api.referrals.fallback_user_name")
@@ -638,7 +670,12 @@ async def apply_first_referral_reward_for_grant(
     )
     plan = get_subscription_plan(grant.plan_code)
     reward_rate = get_effective_referral_reward_rate(referrer_account)
-    purchase_amount_rub = int(plan.price_rub)
+    gross_purchase_amount_rub = int(plan.price_rub)
+    payment_commission_rate = get_referral_reward_payment_commission_rate(grant)
+    purchase_amount_rub = calculate_referral_reward_purchase_amount_rub(
+        gross_purchase_amount_rub=gross_purchase_amount_rub,
+        payment_commission_rate=payment_commission_rate,
+    )
     reward_amount = calculate_referral_reward_amount(
         purchase_amount_rub=purchase_amount_rub,
         reward_rate=reward_rate,
@@ -685,6 +722,9 @@ async def apply_first_referral_reward_for_grant(
             "subscription_grant_id": grant.id,
             "reward_amount": reward_amount,
             "purchase_amount_rub": purchase_amount_rub,
+            "gross_purchase_amount_rub": gross_purchase_amount_rub,
+            "payment_commission_rate": float(payment_commission_rate),
+            "payment_currency": grant.currency,
             "reward_rate": float(reward_rate),
         },
     )

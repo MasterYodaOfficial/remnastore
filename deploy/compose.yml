@@ -95,7 +95,7 @@ services:
     command: ["--help"]
     logging: *default-logging
     volumes:
-      - ./old_db:/app/old_db:ro
+      - ./testdb_db:/app/testdb_db:ro
       - ./migration-reports:/app/migration-reports
     depends_on:
       db:
