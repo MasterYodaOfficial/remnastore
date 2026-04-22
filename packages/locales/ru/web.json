@@ -236,7 +236,7 @@
         "finance": "Финансы",
         "support": "Помощь"
       },
-      "supportEmailDescription": "Откроем почтовое приложение с уже заполненной темой и данными аккаунта.",
+      "supportEmailDescription": "Связь с поддержкой по электронной почте.",
       "labels": {
         "emailAccount": "Email аккаунт",
         "telegramAccount": "Telegram аккаунт",
