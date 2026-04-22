@@ -97,10 +97,10 @@ export function buildSupportMailtoUrl(context: SupportEmailContext): string {
   }
 
   const { subject, body } = buildSupportEmailDraft(context);
-  const params = new URLSearchParams({
-    subject,
-    body,
-  });
+  const params = [
+    `subject=${encodeURIComponent(subject)}`,
+    `body=${encodeURIComponent(body)}`,
+  ].join('&');
 
-  return `mailto:${supportEmail}?${params.toString()}`;
+  return `mailto:${supportEmail}?${params}`;
 }

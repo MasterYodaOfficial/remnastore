@@ -52,6 +52,8 @@ describe('buildSupportMailtoUrl', () => {
     const params = new URLSearchParams(query);
 
     expect(target).toBe('mailto:support+web@example.com');
+    expect(query).toContain('%20');
+    expect(query).not.toContain('+');
     expect(params.get('subject')).toBe('QuickCloud: обращение в поддержку');
     expect(params.get('body')).toContain('Пользователь: Иван Иванов');
   });

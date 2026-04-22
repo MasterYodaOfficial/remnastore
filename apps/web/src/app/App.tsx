@@ -5298,13 +5298,8 @@ export default function App() {
                           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-slate-100">
                             <Mail className="h-5 w-5" />
                           </div>
-                          <div>
-                            <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                              {t('web.settings.labels.supportEmail')}
-                            </div>
-                            <div className="text-sm text-slate-500 dark:text-slate-300">
-                              {t('web.settings.supportEmailDescription')}
-                            </div>
+                          <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                            {t('web.settings.labels.supportEmail')}
                           </div>
                         </div>
 
