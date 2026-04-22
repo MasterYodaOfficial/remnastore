@@ -180,7 +180,6 @@ export function SettingsPage({
       {
         icon: Mail,
         label: t('web.settings.labels.supportEmail'),
-        description: t('web.settings.supportEmailDescription'),
         action: onOpenSupportEmail ? (
           <button
             onClick={onOpenSupportEmail}
