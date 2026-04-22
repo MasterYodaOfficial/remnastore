@@ -23,6 +23,7 @@ export default defineConfig({
       VITE_SUPABASE_ANON_KEY: "playwright-anon-key",
       VITE_TELEGRAM_BOT_URL: "https://t.me/remnastore_test_bot",
       VITE_SUPPORT_TELEGRAM_URL: "https://t.me/remnastore_support",
+      VITE_SUPPORT_EMAIL: "support@example.com",
     },
   },
   projects: [

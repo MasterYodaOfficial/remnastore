@@ -34,6 +34,63 @@ export default defineConfig({
       '@locales': path.resolve(__dirname, '../../packages/locales'),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.split(path.sep).join('/')
+          if (!normalizedId.includes('/node_modules/')) {
+            return undefined
+          }
+
+          const chunkGroups: Array<[string, string[]]> = [
+            ['react-vendor', ['/react/', '/react-dom/', '/scheduler/']],
+            ['supabase-telegram-vendor', ['/@supabase/', '/@telegram-apps/']],
+            ['radix-vendor', ['/@radix-ui/', '/cmdk/', '/vaul/']],
+            ['charts-vendor', ['/recharts/', '/d3-']],
+            [
+              'ui-vendor',
+              [
+                '/lucide-react/',
+                '/class-variance-authority/',
+                '/clsx/',
+                '/tailwind-merge/',
+                '/sonner/',
+                '/input-otp/',
+                '/react-day-picker/',
+                '/date-fns/',
+              ],
+            ],
+            [
+              'misc-vendor',
+              [
+                '/@emotion/',
+                '/@mui/',
+                '/embla-carousel-react/',
+                '/motion/',
+                '/next-themes/',
+                '/react-dnd/',
+                '/react-dnd-html5-backend/',
+                '/react-hook-form/',
+                '/react-popper/',
+                '/react-resizable-panels/',
+                '/react-responsive-masonry/',
+                '/react-router/',
+              ],
+            ],
+          ]
+
+          for (const [chunkName, matchers] of chunkGroups) {
+            if (matchers.some((matcher) => normalizedId.includes(matcher))) {
+              return chunkName
+            }
+          }
+
+          return 'vendor'
+        },
+      },
+    },
+  },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],

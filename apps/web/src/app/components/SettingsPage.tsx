@@ -38,6 +38,10 @@ interface SettingsPageProps {
   onOpenPrivacy?: () => void;
   onOpenTerms?: () => void;
   onOpenSupport?: () => void;
+  supportEmail?: string;
+  onOpenSupportEmail?: () => void;
+  onCopySupportEmail?: () => void;
+  supportEmailCopied?: boolean;
   promoCode?: string;
   onPromoCodeChange?: (value: string) => void;
   onRedeemPromo?: () => void;
@@ -48,6 +52,7 @@ interface SettingsPageProps {
 type SettingsItem = {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
   label: string;
+  description?: string;
   action: React.ReactNode;
 };
 
@@ -85,6 +90,10 @@ export function SettingsPage({
   onOpenPrivacy,
   onOpenTerms,
   onOpenSupport,
+  supportEmail = '',
+  onOpenSupportEmail,
+  onCopySupportEmail,
+  supportEmailCopied = false,
   promoCode = '',
   onPromoCodeChange,
   onRedeemPromo,
@@ -147,6 +156,61 @@ export function SettingsPage({
         </button>
       ),
     });
+  }
+
+  const supportItems: SettingsItem[] = [
+    {
+      icon: MessageCircle,
+      label: t('web.settings.labels.support'),
+      action: onOpenSupport ? (
+        <button
+          onClick={onOpenSupport}
+          className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+        >
+          {t('web.settings.actions.go')}
+        </button>
+      ) : (
+        unavailableLabel
+      ),
+    },
+  ];
+
+  if (!isTelegramWebApp) {
+    supportItems.push(
+      {
+        icon: Mail,
+        label: t('web.settings.labels.supportEmail'),
+        description: t('web.settings.supportEmailDescription'),
+        action: onOpenSupportEmail ? (
+          <button
+            onClick={onOpenSupportEmail}
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
+          >
+            {t('web.settings.actions.write')}
+          </button>
+        ) : (
+          unavailableLabel
+        ),
+      },
+      {
+        icon: Mail,
+        label: t('web.settings.labels.supportEmailAddress'),
+        description: supportEmail || t('web.settings.unavailable'),
+        action:
+          supportEmail && onCopySupportEmail ? (
+            <button
+              onClick={onCopySupportEmail}
+              className="inline-flex items-center gap-2 rounded-lg border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90"
+            >
+              {supportEmailCopied
+                ? t('web.settings.actions.copied')
+                : t('web.settings.actions.copy')}
+            </button>
+          ) : (
+            unavailableLabel
+          ),
+      }
+    );
   }
 
   const settingsSections: SettingsSection[] = [
@@ -228,20 +292,7 @@ export function SettingsPage({
     {
       title: t('web.settings.sections.support'),
       items: [
-        {
-          icon: MessageCircle,
-          label: t('web.settings.labels.support'),
-          action: onOpenSupport ? (
-            <button
-              onClick={onOpenSupport}
-              className="inline-flex items-center gap-2 rounded-lg bg-[var(--tg-theme-button-color,#3390ec)] px-3 py-1 text-sm font-medium text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90"
-            >
-              {t('web.settings.actions.go')}
-            </button>
-          ) : (
-            unavailableLabel
-          ),
-        },
+        ...supportItems,
         {
           icon: HelpCircle,
           label: t('web.settings.labels.faq'),
@@ -351,11 +402,18 @@ export function SettingsPage({
                       : ''
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <Icon className="h-5 w-5 shrink-0 text-[var(--tg-theme-button-color,#3390ec)]" />
-                    <span className="text-[var(--tg-theme-text-color,#000000)] font-medium">
-                      {item.label}
-                    </span>
+                    <div className="min-w-0">
+                      <div className="font-medium text-[var(--tg-theme-text-color,#000000)]">
+                        {item.label}
+                      </div>
+                      {item.description ? (
+                        <div className="break-all text-sm text-[var(--tg-theme-hint-color,#999999)]">
+                          {item.description}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                   {item.action}
                 </div>

@@ -236,6 +236,7 @@
         "finance": "Финансы",
         "support": "Помощь"
       },
+      "supportEmailDescription": "Откроем почтовое приложение с уже заполненной темой и данными аккаунта.",
       "labels": {
         "emailAccount": "Email аккаунт",
         "telegramAccount": "Telegram аккаунт",
@@ -246,6 +247,8 @@
         "pendingPayments": "Незавершенные оплаты",
         "balanceHistory": "История баланса",
         "support": "Поддержка",
+        "supportEmail": "Написать на почту",
+        "supportEmailAddress": "Email поддержки",
         "faq": "FAQ",
         "privacy": "Политика конфиденциальности",
         "terms": "Пользовательское соглашение",
@@ -255,6 +258,9 @@
         "link": "Связать",
         "open": "Открыть",
         "go": "Перейти",
+        "write": "Написать",
+        "copy": "Скопировать",
+        "copied": "Скопировано",
         "logout": "Выйти из аккаунта"
       },
       "unavailable": "—"
@@ -656,6 +662,9 @@
         "referralCopied": "Реферальная ссылка скопирована",
         "referralCopyFailed": "Не удалось скопировать ссылку",
         "botLinkUnavailable": "Не настроена ссылка на Telegram-бота",
+        "supportEmailUnavailable": "Email поддержки пока недоступен",
+        "supportEmailCopied": "Email поддержки скопирован",
+        "supportEmailCopyFailed": "Не удалось скопировать email поддержки",
         "withdrawNoFunds": "Сейчас нет доступной суммы для вывода.",
         "withdrawFormLoadFailed": "Не удалось загрузить форму вывода.",
         "withdrawCreated": "Заявка на вывод создана и отправлена на рассмотрение администратора.",
@@ -753,6 +762,25 @@
         "termsBody": "Условия использования продукта",
         "notificationsPanelTitle": "Центр уведомлений",
         "notificationsPanelBody": "События по подписке, оплатам, реферальным начислениям и заявкам на вывод."
+      }
+    },
+    "supportEmail": {
+      "subject": "{brandName}: обращение в поддержку",
+      "greeting": "Добрый день!",
+      "fields": {
+        "name": "Пользователь",
+        "email": "Email аккаунта",
+        "telegramId": "Telegram ID",
+        "accountId": "ID аккаунта",
+        "subscriptionStatus": "Статус подписки",
+        "subscriptionExpiresAt": "Подписка действует до"
+      },
+      "prompt": "Опишите, пожалуйста, проблему:",
+      "values": {
+        "notSpecified": "Не указано",
+        "active": "Активна",
+        "trial": "Активен пробный доступ",
+        "defaultBrandName": "QuickCloud"
       }
     },
     "bottomNav": {
