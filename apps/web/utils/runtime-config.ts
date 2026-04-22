@@ -6,6 +6,7 @@ type PublicRuntimeConfigKey =
   | 'VITE_BROWSER_BRAND_NAME'
   | 'VITE_TELEGRAM_BOT_URL'
   | 'VITE_SUPPORT_TELEGRAM_URL'
+  | 'VITE_SUPPORT_EMAIL'
   | 'VITE_TELEGRAM_WEB_APP_FALLBACK_URL'
 
 type RuntimeConfigStore = Partial<Record<PublicRuntimeConfigKey, string>>
@@ -70,3 +71,6 @@ export const supportTelegramUrl =
     'VITE_SUPPORT_TELEGRAM_URL',
     import.meta.env.VITE_SUPPORT_TELEGRAM_URL
   ) ?? ''
+
+export const supportEmail =
+  readConfigValue('VITE_SUPPORT_EMAIL', import.meta.env.VITE_SUPPORT_EMAIL) ?? ''

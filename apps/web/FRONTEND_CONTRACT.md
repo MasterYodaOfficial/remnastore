@@ -670,6 +670,7 @@ Frontend использует такие переменные:
 - `VITE_BROWSER_BRAND_NAME` — бренд для `document.title` и названия вкладки браузера
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота для browser login entrypoint
 - `VITE_SUPPORT_TELEGRAM_URL` — ссылка на support chat / support contact action
+- `VITE_SUPPORT_EMAIL` — email для browser support через `mailto:`
 - `VITE_TELEGRAM_WEB_APP_FALLBACK_URL` — optional same-origin fallback для `telegram-web-app.js`
 
 В production Docker runtime эти значения должны приходить из `runtime-config.js`, который генерируется контейнером при старте из хостового `.env`.

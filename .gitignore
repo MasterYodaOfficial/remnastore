@@ -56,3 +56,4 @@ playwright-report/
 /.env.example2
 /logs/
 /apps/admin.zip
+/index.html

@@ -68,6 +68,7 @@ VITE_SUPABASE_ANON_KEY=your_public_key
 VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_SUPPORT_EMAIL=support@example.com
 VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 
 BOT_USE_WEBHOOK=true

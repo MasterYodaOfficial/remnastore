@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { supabase } from '../../utils/supabase/client';
 import {
   browserBrandName as BROWSER_BRAND_NAME,
   apiBaseUrl as BACKEND_API,
+  supportEmail as SUPPORT_EMAIL,
   supportTelegramUrl as SUPPORT_TELEGRAM_URL,
   telegramBotUrl as TELEGRAM_BOT_URL,
 } from '../../utils/runtime-config'
@@ -18,24 +19,17 @@ import {
 } from '../../utils/telegram';
 import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
-import { HomePage } from './components/HomePage';
-import { PlansPage } from './components/PlansPage';
-import { ReferralPage, type ReferralFeedFilter } from './components/ReferralPage';
+import type { ReferralFeedFilter } from './components/ReferralPage';
 import { ReferralCard } from './components/ReferralCard';
 import { PromoRedeemCard, type PromoRedeemMessage } from './components/PromoRedeemCard';
-import { SettingsPage } from './components/SettingsPage';
 import { SubscriptionCard } from './components/SubscriptionCard';
 import { ThemeToggle } from './components/ThemeToggle';
 import { BottomNav } from './components/BottomNav';
-import { PaymentMethodSheet, type PaymentMethodOption, type PaymentMethodProvider } from './components/PaymentMethodSheet';
-import { TopUpModal } from './components/TopUpModal';
-import { WithdrawalRequestModal } from './components/WithdrawalRequestModal';
+import type { PaymentMethodOption, PaymentMethodProvider } from './components/PaymentMethodSheet';
 import { LoadingScreen } from './components/LoadingScreen';
-import { NotificationsPage, type NotificationItemView } from './components/NotificationsPage';
-import { PendingPaymentsPage, type PendingPaymentView } from './components/PendingPaymentsPage';
-import { FaqPage } from './components/FaqPage';
-import { LegalDocumentPage } from './components/LegalDocumentPage';
-import { BalanceHistoryPage, type BalanceHistoryItemView } from './components/BalanceHistoryPage';
+import type { NotificationItemView } from './components/NotificationsPage';
+import type { PendingPaymentView } from './components/PendingPaymentsPage';
+import type { BalanceHistoryItemView } from './components/BalanceHistoryPage';
 import { WithdrawalRequestsCard, type WithdrawalRequestItemView } from './components/WithdrawalRequestsCard';
 import { formatRubles } from '../lib/currency';
 import { getTranslationValue, t } from '../lib/i18n';
@@ -47,6 +41,7 @@ import {
   readPendingReferralCode,
   clearPendingReferralCode,
 } from './lib/referrals';
+import { buildSupportMailtoUrl } from './lib/support';
 import { normalizeReferralMetric, resolveReferralAmount } from './lib/referral-metrics';
 import {
   getEffectiveStoredPaymentAttemptStatus,
@@ -62,12 +57,15 @@ import {
 } from './lib/payments';
 import {
   Bell,
+  Check,
+  Copy,
   CreditCard,
   FileText,
   Gift,
   HelpCircle,
   LayoutDashboard,
   LogOut,
+  Mail,
   MessageCircle,
   Moon,
   Settings as SettingsIcon,
@@ -133,6 +131,86 @@ const applyBrowserTabIcon = (href: string) => {
     link.href = href;
   }
 };
+
+const LazyHomePage = React.lazy(async () => ({
+  default: (await import('./components/HomePage')).HomePage,
+}));
+
+const LazyPlansPage = React.lazy(async () => ({
+  default: (await import('./components/PlansPage')).PlansPage,
+}));
+
+const LazyReferralPage = React.lazy(async () => ({
+  default: (await import('./components/ReferralPage')).ReferralPage,
+}));
+
+const LazySettingsPage = React.lazy(async () => ({
+  default: (await import('./components/SettingsPage')).SettingsPage,
+}));
+
+const LazyNotificationsPage = React.lazy(async () => ({
+  default: (await import('./components/NotificationsPage')).NotificationsPage,
+}));
+
+const LazyPendingPaymentsPage = React.lazy(async () => ({
+  default: (await import('./components/PendingPaymentsPage')).PendingPaymentsPage,
+}));
+
+const LazyFaqPage = React.lazy(async () => ({
+  default: (await import('./components/FaqPage')).FaqPage,
+}));
+
+const LazyLegalDocumentPage = React.lazy(async () => ({
+  default: (await import('./components/LegalDocumentPage')).LegalDocumentPage,
+}));
+
+const LazyBalanceHistoryPage = React.lazy(async () => ({
+  default: (await import('./components/BalanceHistoryPage')).BalanceHistoryPage,
+}));
+
+const LazyTopUpModal = React.lazy(async () => ({
+  default: (await import('./components/TopUpModal')).TopUpModal,
+}));
+
+const LazyWithdrawalRequestModal = React.lazy(async () => ({
+  default: (await import('./components/WithdrawalRequestModal')).WithdrawalRequestModal,
+}));
+
+const LazyPaymentMethodSheet = React.lazy(async () => ({
+  default: (await import('./components/PaymentMethodSheet')).PaymentMethodSheet,
+}));
+
+function ChunkFallback({
+  className = 'p-6',
+  minHeightClassName = 'min-h-[240px]',
+}: {
+  className?: string;
+  minHeightClassName?: string;
+}) {
+  return (
+    <div className={`${className} ${minHeightClassName} flex items-center justify-center`}>
+      <div className="flex flex-col items-center gap-3 text-center">
+        <div className="h-10 w-10 animate-spin rounded-full border-2 border-[var(--tg-theme-button-color,#3390ec)] border-t-transparent" />
+        <div className="text-sm font-medium text-[var(--tg-theme-text-color,#000000)]">
+          {t('web.loadingScreen.title')}
+        </div>
+        <div className="text-xs text-[var(--tg-theme-hint-color,#999999)]">
+          {t('web.loadingScreen.subtitle')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalChunkFallback() {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
+      <div className="rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] px-6 py-5 shadow-[0_24px_64px_rgba(15,23,42,0.24)]">
+        <ChunkFallback className="p-0" minHeightClassName="min-h-0" />
+      </div>
+    </div>
+  );
+}
 
 const APP_THEME_TOKENS = {
   light: {
@@ -1153,6 +1231,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [referralCopied, setReferralCopied] = useState(false);
+  const [supportEmailCopied, setSupportEmailCopied] = useState(false);
   const [referralSummary, setReferralSummary] = useState<BackendReferralSummary | null>(null);
   const [isLoadingReferralSummary, setIsLoadingReferralSummary] = useState(false);
   const [referralFeedFilter, setReferralFeedFilter] = useState<ReferralFeedFilter>('all');
@@ -2833,6 +2912,59 @@ export default function App() {
     }
   };
 
+  const handleOpenSupportEmail = () => {
+    const mailtoUrl = buildSupportMailtoUrl({
+      browserBrandName: BROWSER_BRAND_NAME,
+      supportEmail: SUPPORT_EMAIL,
+      user: user
+        ? {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            telegramId: user.telegram_id,
+          }
+        : null,
+      subscription: subscription
+        ? {
+            status: subscription.status,
+            expiresAt: subscription.expiresAt,
+            isTrial: subscription.isTrial,
+          }
+        : null,
+    });
+
+    if (!mailtoUrl) {
+      toast.error(t('web.app.toasts.supportEmailUnavailable'));
+      return;
+    }
+
+    window.location.assign(mailtoUrl);
+  };
+
+  const handleCopySupportEmail = () => {
+    if (!SUPPORT_EMAIL) {
+      toast.error(t('web.app.toasts.supportEmailUnavailable'));
+      return;
+    }
+
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      toast.error(t('web.app.toasts.supportEmailCopyFailed'));
+      return;
+    }
+
+    void navigator.clipboard
+      .writeText(SUPPORT_EMAIL)
+      .then(() => {
+        setSupportEmailCopied(true);
+        toast.success(t('web.app.toasts.supportEmailCopied'));
+        window.setTimeout(() => setSupportEmailCopied(false), 2000);
+      })
+      .catch((err) => {
+        console.error('Support email copy error:', err);
+        toast.error(t('web.app.toasts.supportEmailCopyFailed'));
+      });
+  };
+
   const markNotificationRead = async (notificationId: number) => {
     if (!accessToken) {
       return;
@@ -4366,12 +4498,64 @@ export default function App() {
     referralAvailableForWithdrawValue,
     referralSummary?.available_for_withdraw
   );
+  const showBrowserSupportEmail = !hasTelegramContext;
+
+  const topUpModalNode = isTopUpModalOpen ? (
+    <Suspense fallback={<ModalChunkFallback />}>
+      <LazyTopUpModal
+        isOpen={isTopUpModalOpen}
+        onClose={() => setIsTopUpModalOpen(false)}
+        onTopUp={handleTopUpAmount}
+        isSubmitting={isTopUpSubmitting}
+        activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
+      />
+    </Suspense>
+  ) : null;
+
+  const withdrawalRequestModalNode = isWithdrawalModalOpen ? (
+    <Suspense fallback={<ModalChunkFallback />}>
+      <LazyWithdrawalRequestModal
+        isOpen={isWithdrawalModalOpen}
+        onClose={() => setIsWithdrawalModalOpen(false)}
+        onSubmit={handleCreateWithdrawal}
+        isSubmitting={isWithdrawalSubmitting}
+        availableForWithdraw={currentAvailableForWithdraw}
+        minimumAmount={withdrawalMinimumAmount}
+      />
+    </Suspense>
+  ) : null;
+
+  const paymentMethodSheetNode = paymentMethodSelection ? (
+    <Suspense fallback={<ModalChunkFallback />}>
+      <LazyPaymentMethodSheet
+        isOpen={Boolean(paymentMethodSelection)}
+        title={getPaymentSheetTitle(paymentMethodSelection)}
+        subtitle={getPaymentSheetSubtitle(paymentMethodSelection)}
+        methods={paymentMethodSheetMethods}
+        isSubmitting={Boolean(paymentMethodSubmitting)}
+        selectedProvider={paymentMethodSubmitting}
+        onClose={() => {
+          if (!paymentMethodSubmitting) {
+            setPaymentMethodSelection(null);
+          }
+        }}
+        onSelect={(provider) => {
+          void handlePaymentMethodSelect(provider);
+        }}
+        promoCode={paymentMethodSelection?.kind === 'plan' ? planPromoCode : undefined}
+        onPromoCodeChange={paymentMethodSelection?.kind === 'plan' ? handlePlanPromoCodeChange : undefined}
+        onApplyPromo={paymentMethodSelection?.kind === 'plan' ? handleApplyPlanPromo : undefined}
+        isApplyingPromo={isApplyingPlanPromo}
+        promoMessage={paymentMethodSelection?.kind === 'plan' ? planPromoMessage : null}
+      />
+    </Suspense>
+  ) : null;
 
   const renderContent = () => {
     switch (activeTab) {
       case 'home':
         return (
-          <HomePage
+          <LazyHomePage
             subscription={subscriptionData}
             referralData={{
               referralCode: currentReferralCode,
@@ -4391,7 +4575,7 @@ export default function App() {
         );
       case 'plans':
         return (
-          <PlansPage
+          <LazyPlansPage
             plans={plans}
             balance={user.balance}
             onBuyPlan={handleBuyPlan}
@@ -4404,7 +4588,7 @@ export default function App() {
         );
       case 'notifications':
         return (
-          <NotificationsPage
+          <LazyNotificationsPage
             items={notifications}
             total={notificationsTotal}
             unreadCount={notificationsUnreadCount}
@@ -4424,7 +4608,7 @@ export default function App() {
         );
       case 'payments':
         return (
-          <PendingPaymentsPage
+          <LazyPendingPaymentsPage
             items={pendingPayments}
             isLoading={isLoadingActivePayments}
             onBack={handleBackToSettings}
@@ -4433,7 +4617,7 @@ export default function App() {
         );
       case 'balance-history':
         return (
-          <BalanceHistoryPage
+          <LazyBalanceHistoryPage
             items={ledgerEntries}
             total={ledgerEntriesTotal}
             isLoading={isLoadingLedgerEntries}
@@ -4443,14 +4627,14 @@ export default function App() {
           />
         );
       case 'faq':
-        return <FaqPage onBack={handleBackToSettings} />;
+        return <LazyFaqPage onBack={handleBackToSettings} />;
       case 'privacy':
-        return <LegalDocumentPage kind="privacy" onBack={handleBackToSettings} />;
+        return <LazyLegalDocumentPage kind="privacy" onBack={handleBackToSettings} />;
       case 'terms':
-        return <LegalDocumentPage kind="terms" onBack={handleBackToSettings} />;
+        return <LazyLegalDocumentPage kind="terms" onBack={handleBackToSettings} />;
       case 'referral':
         return (
-          <ReferralPage
+          <LazyReferralPage
             referralCode={currentReferralCode}
             referrals={(referralFeed?.items || []).map((item) => ({
               id: item.referred_account_id,
@@ -4482,7 +4666,7 @@ export default function App() {
         );
       case 'settings':
         return (
-          <SettingsPage
+          <LazySettingsPage
             theme={theme}
             onThemeChange={setTheme}
             onLogout={handleLogout}
@@ -4500,6 +4684,10 @@ export default function App() {
             onOpenPrivacy={handleOpenPrivacy}
             onOpenTerms={handleOpenTerms}
             onOpenSupport={handleOpenSupport}
+            supportEmail={showBrowserSupportEmail ? SUPPORT_EMAIL : ''}
+            onOpenSupportEmail={showBrowserSupportEmail ? handleOpenSupportEmail : undefined}
+            onCopySupportEmail={showBrowserSupportEmail ? handleCopySupportEmail : undefined}
+            supportEmailCopied={supportEmailCopied}
             promoCode={settingsPromoCode}
             onPromoCodeChange={handleSettingsPromoCodeChange}
             onRedeemPromo={handleRedeemSettingsPromo}
@@ -4511,6 +4699,10 @@ export default function App() {
         return null;
     }
   };
+
+  const renderContentWithSuspense = (className: string) => (
+    <Suspense fallback={<ChunkFallback className={className} />}>{renderContent()}</Suspense>
+  );
 
   const scrollToSection = (sectionId: string) => {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -4665,42 +4857,9 @@ export default function App() {
   const renderDesktopBrowserLayout = () => (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dbeafe_0%,#eff6ff_24%,#f8fafc_58%,#eef2ff_100%)] px-8 py-8 dark:bg-[radial-gradient(circle_at_top_left,#0f172a_0%,#111827_28%,#020617_100%)]">
       <Toaster position="top-center" />
-      <TopUpModal
-        isOpen={isTopUpModalOpen}
-        onClose={() => setIsTopUpModalOpen(false)}
-        onTopUp={handleTopUpAmount}
-        isSubmitting={isTopUpSubmitting}
-        activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
-      />
-      <WithdrawalRequestModal
-        isOpen={isWithdrawalModalOpen}
-        onClose={() => setIsWithdrawalModalOpen(false)}
-        onSubmit={handleCreateWithdrawal}
-        isSubmitting={isWithdrawalSubmitting}
-        availableForWithdraw={currentAvailableForWithdraw}
-        minimumAmount={withdrawalMinimumAmount}
-      />
-      <PaymentMethodSheet
-        isOpen={Boolean(paymentMethodSelection)}
-        title={getPaymentSheetTitle(paymentMethodSelection)}
-        subtitle={getPaymentSheetSubtitle(paymentMethodSelection)}
-        methods={paymentMethodSheetMethods}
-        isSubmitting={Boolean(paymentMethodSubmitting)}
-        selectedProvider={paymentMethodSubmitting}
-        onClose={() => {
-          if (!paymentMethodSubmitting) {
-            setPaymentMethodSelection(null);
-          }
-        }}
-        onSelect={(provider) => {
-          void handlePaymentMethodSelect(provider);
-        }}
-        promoCode={paymentMethodSelection?.kind === 'plan' ? planPromoCode : undefined}
-        onPromoCodeChange={paymentMethodSelection?.kind === 'plan' ? handlePlanPromoCodeChange : undefined}
-        onApplyPromo={paymentMethodSelection?.kind === 'plan' ? handleApplyPlanPromo : undefined}
-        isApplyingPromo={isApplyingPlanPromo}
-        promoMessage={paymentMethodSelection?.kind === 'plan' ? planPromoMessage : null}
-      />
+      {topUpModalNode}
+      {withdrawalRequestModalNode}
+      {paymentMethodSheetNode}
 
       <div className="mx-auto flex max-w-[1520px] gap-6">
         <aside className="sticky top-8 h-[calc(100vh-4rem)] w-[310px] shrink-0 overflow-y-auto rounded-[32px] border border-white/70 bg-white/82 p-6 shadow-[0_32px_80px_rgba(15,23,42,0.14)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_32px_80px_rgba(2,6,23,0.55)]">
@@ -5132,6 +5291,59 @@ export default function App() {
                     </div>
                   </button>
 
+                  {showBrowserSupportEmail ? (
+                    <div className="rounded-[24px] border border-slate-200 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-950">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-slate-100">
+                            <Mail className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                              {t('web.settings.labels.supportEmail')}
+                            </div>
+                            <div className="text-sm text-slate-500 dark:text-slate-300">
+                              {t('web.settings.supportEmailDescription')}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleOpenSupportEmail}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 dark:border dark:border-slate-800 dark:bg-slate-900"
+                        >
+                          {t('web.settings.actions.write')}
+                        </button>
+                      </div>
+
+                      <div className="mt-4 flex flex-col gap-3 rounded-[20px] bg-slate-50 px-4 py-3 dark:bg-slate-900/80 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+                            {t('web.settings.labels.supportEmailAddress')}
+                          </div>
+                          <div className="mt-1 break-all text-sm font-medium text-slate-900 dark:text-slate-100">
+                            {SUPPORT_EMAIL || t('web.settings.unavailable')}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={handleCopySupportEmail}
+                          disabled={!SUPPORT_EMAIL}
+                          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
+                        >
+                          {supportEmailCopied ? (
+                            <Check className="h-4 w-4" />
+                          ) : (
+                            <Copy className="h-4 w-4" />
+                          )}
+                          {supportEmailCopied
+                            ? t('web.settings.actions.copied')
+                            : t('web.settings.actions.copy')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <button
                     onClick={handleOpenFaq}
                     className="flex items-center justify-between rounded-[24px] border border-slate-200 bg-white px-4 py-4 text-left transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900"
@@ -5230,23 +5442,32 @@ export default function App() {
               </div>
             </div>
 
-            <NotificationsPage
-              items={notifications}
-              total={notificationsTotal}
-              unreadCount={notificationsUnreadCount}
-              isLoading={isLoadingNotifications}
-              isLoadingMore={isLoadingMoreNotifications}
-              isUpdatingReadState={isUpdatingNotificationReadState}
-              embedded
-              onMarkRead={(notificationId) => {
-                void markNotificationRead(notificationId);
-              }}
-              onMarkAllRead={() => {
-                void markAllNotificationsRead();
-              }}
-              onLoadMore={handleLoadMoreNotifications}
-              onOpenAction={handleNotificationAction}
-            />
+            <Suspense
+              fallback={
+                <ChunkFallback
+                  className="rounded-[24px] bg-slate-50 dark:bg-slate-900"
+                  minHeightClassName="min-h-[280px]"
+                />
+              }
+            >
+              <LazyNotificationsPage
+                items={notifications}
+                total={notificationsTotal}
+                unreadCount={notificationsUnreadCount}
+                isLoading={isLoadingNotifications}
+                isLoadingMore={isLoadingMoreNotifications}
+                isUpdatingReadState={isUpdatingNotificationReadState}
+                embedded
+                onMarkRead={(notificationId) => {
+                  void markNotificationRead(notificationId);
+                }}
+                onMarkAllRead={() => {
+                  void markAllNotificationsRead();
+                }}
+                onLoadMore={handleLoadMoreNotifications}
+                onOpenAction={handleNotificationAction}
+              />
+            </Suspense>
           </section>
         </main>
       </div>
@@ -5258,7 +5479,7 @@ export default function App() {
       <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,#dbeafe_0%,#eff6ff_24%,#f8fafc_58%,#eef2ff_100%)] px-6 py-8 dark:bg-[radial-gradient(circle_at_top_left,#0f172a_0%,#111827_28%,#020617_100%)]">
         <Toaster position="top-center" />
         <div className="mx-auto max-w-4xl rounded-[32px] border border-white/70 bg-white/82 shadow-[0_28px_72px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800/80 dark:bg-slate-950/76 dark:shadow-[0_28px_72px_rgba(2,6,23,0.55)]">
-          {renderContent()}
+          {renderContentWithSuspense('p-6')}
         </div>
       </div>
     );
@@ -5279,42 +5500,9 @@ export default function App() {
       }`}
     >
       <Toaster position="top-center" />
-      <TopUpModal
-        isOpen={isTopUpModalOpen}
-        onClose={() => setIsTopUpModalOpen(false)}
-        onTopUp={handleTopUpAmount}
-        isSubmitting={isTopUpSubmitting}
-        activeAttemptAmount={activeTopUpAttempt?.amount ?? null}
-      />
-      <WithdrawalRequestModal
-        isOpen={isWithdrawalModalOpen}
-        onClose={() => setIsWithdrawalModalOpen(false)}
-        onSubmit={handleCreateWithdrawal}
-        isSubmitting={isWithdrawalSubmitting}
-        availableForWithdraw={currentAvailableForWithdraw}
-        minimumAmount={withdrawalMinimumAmount}
-      />
-      <PaymentMethodSheet
-        isOpen={Boolean(paymentMethodSelection)}
-        title={getPaymentSheetTitle(paymentMethodSelection)}
-        subtitle={getPaymentSheetSubtitle(paymentMethodSelection)}
-        methods={paymentMethodSheetMethods}
-        isSubmitting={Boolean(paymentMethodSubmitting)}
-        selectedProvider={paymentMethodSubmitting}
-        onClose={() => {
-          if (!paymentMethodSubmitting) {
-            setPaymentMethodSelection(null);
-          }
-        }}
-        onSelect={(provider) => {
-          void handlePaymentMethodSelect(provider);
-        }}
-        promoCode={paymentMethodSelection?.kind === 'plan' ? planPromoCode : undefined}
-        onPromoCodeChange={paymentMethodSelection?.kind === 'plan' ? handlePlanPromoCodeChange : undefined}
-        onApplyPromo={paymentMethodSelection?.kind === 'plan' ? handleApplyPlanPromo : undefined}
-        isApplyingPromo={isApplyingPlanPromo}
-        promoMessage={paymentMethodSelection?.kind === 'plan' ? planPromoMessage : null}
-      />
+      {topUpModalNode}
+      {withdrawalRequestModalNode}
+      {paymentMethodSheetNode}
 
       <div
         className={`${
@@ -5345,7 +5533,7 @@ export default function App() {
               : 'flex-1 pb-24'
           }`}
         >
-          {renderContent()}
+          {renderContentWithSuspense(isCompactBrowserLayout ? 'px-4 py-6' : 'p-6')}
         </main>
         <BottomNav
           activeTab={bottomNavActiveTab}

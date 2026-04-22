@@ -21,6 +21,7 @@
 - `VITE_WEB_BRAND_NAME` — название сервиса в `document.title`
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота
 - `VITE_SUPPORT_TELEGRAM_URL` — ссылка на поддержку
+- `VITE_SUPPORT_EMAIL` — email поддержки для browser-версии кабинета
 - `VITE_TELEGRAM_WEB_APP_FALLBACK_URL` — optional fallback URL для self-hosted копии `telegram-web-app.js`
 
 ### Telegram и внутренняя связка сервисов
@@ -100,6 +101,7 @@ VITE_API_BASE_URL=http://localhost:8000
 VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_SUPPORT_EMAIL=support@example.com
 VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 ```
 
@@ -115,6 +117,7 @@ VITE_SUPABASE_ANON_KEY=your_public_key
 VITE_WEB_BRAND_NAME=QuickVPN
 VITE_TELEGRAM_BOT_URL=https://t.me/your_bot_username
 VITE_SUPPORT_TELEGRAM_URL=https://t.me/your_support
+VITE_SUPPORT_EMAIL=support@example.com
 VITE_TELEGRAM_WEB_APP_FALLBACK_URL=/vendor/telegram-web-app.js
 
 BOT_USE_WEBHOOK=true
