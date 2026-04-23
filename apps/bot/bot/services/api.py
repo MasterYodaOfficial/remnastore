@@ -123,3 +123,55 @@ class ApiClient:
             {"telegram_id": telegram_id, "idempotency_key": idempotency_key},
             authorized=True,
         )
+
+    async def test_bot_admin_broadcast(
+        self,
+        *,
+        admin_telegram_id: int,
+        source_chat_id: int,
+        source_message_ids: list[int],
+        media_group_id: str | None,
+    ) -> dict:
+        return await self._post(
+            "/api/v1/internal/bot/admin/broadcasts/test",
+            {
+                "admin_telegram_id": admin_telegram_id,
+                "source_chat_id": source_chat_id,
+                "source_message_ids": source_message_ids,
+                "media_group_id": media_group_id,
+            },
+            authorized=True,
+        )
+
+    async def send_now_bot_admin_broadcast(
+        self,
+        *,
+        admin_telegram_id: int,
+        source_chat_id: int,
+        source_message_ids: list[int],
+        media_group_id: str | None,
+    ) -> dict:
+        return await self._post(
+            "/api/v1/internal/bot/admin/broadcasts/send-now",
+            {
+                "admin_telegram_id": admin_telegram_id,
+                "source_chat_id": source_chat_id,
+                "source_message_ids": source_message_ids,
+                "media_group_id": media_group_id,
+            },
+            authorized=True,
+        )
+
+    async def get_bot_admin_broadcast_statuses(
+        self, *, admin_telegram_id: int, limit: int = 5
+    ) -> dict:
+        return await self._get(
+            f"/api/v1/internal/bot/admin/broadcasts?admin_telegram_id={admin_telegram_id}&limit={limit}",
+            authorized=True,
+        )
+
+    async def get_bot_admin_stats_summary(self, *, admin_telegram_id: int) -> dict:
+        return await self._get(
+            f"/api/v1/internal/bot/admin/stats/summary?admin_telegram_id={admin_telegram_id}",
+            authorized=True,
+        )

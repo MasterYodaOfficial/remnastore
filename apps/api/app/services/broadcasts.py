@@ -38,6 +38,7 @@ from app.db.models import (
 )
 from app.domain.payments import PaymentFlowType, PaymentStatus
 from app.services.accounts import mark_telegram_bot_blocked
+from app.services.admin_auth import create_admin, get_admin_by_login
 from app.services.notifications import (
     TelegramNotificationConfigurationError,
     TelegramNotificationDeliveryError,
@@ -218,6 +219,9 @@ DIRECT_PLAN_PENDING_STATUSES = (
     PaymentStatus.PENDING,
     PaymentStatus.REQUIRES_ACTION,
 )
+BOT_ADMIN_BROADCAST_USERNAME_PREFIX = "bot-admin-telegram-"
+BOT_ADMIN_BROADCAST_NAME_PREFIX = "bot-admin-broadcast"
+BOT_ADMIN_DEFAULT_BROADCAST_TITLE = "Сообщение администрации"
 DIRECT_PLAN_FAILED_STATUSES = (
     PaymentStatus.FAILED,
     PaymentStatus.CANCELLED,
@@ -349,6 +353,10 @@ def _broadcast_title_html(title: str) -> str:
 
 
 def build_broadcast_telegram_html(broadcast: Broadcast) -> str:
+    if broadcast.content_type == BroadcastContentType.TELEGRAM_COPY:
+        raise BroadcastValidationError(
+            "telegram copy broadcasts do not render HTML bodies"
+        )
     return "\n\n".join(
         part
         for part in (
@@ -373,6 +381,8 @@ def build_broadcast_notification_payload(broadcast: Broadcast) -> dict[str, obje
         "image_url": broadcast.image_url,
         "body_html": broadcast.body_html,
         "buttons": broadcast.buttons,
+        "telegram_copy_source_chat_id": broadcast.telegram_copy_source_chat_id,
+        "telegram_copy_message_ids": broadcast.telegram_copy_message_ids,
     }
 
 
@@ -384,6 +394,64 @@ def _normalize_scheduled_datetime(value: datetime) -> datetime:
 
 def _now_moscow() -> datetime:
     return datetime.now(BROADCAST_TZ)
+
+
+def _normalize_telegram_copy_message_ids(value: object) -> list[int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise BroadcastValidationError("telegram_copy_message_ids must be a list")
+    if not value:
+        raise BroadcastValidationError(
+            "telegram_copy_message_ids must contain at least one message id"
+        )
+    if len(value) > 100:
+        raise BroadcastValidationError(
+            "telegram_copy_message_ids must contain at most 100 ids"
+        )
+
+    normalized_ids: list[int] = []
+    seen: set[int] = set()
+    for item in value:
+        if isinstance(item, bool):
+            raise BroadcastValidationError(
+                "telegram_copy_message_ids must contain integers"
+            )
+        try:
+            message_id = int(item)
+        except (TypeError, ValueError) as exc:
+            raise BroadcastValidationError(
+                "telegram_copy_message_ids must contain integers"
+            ) from exc
+        if message_id <= 0:
+            raise BroadcastValidationError(
+                "telegram_copy_message_ids must contain positive integers"
+            )
+        if message_id in seen:
+            continue
+        seen.add(message_id)
+        normalized_ids.append(message_id)
+
+    normalized_ids.sort()
+    return normalized_ids
+
+
+def _normalize_telegram_copy_source_chat_id(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise BroadcastValidationError(
+            "telegram_copy_source_chat_id must be an integer"
+        )
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise BroadcastValidationError(
+            "telegram_copy_source_chat_id must be an integer"
+        ) from exc
+    if normalized == 0:
+        raise BroadcastValidationError("telegram_copy_source_chat_id must not be zero")
+    return normalized
 
 
 def _normalize_optional_int(
@@ -665,6 +733,24 @@ def _get_broadcast_audience_config(broadcast: Broadcast) -> BroadcastAudienceCon
 
 def validate_broadcast_runtime_constraints(broadcast: Broadcast) -> None:
     channels = normalize_broadcast_channels(broadcast.channels)
+    if broadcast.content_type == BroadcastContentType.TELEGRAM_COPY:
+        if channels != [BroadcastChannel.TELEGRAM.value]:
+            raise BroadcastValidationError(
+                "telegram copy broadcasts must use telegram channel only"
+            )
+        if broadcast.telegram_copy_source_chat_id is None:
+            raise BroadcastValidationError(
+                "telegram copy broadcasts require source_chat_id"
+            )
+        message_ids = _normalize_telegram_copy_message_ids(
+            broadcast.telegram_copy_message_ids
+        )
+        if message_ids is None:
+            raise BroadcastValidationError(
+                "telegram copy broadcasts require source message ids"
+            )
+        broadcast.telegram_copy_message_ids = message_ids
+        return
     if (
         broadcast.content_type == BroadcastContentType.PHOTO
         and BroadcastChannel.TELEGRAM.value in channels
@@ -756,7 +842,36 @@ async def _send_broadcast_to_telegram(
     reply_markup = build_broadcast_telegram_reply_markup(broadcast.buttons)
     client = get_telegram_notification_client()
     try:
-        if broadcast.content_type == BroadcastContentType.PHOTO:
+        if broadcast.content_type == BroadcastContentType.TELEGRAM_COPY:
+            source_chat_id = _normalize_telegram_copy_source_chat_id(
+                broadcast.telegram_copy_source_chat_id
+            )
+            source_message_ids = _normalize_telegram_copy_message_ids(
+                broadcast.telegram_copy_message_ids
+            )
+            if source_chat_id is None or source_message_ids is None:
+                raise BroadcastValidationError(
+                    "telegram copy broadcasts require source chat and message ids"
+                )
+            if len(source_message_ids) == 1:
+                message_ids.append(
+                    await client.copy_message(
+                        telegram_id=telegram_id,
+                        from_chat_id=source_chat_id,
+                        message_id=source_message_ids[0],
+                        disable_notification=True,
+                    )
+                )
+            else:
+                message_ids.extend(
+                    await client.copy_messages(
+                        telegram_id=telegram_id,
+                        from_chat_id=source_chat_id,
+                        message_ids=source_message_ids,
+                        disable_notification=True,
+                    )
+                )
+        elif broadcast.content_type == BroadcastContentType.PHOTO:
             image_url = _normalize_required_text(
                 broadcast.image_url or "",
                 field_name="image_url",
@@ -1669,10 +1784,16 @@ async def list_broadcasts(
     limit: int,
     offset: int,
     status: BroadcastStatus | None = None,
+    content_type: BroadcastContentType | None = None,
+    created_by_admin_id: uuid.UUID | None = None,
 ) -> tuple[list[Broadcast], int]:
     filters = []
     if status is not None:
         filters.append(Broadcast.status == status)
+    if content_type is not None:
+        filters.append(Broadcast.content_type == content_type)
+    if created_by_admin_id is not None:
+        filters.append(Broadcast.created_by_admin_id == created_by_admin_id)
 
     total = int(
         await session.scalar(
@@ -1842,6 +1963,127 @@ async def get_broadcast(
     return await session.get(Broadcast, broadcast_id)
 
 
+def _build_bot_admin_actor_username(telegram_id: int) -> str:
+    return f"{BOT_ADMIN_BROADCAST_USERNAME_PREFIX}{telegram_id}"
+
+
+async def get_or_create_bot_admin_actor(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+):
+    username = _build_bot_admin_actor_username(telegram_id)
+    admin = await get_admin_by_login(session, username)
+    if admin is not None:
+        if not admin.is_active:
+            admin.is_active = True
+        if not admin.is_superuser:
+            admin.is_superuser = True
+        await session.flush()
+        return admin
+
+    return await create_admin(
+        session,
+        username=username,
+        password=uuid.uuid4().hex,
+        email=None,
+        full_name=f"Telegram bot admin {telegram_id}",
+        is_superuser=True,
+    )
+
+
+async def get_bot_admin_actor(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+):
+    return await get_admin_by_login(
+        session, _build_bot_admin_actor_username(telegram_id)
+    )
+
+
+def _build_bot_admin_broadcast_name(*, telegram_id: int, now: datetime) -> str:
+    return (
+        f"{BOT_ADMIN_BROADCAST_NAME_PREFIX}-{telegram_id}-"
+        f"{now.astimezone(UTC).strftime('%Y%m%d%H%M%S')}"
+    )
+
+
+async def send_bot_admin_broadcast_preview(
+    *,
+    telegram_id: int,
+    source_chat_id: int,
+    source_message_ids: list[int],
+) -> list[str]:
+    broadcast = Broadcast(
+        name=BOT_ADMIN_BROADCAST_NAME_PREFIX,
+        title=BOT_ADMIN_DEFAULT_BROADCAST_TITLE,
+        body_html="telegram copy preview",
+        content_type=BroadcastContentType.TELEGRAM_COPY,
+        image_url=None,
+        telegram_copy_source_chat_id=_normalize_telegram_copy_source_chat_id(
+            source_chat_id
+        ),
+        telegram_copy_message_ids=_normalize_telegram_copy_message_ids(
+            source_message_ids
+        ),
+        channels=[BroadcastChannel.TELEGRAM.value],
+        buttons=[],
+        audience=build_broadcast_audience_payload(
+            audience=normalize_broadcast_audience_config(
+                audience={"segment": BroadcastAudienceSegment.ALL.value}
+            )
+        ),
+        status=BroadcastStatus.DRAFT,
+        estimated_total_accounts=0,
+        estimated_in_app_recipients=0,
+        estimated_telegram_recipients=0,
+        created_by_admin_id=uuid.UUID(int=0),
+        updated_by_admin_id=uuid.UUID(int=0),
+    )
+    validate_broadcast_runtime_constraints(broadcast)
+    return await _send_broadcast_to_telegram(
+        telegram_id=telegram_id,
+        broadcast=broadcast,
+    )
+
+
+async def create_and_launch_bot_admin_broadcast(
+    session: AsyncSession,
+    *,
+    admin_telegram_id: int,
+    source_chat_id: int,
+    source_message_ids: list[int],
+    comment: str | None,
+    idempotency_key: str,
+) -> Broadcast:
+    actor_admin = await get_or_create_bot_admin_actor(
+        session, telegram_id=admin_telegram_id
+    )
+    now = _now_moscow()
+    broadcast = await create_broadcast_draft(
+        session,
+        admin_id=actor_admin.id,
+        name=_build_bot_admin_broadcast_name(telegram_id=admin_telegram_id, now=now),
+        title=BOT_ADMIN_DEFAULT_BROADCAST_TITLE,
+        body_html="telegram copy",
+        content_type=BroadcastContentType.TELEGRAM_COPY,
+        image_url=None,
+        channels=[BroadcastChannel.TELEGRAM],
+        buttons=[],
+        audience={"segment": BroadcastAudienceSegment.ALL.value},
+        telegram_copy_source_chat_id=source_chat_id,
+        telegram_copy_message_ids=source_message_ids,
+    )
+    return await launch_broadcast_now(
+        session,
+        broadcast_id=broadcast.id,
+        admin_id=actor_admin.id,
+        comment=comment,
+        idempotency_key=idempotency_key,
+    )
+
+
 async def create_broadcast_draft(
     session: AsyncSession,
     *,
@@ -1854,19 +2096,39 @@ async def create_broadcast_draft(
     channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
     buttons: list[dict[str, str]],
     audience: dict[str, object] | None,
+    telegram_copy_source_chat_id: int | None = None,
+    telegram_copy_message_ids: list[int] | None = None,
 ) -> Broadcast:
     normalized_name = _normalize_required_text(name, field_name="name")
     normalized_title = _normalize_required_text(title, field_name="title")
-    normalized_body_html = validate_telegram_html_subset(body_html)
     normalized_channels = normalize_broadcast_channels(channels)
+    audience_config = normalize_broadcast_audience_config(audience=audience)
+    normalized_body_html = validate_telegram_html_subset(body_html)
     normalized_buttons = normalize_broadcast_buttons(buttons)
     normalized_image_url = _normalize_optional_text(image_url)
-    audience_config = normalize_broadcast_audience_config(audience=audience)
+    normalized_source_chat_id = _normalize_telegram_copy_source_chat_id(
+        telegram_copy_source_chat_id
+    )
+    normalized_source_message_ids = _normalize_telegram_copy_message_ids(
+        telegram_copy_message_ids
+    )
 
-    if content_type == BroadcastContentType.PHOTO and normalized_image_url is None:
-        raise BroadcastValidationError("image_url is required for photo broadcast")
-    if content_type == BroadcastContentType.TEXT:
+    if content_type == BroadcastContentType.PHOTO:
+        if normalized_image_url is None:
+            raise BroadcastValidationError("image_url is required for photo broadcast")
+        normalized_source_chat_id = None
+        normalized_source_message_ids = None
+    elif content_type == BroadcastContentType.TEXT:
         normalized_image_url = None
+        normalized_source_chat_id = None
+        normalized_source_message_ids = None
+    elif content_type == BroadcastContentType.TELEGRAM_COPY:
+        normalized_image_url = None
+        normalized_buttons = []
+        if normalized_source_chat_id is None or normalized_source_message_ids is None:
+            raise BroadcastValidationError(
+                "telegram copy broadcast requires source chat and message ids"
+            )
 
     estimate = await estimate_broadcast_audience(
         session,
@@ -1880,6 +2142,8 @@ async def create_broadcast_draft(
         body_html=normalized_body_html,
         content_type=content_type,
         image_url=normalized_image_url,
+        telegram_copy_source_chat_id=normalized_source_chat_id,
+        telegram_copy_message_ids=normalized_source_message_ids,
         channels=normalized_channels,
         buttons=normalized_buttons,
         audience=build_broadcast_audience_payload(audience=audience_config),
@@ -1924,6 +2188,8 @@ async def update_broadcast_draft(
     channels: tuple[BroadcastChannel, ...] | list[BroadcastChannel],
     buttons: list[dict[str, str]],
     audience: dict[str, object] | None,
+    telegram_copy_source_chat_id: int | None = None,
+    telegram_copy_message_ids: list[int] | None = None,
 ) -> Broadcast:
     broadcast = await session.get(Broadcast, broadcast_id)
     if broadcast is None:
@@ -1936,16 +2202,34 @@ async def update_broadcast_draft(
 
     normalized_name = _normalize_required_text(name, field_name="name")
     normalized_title = _normalize_required_text(title, field_name="title")
-    normalized_body_html = validate_telegram_html_subset(body_html)
     normalized_channels = normalize_broadcast_channels(channels)
+    audience_config = normalize_broadcast_audience_config(audience=audience)
+    normalized_body_html = validate_telegram_html_subset(body_html)
     normalized_buttons = normalize_broadcast_buttons(buttons)
     normalized_image_url = _normalize_optional_text(image_url)
-    audience_config = normalize_broadcast_audience_config(audience=audience)
+    normalized_source_chat_id = _normalize_telegram_copy_source_chat_id(
+        telegram_copy_source_chat_id
+    )
+    normalized_source_message_ids = _normalize_telegram_copy_message_ids(
+        telegram_copy_message_ids
+    )
 
-    if content_type == BroadcastContentType.PHOTO and normalized_image_url is None:
-        raise BroadcastValidationError("image_url is required for photo broadcast")
-    if content_type == BroadcastContentType.TEXT:
+    if content_type == BroadcastContentType.PHOTO:
+        if normalized_image_url is None:
+            raise BroadcastValidationError("image_url is required for photo broadcast")
+        normalized_source_chat_id = None
+        normalized_source_message_ids = None
+    elif content_type == BroadcastContentType.TEXT:
         normalized_image_url = None
+        normalized_source_chat_id = None
+        normalized_source_message_ids = None
+    elif content_type == BroadcastContentType.TELEGRAM_COPY:
+        normalized_image_url = None
+        normalized_buttons = []
+        if normalized_source_chat_id is None or normalized_source_message_ids is None:
+            raise BroadcastValidationError(
+                "telegram copy broadcast requires source chat and message ids"
+            )
 
     estimate = await estimate_broadcast_audience(
         session,
@@ -1958,6 +2242,8 @@ async def update_broadcast_draft(
     broadcast.body_html = normalized_body_html
     broadcast.content_type = content_type
     broadcast.image_url = normalized_image_url
+    broadcast.telegram_copy_source_chat_id = normalized_source_chat_id
+    broadcast.telegram_copy_message_ids = normalized_source_message_ids
     broadcast.channels = normalized_channels
     broadcast.buttons = normalized_buttons
     broadcast.audience = build_broadcast_audience_payload(audience=audience_config)

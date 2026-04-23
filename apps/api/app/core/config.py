@@ -1,7 +1,32 @@
+import re
 from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_BOT_ADMIN_IDS_SPLIT_RE = re.compile(r"[\s,]+")
+
+
+def parse_bot_admin_ids(raw_value: str) -> tuple[int, ...]:
+    normalized = raw_value.strip()
+    if not normalized:
+        return ()
+
+    admin_ids: list[int] = []
+    for token in _BOT_ADMIN_IDS_SPLIT_RE.split(normalized):
+        if not token:
+            continue
+        if not token.isdigit():
+            raise ValueError(
+                "BOT_ADMIN_IDS must contain only positive integer Telegram IDs"
+            )
+        admin_id = int(token)
+        if admin_id <= 0:
+            raise ValueError("BOT_ADMIN_IDS must contain only positive Telegram IDs")
+        if admin_id not in admin_ids:
+            admin_ids.append(admin_id)
+    return tuple(admin_ids)
 
 
 class Settings(BaseSettings):
@@ -233,6 +258,11 @@ class Settings(BaseSettings):
     )
     telegram_init_data_ttl_seconds: int = 600
     webapp_url: str = Field(default="", validation_alias="WEBAPP_URL")
+    bot_admin_ids: str = Field(default="", validation_alias="BOT_ADMIN_IDS")
+
+    @property
+    def bot_admin_id_list(self) -> tuple[int, ...]:
+        return parse_bot_admin_ids(self.bot_admin_ids)
 
 
 settings = Settings()

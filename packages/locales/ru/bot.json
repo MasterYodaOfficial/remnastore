@@ -1,7 +1,8 @@
 {
   "bot": {
     "commands": {
-      "start_description": "Открыть QuickVPN и меню"
+      "start_description": "Открыть QuickVPN и меню",
+      "master_description": "Открыть админ-меню"
     },
     "start": {
       "welcome": "<b>QuickVPN</b>\n\n🚀 <b>Быстрый, стабильный и удобный VPN — прямо в Telegram</b>\n\nЗдесь вы можете:\n• проверить статус доступа\n• продлить подписку\n• открыть конфигурацию\n• посмотреть тарифы и бонусы\n\n💡 <b>Важно:</b> у вас один аккаунт для <b>Telegram и браузера</b>.\nЕсли Telegram временно недоступен, вы всё равно сможете зайти в <b>браузерный кабинет</b>, продлить или купить доступ, а затем снова пользоваться QuickVPN в Telegram.\n\n✨ Всё управление — в пару нажатий.\nИспользуйте кнопки ниже, чтобы открыть кабинет внутри Telegram или сразу перейти в браузер.",
@@ -93,6 +94,67 @@
     "errors": {
       "api_http_error": "{detail}",
       "api_invalid_response": "Сервис временно вернул неполный ответ. Попробуйте ещё раз."
+    },
+    "admin": {
+      "buttons": {
+        "broadcast": "Рассылка",
+        "status": "Статус рассылок",
+        "stats": "Статистика",
+        "close": "Закрыть",
+        "back": "Назад",
+        "new_draft": "Новый черновик",
+        "test_to_self": "Тест себе",
+        "send_now": "Разослать всем"
+      },
+      "menu": {
+        "caption": "🛠 <b>Админ-меню</b>\n\nВыберите раздел. Команда <code>/master</code> показывается только admin ID из <code>BOT_ADMIN_IDS</code>.",
+        "closed": "✅ <b>Админ-меню закрыто</b>\n\nЧтобы открыть его снова, используйте <code>/master</code>."
+      },
+      "broadcast": {
+        "default_title": "Сообщение администрации",
+        "prompt": "📣 <b>Telegram-рассылка копированием</b>\n\nПришлите или перешлите сюда сообщение. Я сохраню его как источник для <code>copyMessage</code> или <code>copyMessages</code>.\n\nЭтот режим работает только для Telegram-пользователей бота. HTML/in-app рассылки остаются в админ-панели.",
+        "draft_saved": "✅ <b>Черновик сохранён</b>\n\nРежим: <b>{content_type}</b>\nЧат-источник: <code>{source_chat_id}</code>\nMessage ID(ы): <code>{source_message_id}</code>\n{media_group_line}{preview_line}{unsupported_line}Если черновик поддерживается, можно сразу отправить тест себе или поставить Telegram-рассылку в очередь.",
+        "media_group_line": "Альбом: {media_group_id} · сообщений: {messages_count}\n",
+        "preview_line": "Превью: {preview}\n",
+        "unsupported_line": "⚠️ Пока не могу разослать этот черновик: {reason}\n",
+        "unsupported_type": "тип сообщения пока не поддерживается: {content_type}",
+        "unsupported_media_group": "альбомы и media group будут добавлены следующим этапом",
+        "unsupported_empty_text": "пустой текст не получится разослать",
+        "draft_missing": "черновик не найден, создайте его заново",
+        "test_success": "🧪 <b>Тест отправлен</b>\n\nРежим: <b>{content_type}</b>\nСкопировано сообщений: <b>{copied_messages_count}</b>\nMessage ID: <code>{telegram_message_ids}</code>",
+        "send_now_success": "🚀 <b>Рассылка поставлена в очередь</b>\n\nBroadcast ID: <code>{broadcast_id}</code>\nСтатус: <b>{status}</b>\nRun: <b>{latest_run_status}</b>\nОжидаем Telegram-получателей: <b>{estimated_telegram_recipients}</b>\nPending: <b>{pending_deliveries}</b>\nDelivered: <b>{delivered_deliveries}</b>\nFailed: <b>{failed_deliveries}</b>\nSkipped: <b>{skipped_deliveries}</b>",
+        "content_types": {
+          "text": "текст",
+          "photo": "фото",
+          "video": "видео",
+          "animation": "анимация",
+          "document": "документ",
+          "audio": "аудио",
+          "voice": "голосовое",
+          "video_note": "видеосообщение",
+          "sticker": "стикер",
+          "poll": "опрос",
+          "contact": "контакт",
+          "location": "локация",
+          "venue": "место",
+          "media_group": "медиа-группа",
+          "telegram_copy": "копирование Telegram-сообщения",
+          "unknown": "неизвестный тип"
+        }
+      },
+      "status": {
+        "placeholder": "📬 <b>Статус рассылок</b>\n\nЭкран подключён, но данные из backend ещё не выведены.\nСледующий шаг: показать последние запуски, доставлено, ошибки и паузы.",
+        "caption": "📬 <b>Последние рассылки</b>",
+        "empty": "📬 <b>Последние рассылки</b>\n\nПока запусков нет.",
+        "item": "• <b>#{broadcast_id}</b> · {content_type}\nСтатус broadcast: <code>{status}</code>\nСтатус run: <code>{latest_run_status}</code>\nTelegram-аудитория: <b>{estimated_telegram_recipients}</b>\nPending: <b>{pending_deliveries}</b> · Delivered: <b>{delivered_deliveries}</b>\nFailed: <b>{failed_deliveries}</b> · Skipped: <b>{skipped_deliveries}</b>"
+      },
+      "stats": {
+        "placeholder": "📊 <b>Статистика бота</b>\n\nРаздел подготовлен как точка входа.\nСледующий шаг: вывести количество пользователей, Telegram-аудиторию, активных и платящих.",
+        "summary": "📊 <b>Статистика бота</b>\n\n👥 Всего аккаунтов: <b>{total_accounts}</b>\n🔐 Активные подписки: <b>{active_subscriptions}</b>\n📱 Аккаунты с Telegram: <b>{accounts_with_telegram}</b>\n💳 Платящих за 30 дней: <b>{paying_accounts_last_30d}</b>\n🆕 Новых за 7 дней: <b>{new_accounts_last_7d}</b>\n⛔ Заблокированных: <b>{blocked_accounts}</b>\n\n⏳ Pending платежи: <b>{pending_payments}</b>\n💸 Pending выводы: <b>{pending_withdrawals}</b>\n\n💰 Поступления RUB за 30 дней: <b>{successful_payments_amount_rub_last_30d} ₽</b>\nЧеков RUB: <b>{successful_payments_rub_last_30d}</b>\n🛒 Продажи тарифов RUB: <b>{direct_plan_purchases_rub_last_30d}</b> / <b>{direct_plan_revenue_rub_last_30d} ₽</b>\n⭐ Продажи тарифов Stars: <b>{direct_plan_purchases_stars_last_30d}</b> / <b>{direct_plan_revenue_stars_last_30d}</b>\n\n👛 Баланс кошельков: <b>{total_wallet_balance} ₽</b>\n🎁 Реферальные начисления: <b>{total_referral_earnings} ₽</b>"
+      },
+      "errors": {
+        "backend_unavailable": "backend недоступен"
+      }
     }
   }
 }

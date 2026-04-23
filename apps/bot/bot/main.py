@@ -9,14 +9,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, Update
+from aiogram.types import BotCommand, BotCommandScopeChat, Update
 from fastapi import FastAPI, HTTPException, Request, Response
 from redis.asyncio import Redis
 from uvicorn import Config, Server
 
 from bot.core.config import settings
 from bot.core.logging import configure_logging
-from bot.handlers import menu, payments, start, webapp
+from bot.handlers import admin, menu, payments, start, webapp
 from bot.services.i18n import translate
 from bot.services.media_registry import get_media_registry
 from bot.services.session_store import close_menu_session_store
@@ -41,6 +41,7 @@ def create_dispatcher() -> Dispatcher:
 
     dp = Dispatcher(storage=storage)
     dp.include_router(start.router)
+    dp.include_router(admin.router)
     dp.include_router(menu.router)
     dp.include_router(payments.router)
     dp.include_router(webapp.router)
@@ -63,14 +64,52 @@ def build_runtime() -> tuple[Bot, Dispatcher]:
 
 
 async def on_startup(bot: Bot) -> None:
-    await bot.set_my_commands(
-        [
-            BotCommand(
-                command="start",
-                description=translate("bot.commands.start_description"),
-            )
-        ]
+    await bot.set_my_commands(_build_default_commands())
+    if not settings.bot_admin_id_list:
+        return
+
+    bot_info = await bot.get_me()
+    if bot_info.id in settings.bot_admin_id_list:
+        logger.warning(
+            "BOT_ADMIN_IDS contains the current bot id; use Telegram user ids for admin access",
+            extra={
+                "bot_id": bot_info.id,
+                "admin_ids_count": len(settings.bot_admin_id_list),
+            },
+        )
+
+    admin_commands = _build_admin_commands()
+    for admin_id in settings.bot_admin_id_list:
+        await bot.set_my_commands(
+            admin_commands,
+            scope=BotCommandScopeChat(chat_id=admin_id),
+        )
+    logger.info(
+        "Configured scoped admin commands",
+        extra={"admin_ids_count": len(settings.bot_admin_id_list)},
     )
+
+
+def _build_default_commands() -> list[BotCommand]:
+    return [
+        BotCommand(
+            command="start",
+            description=translate("bot.commands.start_description"),
+        )
+    ]
+
+
+def _build_admin_commands() -> list[BotCommand]:
+    return [
+        BotCommand(
+            command="start",
+            description=translate("bot.commands.start_description"),
+        ),
+        BotCommand(
+            command="master",
+            description=translate("bot.commands.master_description"),
+        ),
+    ]
 
 
 async def on_shutdown(bot: Bot) -> None:

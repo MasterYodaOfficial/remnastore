@@ -46,6 +46,8 @@ class RemnawaveUser:
     email: Optional[str]
     tag: Optional[str]
     hwid_device_limit: Optional[int] = None
+    traffic_limit_bytes: Optional[int] = None
+    traffic_limit_strategy: Optional[str] = None
     used_traffic_bytes: int = 0
     lifetime_used_traffic_bytes: int = 0
     online_at: Optional[datetime] = None
@@ -110,6 +112,14 @@ def _normalize_status(status: object) -> str:
     return str(value)
 
 
+def _normalize_optional_strategy(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = getattr(value, "value", value)
+    rendered = str(normalized).strip()
+    return rendered or None
+
+
 def _resolve_user_status(status: str | None, *, expire_at: datetime) -> UserStatus:
     normalized = _normalize_status(status).strip().upper() if status is not None else ""
     for candidate in UserStatus:
@@ -135,6 +145,10 @@ def _to_user_snapshot(response: object) -> RemnawaveUser:
         email=response.email,
         tag=response.tag,
         hwid_device_limit=getattr(response, "hwid_device_limit", None),
+        traffic_limit_bytes=getattr(response, "traffic_limit_bytes", None),
+        traffic_limit_strategy=_normalize_optional_strategy(
+            getattr(response, "traffic_limit_strategy", None)
+        ),
         used_traffic_bytes=int(getattr(response, "used_traffic_bytes", 0) or 0),
         lifetime_used_traffic_bytes=int(
             getattr(response, "lifetime_used_traffic_bytes", 0) or 0
@@ -148,12 +162,16 @@ def _resolve_effective_hwid_device_limit(
     *,
     existing_user: RemnawaveUser | None,
     requested_limit: int | None,
+    is_trial: bool,
 ) -> int | None:
     if existing_user is None:
         return requested_limit
 
     existing_limit = getattr(existing_user, "hwid_device_limit", None)
+    existing_tag = _normalize_optional_strategy(getattr(existing_user, "tag", None))
     if existing_limit is not None:
+        if existing_tag == "TRIAL" and not is_trial and requested_limit is not None:
+            return requested_limit
         return existing_limit
     if requested_limit is not None:
         return requested_limit
@@ -336,6 +354,7 @@ class RemnawaveGateway:
         effective_hwid_device_limit = _resolve_effective_hwid_device_limit(
             existing_user=existing_user,
             requested_limit=hwid_device_limit,
+            is_trial=is_trial,
         )
         create_payload = {
             "uuid": user_uuid,
@@ -416,6 +435,7 @@ class RemnawaveGateway:
         effective_hwid_device_limit = _resolve_effective_hwid_device_limit(
             existing_user=existing_user,
             requested_limit=hwid_device_limit,
+            is_trial=is_trial,
         )
         create_payload = {
             "uuid": user_uuid,

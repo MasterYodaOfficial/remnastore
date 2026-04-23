@@ -42,6 +42,8 @@ class _FakeUsersController:
             email=body.email,
             tag=body.tag,
             hwid_device_limit=body.hwid_device_limit,
+            traffic_limit_bytes=getattr(body, "traffic_limit_bytes", None),
+            traffic_limit_strategy=getattr(body, "traffic_limit_strategy", None),
         )
 
     async def update_user(self, body):
@@ -56,6 +58,8 @@ class _FakeUsersController:
             email=body.email,
             tag=body.tag,
             hwid_device_limit=body.hwid_device_limit,
+            traffic_limit_bytes=getattr(body, "traffic_limit_bytes", None),
+            traffic_limit_strategy=getattr(body, "traffic_limit_strategy", None),
         )
 
 
@@ -309,6 +313,51 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(patch_call["url"], "users")
         self.assertIn("tag", patch_call["json"])
         self.assertIsNone(patch_call["json"]["tag"])
+        self.assertEqual(patch_call["json"]["trafficLimitBytes"], 0)
+        self.assertEqual(patch_call["json"]["trafficLimitStrategy"], "NO_RESET")
+
+    async def test_upsert_user_overrides_existing_trial_device_limit_when_becoming_paid(
+        self,
+    ) -> None:
+        settings.remnawave_default_internal_squad_uuid = ""
+        settings.remnawave_default_internal_squad_name = ""
+        squad_uuid = uuid.UUID("76767676-7676-7676-7676-767676767676")
+        gateway = self._make_gateway(
+            squads=[SimpleNamespace(uuid=squad_uuid, name="DEFAULT")]
+        )
+        existing_uuid = uuid.UUID("78787878-7878-7878-7878-787878787878")
+
+        async def _existing_trial_user(user_uuid):
+            del user_uuid
+            return SimpleNamespace(
+                uuid=existing_uuid,
+                username="existing-trial-user",
+                status="ACTIVE",
+                expire_at=datetime(2026, 3, 18, 12, 0, tzinfo=UTC),
+                subscription_url="https://panel.test/sub/existing-trial",
+                telegram_id=700204,
+                email="trial-device-limit@example.com",
+                tag="TRIAL",
+                hwid_device_limit=3,
+            )
+
+        gateway.get_user_by_uuid = _existing_trial_user
+
+        await gateway.upsert_user(
+            user_uuid=existing_uuid,
+            expire_at=datetime(2026, 4, 18, 12, 0, tzinfo=UTC),
+            email="trial-device-limit@example.com",
+            telegram_id=700204,
+            status="ACTIVE",
+            is_trial=False,
+            hwid_device_limit=9,
+            traffic_limit_bytes=0,
+            traffic_limit_strategy="NO_RESET",
+        )
+
+        patch_call = gateway._sdk.users.client.patch_calls[0]
+        self.assertIsNone(patch_call["json"]["tag"])
+        self.assertEqual(patch_call["json"]["hwidDeviceLimit"], 9)
         self.assertEqual(patch_call["json"]["trafficLimitBytes"], 0)
         self.assertEqual(patch_call["json"]["trafficLimitStrategy"], "NO_RESET")
 

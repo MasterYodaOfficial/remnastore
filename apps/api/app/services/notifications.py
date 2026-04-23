@@ -347,6 +347,60 @@ class TelegramNotificationClient:
             )
         return result
 
+    async def _request_raw(self, method: str, *, json: dict) -> object:
+        try:
+            response = await self._client.post(
+                f"/bot{self._bot_token}/{method}",
+                json=json,
+            )
+        except httpx.HTTPError as exc:
+            raise TelegramNotificationDeliveryError(
+                "Telegram API request failed",
+                code="http_error",
+                retryable=True,
+            ) from exc
+
+        payload = response.json()
+        if response.status_code == 429:
+            retry_after = payload.get("parameters", {}).get("retry_after")
+            raise TelegramNotificationDeliveryError(
+                str(payload.get("description") or "Telegram rate limit exceeded"),
+                code="rate_limited",
+                retryable=True,
+                retry_after_seconds=int(retry_after)
+                if isinstance(retry_after, int)
+                else None,
+            )
+
+        if response.status_code >= 500:
+            raise TelegramNotificationDeliveryError(
+                str(payload.get("description") or "Telegram server error"),
+                code=f"http_{response.status_code}",
+                retryable=True,
+            )
+
+        if response.status_code >= 400 or payload.get("ok") is False:
+            description = str(
+                payload.get("description") or "Telegram API rejected the message"
+            )
+            if _is_telegram_bot_blocked_error(
+                status_code=response.status_code,
+                description=description,
+            ):
+                raise TelegramNotificationDeliveryError(
+                    description,
+                    code="telegram_bot_blocked",
+                    retryable=False,
+                    mark_telegram_bot_blocked=True,
+                )
+            raise TelegramNotificationDeliveryError(
+                description,
+                code=f"http_{response.status_code}",
+                retryable=False,
+            )
+
+        return payload.get("result")
+
     async def send_message(
         self,
         *,
@@ -407,6 +461,64 @@ class TelegramNotificationClient:
                 retryable=True,
             )
         return str(message_id)
+
+    async def copy_message(
+        self,
+        *,
+        telegram_id: int,
+        from_chat_id: int,
+        message_id: int,
+        disable_notification: bool | None = True,
+    ) -> str:
+        payload: dict[str, object] = {
+            "chat_id": telegram_id,
+            "from_chat_id": from_chat_id,
+            "message_id": message_id,
+        }
+        if disable_notification is not None:
+            payload["disable_notification"] = disable_notification
+        result = await self._request("copyMessage", json=payload)
+        copied_message_id = result.get("message_id")
+        if copied_message_id is None:
+            raise TelegramNotificationDeliveryError(
+                "Telegram API did not return message_id",
+                code="missing_message_id",
+                retryable=True,
+            )
+        return str(copied_message_id)
+
+    async def copy_messages(
+        self,
+        *,
+        telegram_id: int,
+        from_chat_id: int,
+        message_ids: list[int],
+        disable_notification: bool | None = True,
+    ) -> list[str]:
+        payload: dict[str, object] = {
+            "chat_id": telegram_id,
+            "from_chat_id": from_chat_id,
+            "message_ids": message_ids,
+        }
+        if disable_notification is not None:
+            payload["disable_notification"] = disable_notification
+        result = await self._request_raw("copyMessages", json=payload)
+        if not isinstance(result, list):
+            raise TelegramNotificationDeliveryError(
+                "Telegram API did not return copied message ids",
+                code="invalid_result",
+                retryable=True,
+            )
+        copied_message_ids: list[str] = []
+        for item in result:
+            if not isinstance(item, dict) or item.get("message_id") is None:
+                raise TelegramNotificationDeliveryError(
+                    "Telegram API returned invalid copied message ids",
+                    code="invalid_result",
+                    retryable=True,
+                )
+            copied_message_ids.append(str(item["message_id"]))
+        return copied_message_ids
 
 
 def get_telegram_notification_client() -> TelegramNotificationClient:
