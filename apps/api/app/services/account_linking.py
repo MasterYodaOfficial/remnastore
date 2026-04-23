@@ -9,6 +9,7 @@ from typing import Any, Optional
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.models import (
     Account,
     AccountStatus,
@@ -39,6 +40,16 @@ from app.services.account_events import append_account_event
 from app.services.cache import get_cache
 from app.services.i18n import translate
 from app.services.ledger import transfer_balance_for_merge
+from app.services.plans import (
+    SubscriptionPlanError,
+    get_subscription_plan,
+    resolve_plan_device_limit,
+)
+from app.services.purchases import (
+    NO_RESET_TRAFFIC_LIMIT_STRATEGY,
+    resolve_trial_traffic_limit_bytes,
+    resolve_trial_traffic_limit_strategy,
+)
 
 
 class LinkTokenExpiredError(Exception):
@@ -102,6 +113,13 @@ class RemnawaveUserSelectionResult:
 class RemnawaveReconcileResult:
     merged_user: RemnawaveUser
     audit_payload: dict[str, Any]
+
+
+@dataclass(slots=True)
+class RemnawaveEntitlementSnapshot:
+    hwid_device_limit: int | None
+    traffic_limit_bytes: int | None
+    traffic_limit_strategy: str | None
 
 
 def _normalize_datetime(value: datetime | None) -> datetime | None:
@@ -288,6 +306,9 @@ def _serialize_remnawave_user_snapshot(user: RemnawaveUser) -> dict[str, Any]:
         "telegram_id": user.telegram_id,
         "email": _normalize_optional_text(user.email),
         "tag": _normalize_optional_text(user.tag),
+        "hwid_device_limit": user.hwid_device_limit,
+        "traffic_limit_bytes": user.traffic_limit_bytes,
+        "traffic_limit_strategy": _normalize_optional_text(user.traffic_limit_strategy),
         "used_traffic_bytes": int(user.used_traffic_bytes or 0),
         "lifetime_used_traffic_bytes": int(user.lifetime_used_traffic_bytes or 0),
         "online_at": _normalize_datetime(user.online_at),
@@ -388,6 +409,121 @@ def _merge_trial_metadata(target_account: Account, source_account: Account) -> N
     target_account.trial_ends_at = _later_datetime(
         target_account.trial_ends_at,
         source_account.trial_ends_at,
+    )
+
+
+def _resolve_remote_user_for_candidate(
+    *,
+    candidate: SubscriptionSnapshotCandidate | None,
+    remote_users_by_uuid: dict[uuid.UUID, RemnawaveUser],
+) -> RemnawaveUser | None:
+    if candidate is None or candidate.remnawave_user_uuid is None:
+        return None
+    return remote_users_by_uuid.get(candidate.remnawave_user_uuid)
+
+
+async def _resolve_latest_paid_device_limit_from_grants(
+    session: AsyncSession,
+    *,
+    target_account: Account,
+    source_account: Account,
+) -> int:
+    result = await session.execute(
+        select(SubscriptionGrant.plan_code)
+        .where(
+            SubscriptionGrant.account_id.in_([target_account.id, source_account.id]),
+            SubscriptionGrant.applied_at.is_not(None),
+        )
+        .order_by(
+            SubscriptionGrant.target_expires_at.desc(),
+            SubscriptionGrant.applied_at.desc(),
+            SubscriptionGrant.created_at.desc(),
+            SubscriptionGrant.id.desc(),
+        )
+        .limit(1)
+    )
+    plan_code = result.scalar_one_or_none()
+    if plan_code is None:
+        return resolve_plan_device_limit(None)
+    try:
+        plan = get_subscription_plan(plan_code)
+    except SubscriptionPlanError:
+        return resolve_plan_device_limit(None)
+    return resolve_plan_device_limit(plan)
+
+
+async def _resolve_remnawave_entitlements(
+    session: AsyncSession,
+    *,
+    target_account: Account,
+    source_account: Account,
+    keep_user: RemnawaveUser,
+    preferred_candidate: SubscriptionSnapshotCandidate | None,
+    resolved_is_trial: bool,
+    remote_users: list[RemnawaveUser],
+) -> RemnawaveEntitlementSnapshot:
+    remote_users_by_uuid = {user.uuid: user for user in remote_users}
+    candidate_remote_user = _resolve_remote_user_for_candidate(
+        candidate=preferred_candidate,
+        remote_users_by_uuid=remote_users_by_uuid,
+    )
+
+    if resolved_is_trial:
+        trial_source = None
+        if candidate_remote_user is not None and candidate_remote_user.tag == "TRIAL":
+            trial_source = candidate_remote_user
+        elif keep_user.tag == "TRIAL":
+            trial_source = keep_user
+        return RemnawaveEntitlementSnapshot(
+            hwid_device_limit=(
+                trial_source.hwid_device_limit
+                if trial_source is not None
+                and trial_source.hwid_device_limit is not None
+                else settings.trial_device_limit
+            ),
+            traffic_limit_bytes=(
+                trial_source.traffic_limit_bytes
+                if trial_source is not None
+                and trial_source.traffic_limit_bytes is not None
+                else resolve_trial_traffic_limit_bytes()
+            ),
+            traffic_limit_strategy=(
+                trial_source.traffic_limit_strategy
+                if trial_source is not None
+                and _normalize_optional_text(trial_source.traffic_limit_strategy)
+                is not None
+                else resolve_trial_traffic_limit_strategy()
+            ),
+        )
+
+    paid_source = None
+    if candidate_remote_user is not None and candidate_remote_user.tag != "TRIAL":
+        paid_source = candidate_remote_user
+    elif keep_user.tag != "TRIAL":
+        paid_source = keep_user
+
+    resolved_hwid_device_limit = (
+        paid_source.hwid_device_limit
+        if paid_source is not None and paid_source.hwid_device_limit is not None
+        else await _resolve_latest_paid_device_limit_from_grants(
+            session,
+            target_account=target_account,
+            source_account=source_account,
+        )
+    )
+    return RemnawaveEntitlementSnapshot(
+        hwid_device_limit=resolved_hwid_device_limit,
+        traffic_limit_bytes=(
+            paid_source.traffic_limit_bytes
+            if paid_source is not None and paid_source.traffic_limit_bytes is not None
+            else 0
+        ),
+        traffic_limit_strategy=(
+            paid_source.traffic_limit_strategy
+            if paid_source is not None
+            and _normalize_optional_text(paid_source.traffic_limit_strategy) is not None
+            else NO_RESET_TRAFFIC_LIMIT_STRATEGY
+        ),
     )
 
 
@@ -961,6 +1097,7 @@ def _select_remnawave_user_to_keep(
 
 
 async def _reconcile_remnawave_users(
+    session: AsyncSession,
     *,
     gateway,
     target_account: Account,
@@ -992,6 +1129,15 @@ async def _reconcile_remnawave_users(
         if preferred_candidate is None
         else preferred_candidate.subscription_is_trial
     )
+    resolved_entitlements = await _resolve_remnawave_entitlements(
+        session,
+        target_account=target_account,
+        source_account=source_account,
+        keep_user=keep_user,
+        preferred_candidate=preferred_candidate,
+        resolved_is_trial=resolved_is_trial,
+        remote_users=remote_users,
+    )
 
     try:
         merged_user = await gateway.upsert_user(
@@ -1001,6 +1147,9 @@ async def _reconcile_remnawave_users(
             telegram_id=target_account.telegram_id,
             status=resolved_status,
             is_trial=resolved_is_trial,
+            hwid_device_limit=resolved_entitlements.hwid_device_limit,
+            traffic_limit_bytes=resolved_entitlements.traffic_limit_bytes,
+            traffic_limit_strategy=resolved_entitlements.traffic_limit_strategy,
         )
         deleted_user_uuids: list[uuid.UUID] = []
         for remote_user in selection.ranked_users:
@@ -1091,6 +1240,7 @@ async def merge_accounts(
     if remnawave_gateway is not None and remote_users:
         remnawave_reconcile_result = await _reconcile_remnawave_users(
             gateway=remnawave_gateway,
+            session=session,
             target_account=target_account,
             source_account=source_account,
             remote_users=remote_users,

@@ -96,6 +96,7 @@ class FakeRemnawaveGateway:
 
     def __post_init__(self) -> None:
         self.deleted_user_ids: list[uuid.UUID] = []
+        self.upsert_calls: list[dict[str, object]] = []
 
     async def get_user_by_uuid(self, user_uuid: uuid.UUID) -> RemnawaveUser | None:
         return self.users.get(user_uuid)
@@ -115,7 +116,23 @@ class FakeRemnawaveGateway:
         telegram_id: int | None,
         status: str | None,
         is_trial: bool,
+        hwid_device_limit: int | None = None,
+        traffic_limit_bytes: int | None = None,
+        traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
+        self.upsert_calls.append(
+            {
+                "user_uuid": user_uuid,
+                "expire_at": expire_at,
+                "email": email,
+                "telegram_id": telegram_id,
+                "status": status,
+                "is_trial": is_trial,
+                "hwid_device_limit": hwid_device_limit,
+                "traffic_limit_bytes": traffic_limit_bytes,
+                "traffic_limit_strategy": traffic_limit_strategy,
+            }
+        )
         user = RemnawaveUser(
             uuid=user_uuid,
             username=f"acc_{user_uuid.hex}",
@@ -125,6 +142,9 @@ class FakeRemnawaveGateway:
             telegram_id=telegram_id,
             email=email,
             tag="TRIAL" if is_trial else None,
+            hwid_device_limit=hwid_device_limit,
+            traffic_limit_bytes=traffic_limit_bytes,
+            traffic_limit_strategy=traffic_limit_strategy,
         )
         self.users[user_uuid] = user
         return user
@@ -964,6 +984,75 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             merge_events[0].payload["remnawave_reconcile"]["selection_reason"],
             "paid_over_trial",
+        )
+
+    async def test_merge_accounts_clears_trial_limits_when_trial_user_is_kept(
+        self,
+    ) -> None:
+        browser_remote_uuid = uuid.uuid4()
+        telegram_remote_uuid = uuid.uuid4()
+        browser_account = await self._create_account(
+            email="browser-merge-trial@example.com",
+            remnawave_user_uuid=browser_remote_uuid,
+            subscription_url="https://panel.test/sub/browser-merge-trial",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 4, 10, 12, 0),
+            subscription_is_trial=True,
+        )
+        telegram_account = await self._create_account(
+            telegram_id=777114,
+            remnawave_user_uuid=telegram_remote_uuid,
+            subscription_url="https://panel.test/sub/telegram-merge-paid",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime(2026, 5, 5, 12, 0),
+            subscription_is_trial=False,
+        )
+
+        self._fake_gateway.users[browser_remote_uuid] = RemnawaveUser(
+            uuid=browser_remote_uuid,
+            username=f"acc_{browser_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 4, 10, 12, 0),
+            subscription_url="https://panel.test/sub/browser-merge-trial",
+            telegram_id=None,
+            email=browser_account.email,
+            tag="TRIAL",
+            hwid_device_limit=3,
+            traffic_limit_bytes=10 * 1024**3,
+            traffic_limit_strategy="WEEK",
+            online_at=datetime(2026, 4, 2, 9, 0, tzinfo=UTC),
+        )
+        self._fake_gateway.users[telegram_remote_uuid] = RemnawaveUser(
+            uuid=telegram_remote_uuid,
+            username=f"acc_{telegram_remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime(2026, 5, 5, 12, 0),
+            subscription_url="https://panel.test/sub/telegram-merge-paid",
+            telegram_id=telegram_account.telegram_id,
+            email=None,
+            tag=None,
+            hwid_device_limit=9,
+            traffic_limit_bytes=0,
+            traffic_limit_strategy="NO_RESET",
+            online_at=datetime(2026, 4, 1, 9, 0, tzinfo=UTC),
+        )
+
+        merged_account = await self._merge_accounts_direct(
+            source_account_id=telegram_account.id,
+            target_account_id=browser_account.id,
+        )
+
+        self.assertEqual(merged_account.remnawave_user_uuid, browser_remote_uuid)
+        self.assertFalse(merged_account.subscription_is_trial)
+        self.assertEqual(len(self._fake_gateway.upsert_calls), 1)
+        self.assertEqual(
+            self._fake_gateway.upsert_calls[0]["user_uuid"], browser_remote_uuid
+        )
+        self.assertEqual(self._fake_gateway.upsert_calls[0]["hwid_device_limit"], 9)
+        self.assertEqual(self._fake_gateway.upsert_calls[0]["traffic_limit_bytes"], 0)
+        self.assertEqual(
+            self._fake_gateway.upsert_calls[0]["traffic_limit_strategy"],
+            "NO_RESET",
         )
 
     async def test_merge_accounts_reconciles_existing_remnawave_users(self) -> None:

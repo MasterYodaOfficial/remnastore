@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     JSON,
     DateTime,
     Enum,
@@ -42,6 +43,7 @@ class BroadcastStatus(str, enum.Enum):
 class BroadcastContentType(str, enum.Enum):
     TEXT = "text"
     PHOTO = "photo"
+    TELEGRAM_COPY = "telegram_copy"
 
 
 class BroadcastChannel(str, enum.Enum):
@@ -102,6 +104,8 @@ class Broadcast(Base):
         default=BroadcastContentType.TEXT,
     )
     image_url: Mapped[str | None] = mapped_column(String(1024))
+    telegram_copy_source_chat_id: Mapped[int | None] = mapped_column(BigInteger())
+    telegram_copy_message_ids: Mapped[list[int] | None] = mapped_column(JSON())
     channels: Mapped[list[str]] = mapped_column(JSON(), nullable=False)
     buttons: Mapped[list[dict]] = mapped_column(JSON(), nullable=False, default=list)
     audience: Mapped[dict] = mapped_column(JSON(), nullable=False)
