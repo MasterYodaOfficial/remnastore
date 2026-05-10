@@ -1059,7 +1059,8 @@ async def _collect_remnawave_users_for_merge(
             for account in (target_account, source_account)
             if _normalize_optional_text(account.email) is not None
         }:
-            assert email is not None
+            if email is None:
+                raise ValueError("Collected email should not be None")
             for remote_user in await gateway.get_users_by_email(email):
                 candidates[remote_user.uuid] = remote_user
 
@@ -1068,7 +1069,8 @@ async def _collect_remnawave_users_for_merge(
             for account in (target_account, source_account)
             if account.telegram_id is not None
         }:
-            assert telegram_id is not None
+            if telegram_id is None:
+                raise ValueError("Collected telegram_id should not be None")
             for remote_user in await gateway.get_users_by_telegram_id(telegram_id):
                 candidates[remote_user.uuid] = remote_user
     except RemnawaveRequestError as exc:
