@@ -57,3 +57,5 @@ playwright-report/
 /logs/
 /apps/admin.zip
 /index.html
+/security_report.md
+/.gigacode/
