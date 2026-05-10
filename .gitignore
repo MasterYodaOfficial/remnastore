@@ -59,3 +59,4 @@ playwright-report/
 /index.html
 /security_report.md
 /.gigacode/
+/test_coverage_report.md
