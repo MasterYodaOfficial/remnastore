@@ -103,6 +103,10 @@ run_python_checks() {
   log_section "Python: tests"
   run_cmd env DATABASE_URL=sqlite+aiosqlite:///./ci-python-quality.sqlite3 \
     ./scripts/test.sh all
+
+  log_section "Python: critical API coverage"
+  run_cmd env DATABASE_URL=sqlite+aiosqlite:///./ci-python-quality.sqlite3 \
+    ./scripts/coverage.sh api-critical --fail-under 80
 }
 
 run_frontend_checks() {
