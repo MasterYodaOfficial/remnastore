@@ -8,6 +8,8 @@ import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -24,6 +26,13 @@ from app.db.models import (
     LedgerEntryType,
     Notification,
     NotificationType,
+    PromoCampaign,
+    PromoCampaignStatus,
+    PromoCode,
+    PromoEffectType,
+    PromoRedemption,
+    PromoRedemptionContext,
+    PromoRedemptionStatus,
     SubscriptionGrant,
 )
 from app.db.session import get_session
@@ -1491,6 +1500,515 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"], "invalid Remnawave signature")
+
+    async def test_trial_eligibility_rejects_trial_already_used(self) -> None:
+        account = await self._create_account(
+            email="trial-used@example.com",
+            trial_used_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        self._current_account_id = account.id
+
+        response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["eligible"], False)
+        self.assertEqual(response.json()["reason"], "trial_already_used")
+
+    async def test_trial_eligibility_reports_remnawave_not_configured(self) -> None:
+        account = await self._create_account(email="not-configured@example.com")
+        self._current_account_id = account.id
+
+        with patch(
+            "app.services.subscriptions.get_remnawave_gateway",
+            side_effect=subscriptions_service.RemnawaveConfigurationError("missing"),
+        ):
+            response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["eligible"], False)
+        self.assertEqual(response.json()["reason"], "remnawave_not_configured")
+
+    async def test_trial_eligibility_detects_existing_remote_subscription(self) -> None:
+        account = await self._create_account(email="remote-active@example.com")
+        self._current_account_id = account.id
+        remote_expires_at = datetime.now(UTC) + timedelta(days=10)
+        self._fake_gateway.users[account.id] = RemnawaveUser(
+            uuid=account.id,
+            username="remote-user",
+            status="ACTIVE",
+            expire_at=remote_expires_at,
+            subscription_url="https://panel.test/sub/remote",
+            telegram_id=account.telegram_id,
+            email=account.email,
+            tag=None,
+        )
+
+        response = await self.client.get("/api/v1/subscriptions/trial-eligibility")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["eligible"], False)
+        self.assertEqual(response.json()["reason"], "subscription_exists")
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertEqual(stored_account.subscription_status, "ACTIVE")
+        self.assertEqual(
+            stored_account.subscription_url, "https://panel.test/sub/remote"
+        )
+
+    async def test_wallet_plan_purchase_with_promo_rejects_conflicting_existing_redemption(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="promo-conflict@example.com",
+            balance=PLAN_1M_PRICE_RUB,
+        )
+        self._current_account_id = account.id
+
+        async with self._session_factory() as session:
+            campaign_one = PromoCampaign(
+                name="Promo One",
+                status=PromoCampaignStatus.ACTIVE,
+                effect_type=PromoEffectType.PERCENT_DISCOUNT,
+                effect_value=10,
+                currency="RUB",
+                plan_codes=["plan_1m"],
+            )
+            campaign_two = PromoCampaign(
+                name="Promo Two",
+                status=PromoCampaignStatus.ACTIVE,
+                effect_type=PromoEffectType.PERCENT_DISCOUNT,
+                effect_value=10,
+                currency="RUB",
+                plan_codes=["plan_1m"],
+            )
+            session.add(campaign_one)
+            session.add(campaign_two)
+            await session.flush()
+            promo_one = PromoCode(
+                campaign_id=campaign_one.id,
+                code="PROMOONE",
+                is_active=True,
+            )
+            promo_two = PromoCode(
+                campaign_id=campaign_two.id,
+                code="PROMOTWO",
+                is_active=True,
+            )
+            session.add(promo_one)
+            session.add(promo_two)
+            await session.flush()
+            grant = SubscriptionGrant(
+                account_id=account.id,
+                payment_id=None,
+                purchase_source="wallet",
+                reference_type="wallet_purchase",
+                reference_id="promo-idem",
+                plan_code="plan_1m",
+                amount=PLAN_1M_PRICE_RUB,
+                currency="RUB",
+                duration_days=PLAN_1M.duration_days,
+                base_expires_at=datetime.now(UTC),
+                target_expires_at=datetime.now(UTC) + timedelta(days=30),
+            )
+            session.add(grant)
+            await session.flush()
+            session.add(
+                PromoRedemption(
+                    campaign_id=campaign_one.id,
+                    promo_code_id=promo_one.id,
+                    account_id=account.id,
+                    status=PromoRedemptionStatus.PENDING,
+                    redemption_context=PromoRedemptionContext.PLAN_PURCHASE,
+                    plan_code="plan_1m",
+                    effect_type=PromoEffectType.PERCENT_DISCOUNT,
+                    effect_value=10,
+                    currency="RUB",
+                    original_amount=PLAN_1M_PRICE_RUB,
+                    discount_amount=PLAN_1M_PRICE_RUB // 10,
+                    final_amount=PLAN_1M_PRICE_RUB - PLAN_1M_PRICE_RUB // 10,
+                    granted_duration_days=PLAN_1M.duration_days,
+                    subscription_grant_id=grant.id,
+                    reference_type="wallet_purchase",
+                    reference_id="promo-idem",
+                )
+            )
+            await session.commit()
+
+        response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "promo-idem", "promo_code": promo_two.code},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            response.json()["error_code"],
+            "idempotency_promo_conflict",
+        )
+
+    async def test_wallet_plan_purchase_with_promo_rejects_pending_purchase_reference_conflict(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="pending-promo@example.com",
+            balance=PLAN_1M_PRICE_RUB,
+        )
+        self._current_account_id = account.id
+        async with self._session_factory() as session:
+            campaign = PromoCampaign(
+                name="Pending Promo",
+                status=PromoCampaignStatus.ACTIVE,
+                effect_type=PromoEffectType.PERCENT_DISCOUNT,
+                effect_value=10,
+                currency="RUB",
+                plan_codes=["plan_1m"],
+            )
+            session.add(campaign)
+            await session.flush()
+            session.add(
+                PromoCode(
+                    campaign_id=campaign.id,
+                    code="PENDINGPROMO",
+                    is_active=True,
+                )
+            )
+            await session.commit()
+
+        async def fake_stage_wallet_plan_purchase(*args, **kwargs):
+            del args, kwargs
+            return SimpleNamespace(id=1, reference_id="existing-grant-ref")
+
+        with patch(
+            "app.services.subscriptions.stage_wallet_plan_purchase",
+            side_effect=fake_stage_wallet_plan_purchase,
+        ):
+            response = await self.client.post(
+                "/api/v1/subscriptions/wallet/plans/plan_1m",
+                json={
+                    "idempotency_key": "promo-idem-new",
+                    "promo_code": "PENDINGPROMO",
+                },
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error_code"], "wallet_pending_purchase")
+
+    async def test_read_current_subscription_returns_existing_snapshot(self) -> None:
+        account = await self._create_account(
+            email="snapshot@example.com",
+            subscription_status="ACTIVE",
+            subscription_url="https://panel.test/sub/snapshot",
+            subscription_is_trial=False,
+            subscription_expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+        self._current_account_id = account.id
+
+        response = await self.client.get("/api/v1/subscriptions/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ACTIVE")
+        self.assertEqual(
+            response.json()["subscription_url"], "https://panel.test/sub/snapshot"
+        )
+
+    async def test_trial_eligibility_endpoint_reports_blocked_existing_and_eligible(
+        self,
+    ) -> None:
+        blocked_account = await self._create_account(
+            email="blocked-eligibility@example.com",
+            status=AccountStatus.BLOCKED,
+        )
+        self._current_account_id = blocked_account.id
+        blocked_response = await self.client.get(
+            "/api/v1/subscriptions/trial-eligibility"
+        )
+        self.assertEqual(blocked_response.status_code, 200)
+        self.assertFalse(blocked_response.json()["eligible"])
+        self.assertEqual(blocked_response.json()["reason"], "account_blocked")
+
+        remote_account = await self._create_account(email="remote-existing@example.com")
+        self._fake_gateway.users[remote_account.id] = RemnawaveUser(
+            uuid=remote_account.id,
+            username=f"acc_{remote_account.id.hex}",
+            status="ACTIVE",
+            expire_at=datetime.now(UTC) + timedelta(days=10),
+            subscription_url="https://panel.test/sub/remote-existing",
+            telegram_id=None,
+            email=remote_account.email,
+            tag=None,
+        )
+        self._current_account_id = remote_account.id
+        remote_response = await self.client.get(
+            "/api/v1/subscriptions/trial-eligibility"
+        )
+        self.assertEqual(remote_response.status_code, 200)
+        self.assertFalse(remote_response.json()["eligible"])
+        self.assertEqual(remote_response.json()["reason"], "subscription_exists")
+
+        stored_remote_account = await self._get_account(remote_account.id)
+        self.assertIsNotNone(stored_remote_account)
+        assert stored_remote_account is not None
+        self.assertEqual(
+            stored_remote_account.subscription_url,
+            "https://panel.test/sub/remote-existing",
+        )
+
+        local_account = await self._create_account(
+            email="local-existing@example.com",
+            subscription_url="https://panel.test/sub/local-existing",
+            subscription_expires_at=datetime.now(UTC) + timedelta(days=5),
+        )
+        self._current_account_id = local_account.id
+        local_response = await self.client.get(
+            "/api/v1/subscriptions/trial-eligibility"
+        )
+        self.assertEqual(local_response.status_code, 200)
+        self.assertFalse(local_response.json()["eligible"])
+        self.assertEqual(local_response.json()["reason"], "subscription_exists")
+
+        eligible_account = await self._create_account(email="eligible@example.com")
+        self._current_account_id = eligible_account.id
+        eligible_response = await self.client.get(
+            "/api/v1/subscriptions/trial-eligibility"
+        )
+        self.assertEqual(eligible_response.status_code, 200)
+        self.assertTrue(eligible_response.json()["eligible"])
+        self.assertIsNone(eligible_response.json()["reason"])
+
+    async def test_sync_subscription_clears_snapshot_when_remote_user_missing(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="sync-clear@example.com",
+            remnawave_user_uuid=uuid.uuid4(),
+            subscription_status="ACTIVE",
+            subscription_url="https://panel.test/sub/clear-me",
+            subscription_is_trial=False,
+            subscription_expires_at=datetime.now(UTC) + timedelta(days=7),
+        )
+        self._current_account_id = account.id
+
+        response = await self.client.post("/api/v1/subscriptions/sync")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["status"])
+        self.assertIsNone(response.json()["subscription_url"])
+
+        stored_account = await self._get_account(account.id)
+        self.assertIsNotNone(stored_account)
+        assert stored_account is not None
+        self.assertIsNone(stored_account.subscription_status)
+        self.assertIsNone(stored_account.subscription_url)
+        self.assertIsNone(stored_account.subscription_expires_at)
+
+    async def test_sync_subscription_endpoint_maps_gateway_errors(self) -> None:
+        account = await self._create_account(email="sync-errors@example.com")
+        self._current_account_id = account.id
+
+        with patch(
+            "app.services.subscriptions.get_remnawave_gateway",
+            side_effect=subscriptions_service.RemnawaveConfigurationError(
+                "not configured"
+            ),
+        ):
+            not_configured_response = await self.client.post(
+                "/api/v1/subscriptions/sync"
+            )
+        self.assertEqual(not_configured_response.status_code, 502)
+
+        with patch(
+            "app.services.subscriptions.get_remnawave_gateway",
+            return_value=UnavailableRemnawaveGateway(),
+        ):
+            unavailable_response = await self.client.post("/api/v1/subscriptions/sync")
+        self.assertEqual(unavailable_response.status_code, 502)
+
+    async def test_sync_subscription_by_remote_uuid_returns_none_or_clears_snapshot(
+        self,
+    ) -> None:
+        async with self._session_factory() as session:
+            missing = (
+                await subscriptions_service.sync_subscription_by_remnawave_user_uuid(
+                    session,
+                    remnawave_user_uuid=uuid.uuid4(),
+                )
+            )
+        self.assertIsNone(missing)
+
+        remote_uuid = uuid.uuid4()
+        account = await self._create_account(
+            email="remote-clear@example.com",
+            remnawave_user_uuid=remote_uuid,
+            subscription_status="ACTIVE",
+            subscription_url="https://panel.test/sub/remote-clear",
+            subscription_expires_at=datetime.now(UTC) + timedelta(days=4),
+        )
+        async with self._session_factory() as session:
+            synced = (
+                await subscriptions_service.sync_subscription_by_remnawave_user_uuid(
+                    session,
+                    remnawave_user_uuid=remote_uuid,
+                )
+            )
+        self.assertIsNotNone(synced)
+        assert synced is not None
+        self.assertEqual(synced.id, account.id)
+        self.assertIsNone(synced.subscription_status)
+        self.assertIsNone(synced.subscription_url)
+
+    async def test_sync_current_subscription_service_updates_snapshot_and_maps_errors(
+        self,
+    ) -> None:
+        remote_uuid = uuid.uuid4()
+        account = await self._create_account(
+            email="service-sync@example.com",
+            remnawave_user_uuid=remote_uuid,
+        )
+        self._fake_gateway.users[remote_uuid] = RemnawaveUser(
+            uuid=remote_uuid,
+            username=f"acc_{remote_uuid.hex}",
+            status="ACTIVE",
+            expire_at=datetime.now(UTC) + timedelta(days=14),
+            subscription_url="https://panel.test/sub/service-sync",
+            telegram_id=None,
+            email=account.email,
+            tag=None,
+        )
+
+        async with self._session_factory() as session:
+            synced = await subscriptions_service.sync_current_subscription(
+                session,
+                account=account,
+            )
+        self.assertEqual(synced.status, "ACTIVE")
+        self.assertEqual(synced.subscription_url, "https://panel.test/sub/service-sync")
+
+        with patch(
+            "app.services.subscriptions.get_remnawave_gateway",
+            side_effect=subscriptions_service.RemnawaveConfigurationError(
+                "not configured"
+            ),
+        ):
+            async with self._session_factory() as session:
+                with self.assertRaises(subscriptions_service.RemnawaveSyncError):
+                    await subscriptions_service.sync_current_subscription(
+                        session,
+                        account=account,
+                    )
+
+        with patch(
+            "app.services.subscriptions.get_remnawave_gateway",
+            return_value=UnavailableRemnawaveGateway(),
+        ):
+            async with self._session_factory() as session:
+                with self.assertRaises(subscriptions_service.RemnawaveSyncError):
+                    await subscriptions_service.sync_current_subscription(
+                        session,
+                        account=account,
+                    )
+
+    async def test_get_trial_eligibility_service_reports_branch_reasons(self) -> None:
+        blocked_account = await self._create_account(
+            email="service-blocked@example.com",
+            status=AccountStatus.BLOCKED,
+        )
+        async with self._session_factory() as session:
+            blocked = await subscriptions_service.get_trial_eligibility(
+                session,
+                account=blocked_account,
+            )
+        self.assertFalse(blocked.eligible)
+        self.assertEqual(blocked.reason, "account_blocked")
+
+        used_trial_account = await self._create_account(
+            email="service-used@example.com",
+            trial_used_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        async with self._session_factory() as session:
+            used = await subscriptions_service.get_trial_eligibility(
+                session,
+                account=used_trial_account,
+            )
+        self.assertFalse(used.eligible)
+        self.assertEqual(used.reason, "trial_already_used")
+
+        remote_account = await self._create_account(email="service-remote@example.com")
+        self._fake_gateway.users[remote_account.id] = RemnawaveUser(
+            uuid=remote_account.id,
+            username=f"acc_{remote_account.id.hex}",
+            status="ACTIVE",
+            expire_at=datetime.now(UTC) + timedelta(days=7),
+            subscription_url="https://panel.test/sub/service-remote",
+            telegram_id=None,
+            email=remote_account.email,
+            tag=None,
+        )
+        async with self._session_factory() as session:
+            remote = await subscriptions_service.get_trial_eligibility(
+                session,
+                account=remote_account,
+            )
+        self.assertFalse(remote.eligible)
+        self.assertEqual(remote.reason, "subscription_exists")
+
+        local_account = await self._create_account(
+            email="service-local@example.com",
+            subscription_url="https://panel.test/sub/service-local",
+            subscription_expires_at=datetime.now(UTC) + timedelta(days=3),
+        )
+        async with self._session_factory() as session:
+            local = await subscriptions_service.get_trial_eligibility(
+                session,
+                account=local_account,
+            )
+        self.assertFalse(local.eligible)
+        self.assertEqual(local.reason, "subscription_exists")
+
+        eligible_account = await self._create_account(
+            email="service-eligible@example.com"
+        )
+        async with self._session_factory() as session:
+            eligible = await subscriptions_service.get_trial_eligibility(
+                session,
+                account=eligible_account,
+            )
+        self.assertTrue(eligible.eligible)
+        self.assertIsNone(eligible.reason)
+
+    async def test_activate_trial_service_raises_expected_status_codes(self) -> None:
+        blocked_account = await self._create_account(
+            email="service-activate-blocked@example.com",
+            status=AccountStatus.BLOCKED,
+        )
+        async with self._session_factory() as session:
+            with self.assertRaises(
+                subscriptions_service.TrialEligibilityError
+            ) as captured:
+                await subscriptions_service.activate_trial(
+                    session, account=blocked_account
+                )
+        self.assertEqual(captured.exception.status_code, 403)
+        self.assertEqual(captured.exception.reason, "account_blocked")
+
+        fresh_account = await self._create_account(
+            email="service-activate-config@example.com"
+        )
+        with patch(
+            "app.services.subscriptions.get_remnawave_gateway",
+            side_effect=subscriptions_service.RemnawaveConfigurationError(
+                "not configured"
+            ),
+        ):
+            async with self._session_factory() as session:
+                with self.assertRaises(
+                    subscriptions_service.TrialEligibilityError
+                ) as captured:
+                    await subscriptions_service.activate_trial(
+                        session,
+                        account=fresh_account,
+                    )
+        self.assertEqual(captured.exception.status_code, 503)
+        self.assertEqual(captured.exception.reason, "remnawave_not_configured")
 
 
 if __name__ == "__main__":

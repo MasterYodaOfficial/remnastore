@@ -40,6 +40,9 @@ jobs:
       - name: Run Python tests
         run: ./scripts/test.sh all
 
+      - name: Enforce API critical coverage
+        run: ./scripts/coverage.sh api-critical --fail-under 70
+
   web-quality:
     runs-on: ubuntu-latest
     defaults:
