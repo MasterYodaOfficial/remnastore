@@ -39,6 +39,9 @@ jobs:
 
       - name: Run Python tests
         run: ./scripts/test.sh all
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./ci-python-quality.sqlite3
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       - name: Enforce API critical coverage
         run: ./scripts/coverage.sh api-critical --fail-under 70
