@@ -86,6 +86,24 @@ async def mark_telegram_account_reachable(
     return account
 
 
+async def mark_telegram_account_blocked(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+    blocked_at: datetime | None = None,
+) -> Account | None:
+    account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
+    if account is None:
+        return None
+
+    await mark_telegram_bot_blocked(
+        session,
+        account=account,
+        blocked_at=blocked_at,
+    )
+    return account
+
+
 async def _get_auth_account(
     session: AsyncSession,
     *,

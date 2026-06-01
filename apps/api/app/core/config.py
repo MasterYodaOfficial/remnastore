@@ -207,7 +207,7 @@ class Settings(BaseSettings):
     )
 
     # Auth
-    jwt_secret: str = "change-me"
+    jwt_secret: str = Field(..., validation_alias="JWT_SECRET")
     jwt_access_token_expires_seconds: int = 3600
     admin_jwt_access_token_expires_seconds: int = Field(
         default=43200,

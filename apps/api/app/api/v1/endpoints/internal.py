@@ -26,6 +26,7 @@ from app.schemas.internal import (
 from app.services.admin_dashboard import get_admin_dashboard_summary
 from app.services.accounts import (
     get_account_by_telegram_id,
+    mark_telegram_account_blocked,
     mark_telegram_account_reachable,
 )
 from app.services.broadcasts import (
@@ -67,6 +68,29 @@ def _verify_bot_admin_telegram_id(telegram_id: int) -> None:
         )
 
 
+def _build_telegram_account_access_response(
+    *,
+    telegram_id: int,
+    account,
+) -> TelegramAccountAccessResponse:
+    if account is None:
+        return TelegramAccountAccessResponse(
+            telegram_id=telegram_id,
+            exists=False,
+            status=None,
+            fully_blocked=False,
+            telegram_bot_blocked=False,
+        )
+
+    return TelegramAccountAccessResponse(
+        telegram_id=telegram_id,
+        exists=True,
+        status=account.status,
+        fully_blocked=account.status == AccountStatus.BLOCKED,
+        telegram_bot_blocked=account.telegram_bot_blocked_at is not None,
+    )
+
+
 async def _build_bot_admin_broadcast_status_item(
     session: AsyncSession,
     *,
@@ -103,21 +127,9 @@ async def read_telegram_account_access(
 ) -> TelegramAccountAccessResponse:
     verify_internal_api_token(authorization)
     account = await get_account_by_telegram_id(session, telegram_id=telegram_id)
-    if account is None:
-        return TelegramAccountAccessResponse(
-            telegram_id=telegram_id,
-            exists=False,
-            status=None,
-            fully_blocked=False,
-            telegram_bot_blocked=False,
-        )
-
-    return TelegramAccountAccessResponse(
+    return _build_telegram_account_access_response(
         telegram_id=telegram_id,
-        exists=True,
-        status=account.status,
-        fully_blocked=account.status == AccountStatus.BLOCKED,
-        telegram_bot_blocked=account.telegram_bot_blocked_at is not None,
+        account=account,
     )
 
 
@@ -139,18 +151,16 @@ async def mark_telegram_account_as_reachable(
     if account is None:
         log_audit_event(
             "internal.telegram_account.reachable",
-            outcome="failure",
+            outcome="success",
             category="business",
             telegram_id=telegram_id,
+            exists=False,
             reason="account_not_found",
             **request_context,
         )
-        return TelegramAccountAccessResponse(
+        return _build_telegram_account_access_response(
             telegram_id=telegram_id,
-            exists=False,
-            status=None,
-            fully_blocked=False,
-            telegram_bot_blocked=False,
+            account=None,
         )
 
     log_audit_event(
@@ -159,14 +169,57 @@ async def mark_telegram_account_as_reachable(
         category="business",
         account_id=account.id,
         telegram_id=telegram_id,
+        exists=True,
         **request_context,
     )
-    return TelegramAccountAccessResponse(
+    return _build_telegram_account_access_response(
+        telegram_id=telegram_id,
+        account=account,
+    )
+
+
+@router.post(
+    "/telegram-accounts/{telegram_id}/blocked",
+    response_model=TelegramAccountAccessResponse,
+)
+async def mark_telegram_account_as_blocked(
+    telegram_id: int,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(default=None),
+) -> TelegramAccountAccessResponse:
+    verify_internal_api_token(authorization)
+    request_context = build_request_audit_context(request)
+    account = await mark_telegram_account_blocked(session, telegram_id=telegram_id)
+    await session.commit()
+
+    if account is None:
+        log_audit_event(
+            "internal.telegram_account.blocked",
+            outcome="success",
+            category="business",
+            telegram_id=telegram_id,
+            exists=False,
+            reason="account_not_found",
+            **request_context,
+        )
+        return _build_telegram_account_access_response(
+            telegram_id=telegram_id,
+            account=None,
+        )
+
+    log_audit_event(
+        "internal.telegram_account.blocked",
+        outcome="success",
+        category="business",
+        account_id=account.id,
         telegram_id=telegram_id,
         exists=True,
-        status=account.status,
-        fully_blocked=account.status == AccountStatus.BLOCKED,
-        telegram_bot_blocked=account.telegram_bot_blocked_at is not None,
+        **request_context,
+    )
+    return _build_telegram_account_access_response(
+        telegram_id=telegram_id,
+        account=account,
     )
 
 

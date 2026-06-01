@@ -2,11 +2,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import BotCommandScopeChat
+from httpx import ASGITransport, AsyncClient
 
 from bot.core.config import Settings
 from bot.main import (
     WebhookModeSetupError,
+    create_fastapi_app,
     ensure_webhook,
     get_local_bot_healthcheck_url,
     on_startup,
@@ -165,6 +168,54 @@ class RuntimeModeTests(unittest.IsolatedAsyncioTestCase):
         build_runtime.assert_called_once_with()
         run_webhook_mode.assert_awaited_once_with(*webhook_runtime)
         run_polling_mode.assert_not_called()
+
+    async def test_webhook_acknowledges_telegram_forbidden_error(self) -> None:
+        bot = object()
+        update = SimpleNamespace(
+            update_id=123456,
+            message=SimpleNamespace(from_user=SimpleNamespace(id=758107031)),
+            edited_message=None,
+            business_message=None,
+            edited_business_message=None,
+            channel_post=None,
+            edited_channel_post=None,
+            callback_query=None,
+            shipping_query=None,
+            pre_checkout_query=None,
+            inline_query=None,
+            chosen_inline_result=None,
+            chat_join_request=None,
+            my_chat_member=None,
+            chat_member=None,
+            poll_answer=None,
+        )
+        dp = Mock()
+        dp.feed_update = AsyncMock(
+            side_effect=TelegramForbiddenError(
+                method=Mock(),
+                message="Forbidden: bot was blocked by the user",
+            )
+        )
+        api_client = AsyncMock()
+        api_client.mark_telegram_account_blocked.return_value = True
+        app = create_fastapi_app(bot, dp)
+
+        with (
+            patch("bot.main.Update.model_validate", return_value=update),
+            patch("bot.main.ApiClient", return_value=api_client),
+            patch("bot.main.settings.bot_webhook_secret", ""),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as client:
+                response = await client.post("/bot/webhook", json={})
+
+        self.assertEqual(response.status_code, 200)
+        dp.feed_update.assert_awaited_once_with(bot, update)
+        api_client.mark_telegram_account_blocked.assert_awaited_once_with(
+            telegram_id=758107031
+        )
 
 
 if __name__ == "__main__":

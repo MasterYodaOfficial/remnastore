@@ -27,6 +27,7 @@ from app.services.account_events import append_account_event
 from app.services.i18n import translate
 from app.services.notifications import (
     TelegramNotificationDeliveryError,
+    _is_telegram_bot_blocked_error,
     create_notification,
     process_pending_telegram_deliveries,
     process_subscription_no_connection_reminders,
@@ -813,6 +814,16 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(stored_first.read_at)
         self.assertIsNotNone(stored_second.read_at)
         self.assertIsNotNone(stored_third_after.read_at)
+
+
+class TelegramNotificationErrorTests(unittest.TestCase):
+    def test_marks_deactivated_user_as_terminal_telegram_block(self) -> None:
+        self.assertTrue(
+            _is_telegram_bot_blocked_error(
+                status_code=403,
+                description="Forbidden: user is deactivated",
+            )
+        )
 
 
 if __name__ == "__main__":

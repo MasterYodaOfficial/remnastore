@@ -7,7 +7,7 @@ import httpx
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramRetryAfter
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeChat, Update
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -17,6 +17,7 @@ from uvicorn import Config, Server
 from bot.core.config import settings
 from bot.core.logging import configure_logging
 from bot.handlers import admin, menu, payments, start, webapp
+from bot.services.api import ApiClient
 from bot.services.i18n import translate
 from bot.services.media_registry import get_media_registry
 from bot.services.session_store import close_menu_session_store
@@ -28,10 +29,83 @@ except ImportError:  # pragma: no cover - fallback for minimal environments
 
 
 logger = logging.getLogger(__name__)
+_TERMINAL_TELEGRAM_FORBIDDEN_MARKERS = (
+    "bot was blocked by the user",
+    "user is deactivated",
+)
 
 
 class WebhookModeSetupError(RuntimeError):
     """Raised when webhook mode cannot be started safely."""
+
+
+def _is_terminal_telegram_forbidden_error(message: str) -> bool:
+    normalized = message.strip().lower()
+    return any(marker in normalized for marker in _TERMINAL_TELEGRAM_FORBIDDEN_MARKERS)
+
+
+def _extract_telegram_user_id(update: Update) -> int | None:
+    candidates = (
+        update.message,
+        update.edited_message,
+        update.business_message,
+        update.edited_business_message,
+        update.channel_post,
+        update.edited_channel_post,
+        update.callback_query,
+        update.shipping_query,
+        update.pre_checkout_query,
+        update.inline_query,
+        update.chosen_inline_result,
+        update.chat_join_request,
+        update.my_chat_member,
+        update.chat_member,
+    )
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        from_user = getattr(candidate, "from_user", None)
+        if from_user is not None and getattr(from_user, "id", None) is not None:
+            return int(from_user.id)
+
+    if update.poll_answer is not None and update.poll_answer.user is not None:
+        return int(update.poll_answer.user.id)
+    return None
+
+
+async def _acknowledge_telegram_forbidden_update(
+    update: Update,
+    exc: TelegramForbiddenError,
+) -> None:
+    reason = str(exc).strip()
+    telegram_id = _extract_telegram_user_id(update)
+    log_extra: dict[str, object] = {
+        "update_id": update.update_id,
+        "telegram_id": telegram_id if telegram_id is not None else "-",
+        "reason": reason,
+    }
+
+    if telegram_id is not None and _is_terminal_telegram_forbidden_error(reason):
+        account_exists = await ApiClient().mark_telegram_account_blocked(
+            telegram_id=telegram_id
+        )
+        if account_exists is None:
+            logger.warning(
+                "Acknowledged Telegram update after forbidden delivery failure, but failed to sync blocked state",
+                extra=log_extra,
+            )
+            return
+
+        logger.info(
+            "Acknowledged Telegram update after terminal forbidden delivery failure",
+            extra={**log_extra, "account_exists": account_exists},
+        )
+        return
+
+    logger.info(
+        "Acknowledged Telegram update after forbidden delivery failure",
+        extra=log_extra,
+    )
 
 
 def create_dispatcher() -> Dispatcher:
@@ -350,7 +424,10 @@ def create_fastapi_app(bot: Bot, dp: Dispatcher) -> FastAPI:
 
         data: Any = await request.json()
         update = Update.model_validate(data)
-        await dp.feed_update(bot, update)
+        try:
+            await dp.feed_update(bot, update)
+        except TelegramForbiddenError as exc:
+            await _acknowledge_telegram_forbidden_update(update, exc)
         return Response(status_code=200)
 
     @app.get("/health")
