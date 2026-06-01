@@ -4,13 +4,14 @@
 
 /* Telegram WebApp Variables */
 :root {
-  --tg-theme-bg-color: #ffffff;
-  --tg-theme-text-color: #000000;
-  --tg-theme-hint-color: #999999;
-  --tg-theme-link-color: #3390ec;
-  --tg-theme-button-color: #3390ec;
+  /* Keep these defaults in sync with APP_THEME_TOKENS in src/app/App.tsx. */
+  --tg-theme-bg-color: #f8fafc;
+  --tg-theme-text-color: #0f172a;
+  --tg-theme-hint-color: #64748b;
+  --tg-theme-link-color: #2563eb;
+  --tg-theme-button-color: #2563eb;
   --tg-theme-button-text-color: #ffffff;
-  --tg-theme-secondary-bg-color: #f4f4f5;
+  --tg-theme-secondary-bg-color: #e5edf8;
   --app-surface-color: #dbe4f2;
   --app-border-color: rgba(15, 23, 42, 0.12);
   --app-toggle-track: #dbe7ff;
@@ -29,13 +30,13 @@
 /* Dark theme support */
 @media (prefers-color-scheme: dark) {
   :root {
-    --tg-theme-bg-color: #18222d;
-    --tg-theme-text-color: #ffffff;
-    --tg-theme-hint-color: #708499;
-    --tg-theme-link-color: #5ac8fa;
-    --tg-theme-button-color: #5ac8fa;
-    --tg-theme-button-text-color: #ffffff;
-    --tg-theme-secondary-bg-color: #232e3c;
+    --tg-theme-bg-color: #0b1220;
+    --tg-theme-text-color: #e5edf8;
+    --tg-theme-hint-color: #8ea0b9;
+    --tg-theme-link-color: #67d0ff;
+    --tg-theme-button-color: #67d0ff;
+    --tg-theme-button-text-color: #04111d;
+    --tg-theme-secondary-bg-color: #162033;
     --app-surface-color: #22304a;
     --app-border-color: rgba(148, 163, 184, 0.18);
     --app-toggle-track: #22304a;
@@ -53,13 +54,13 @@
 }
 
 :root.theme-light {
-  --tg-theme-bg-color: #ffffff;
-  --tg-theme-text-color: #000000;
-  --tg-theme-hint-color: #999999;
-  --tg-theme-link-color: #3390ec;
-  --tg-theme-button-color: #3390ec;
+  --tg-theme-bg-color: #f8fafc;
+  --tg-theme-text-color: #0f172a;
+  --tg-theme-hint-color: #64748b;
+  --tg-theme-link-color: #2563eb;
+  --tg-theme-button-color: #2563eb;
   --tg-theme-button-text-color: #ffffff;
-  --tg-theme-secondary-bg-color: #f4f4f5;
+  --tg-theme-secondary-bg-color: #e5edf8;
   --app-surface-color: #dbe4f2;
   --app-border-color: rgba(15, 23, 42, 0.12);
   --app-toggle-track: #dbe7ff;
@@ -77,13 +78,13 @@
 
 :root.theme-dark,
 :root.dark {
-  --tg-theme-bg-color: #18222d;
-  --tg-theme-text-color: #ffffff;
-  --tg-theme-hint-color: #708499;
-  --tg-theme-link-color: #5ac8fa;
-  --tg-theme-button-color: #5ac8fa;
-  --tg-theme-button-text-color: #ffffff;
-  --tg-theme-secondary-bg-color: #232e3c;
+  --tg-theme-bg-color: #0b1220;
+  --tg-theme-text-color: #e5edf8;
+  --tg-theme-hint-color: #8ea0b9;
+  --tg-theme-link-color: #67d0ff;
+  --tg-theme-button-color: #67d0ff;
+  --tg-theme-button-text-color: #04111d;
+  --tg-theme-secondary-bg-color: #162033;
   --app-surface-color: #22304a;
   --app-border-color: rgba(148, 163, 184, 0.18);
   --app-toggle-track: #22304a;
