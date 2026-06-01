@@ -513,7 +513,6 @@ class NotificationFlowTests(unittest.IsolatedAsyncioTestCase):
         assert stored_account is not None
         self.assertIsNotNone(stored_account.telegram_bot_blocked_at)
 
-
     async def test_process_subscription_no_connection_reminders_creates_notification(
         self,
     ) -> None:

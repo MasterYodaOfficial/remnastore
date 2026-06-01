@@ -211,7 +211,9 @@ class InternalEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(response.exists)
         session.commit.assert_awaited_once()
         self.assertEqual(log_mock.call_count, 1)
-        self.assertEqual(log_mock.call_args.args[0], "internal.telegram_account.blocked")
+        self.assertEqual(
+            log_mock.call_args.args[0], "internal.telegram_account.blocked"
+        )
         self.assertEqual(log_mock.call_args.kwargs["outcome"], "success")
         self.assertFalse(log_mock.call_args.kwargs["exists"])
         self.assertEqual(log_mock.call_args.kwargs["reason"], "account_not_found")

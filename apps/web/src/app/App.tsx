@@ -44,6 +44,10 @@ import {
 import { buildSupportMailtoUrl } from './lib/support';
 import { normalizeReferralMetric, resolveReferralAmount } from './lib/referral-metrics';
 import {
+  hasPendingSupabaseOAuthCallback,
+  resolvePendingSupabaseSession,
+} from './lib/browser-auth';
+import {
   getEffectiveStoredPaymentAttemptStatus,
   getStoredPaymentAttempt,
   isStoredPaymentAttemptActive,
@@ -2345,15 +2349,26 @@ export default function App() {
 
   const checkSupabaseAuth = async () => {
     let restored = false;
+    const locationHref = window.location.href;
+    const isPendingOAuthCallback = hasPendingSupabaseOAuthCallback(locationHref);
+    const readSupabaseSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      return session;
+    };
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const session = await resolvePendingSupabaseSession({
+        currentSession: await readSupabaseSession(),
+        getSession: readSupabaseSession,
+        locationHref,
+      });
+
       if (session?.access_token) {
         restored = await syncBrowserAuth(
           session.access_token,
           getSupabaseAvatarUrl(session.user as SupabaseUserLike)
         );
-      } else {
+      } else if (!isPendingOAuthCallback) {
         const cachedToken = window.localStorage.getItem(BROWSER_TOKEN_STORAGE_KEY);
         if (cachedToken) {
           restored = await syncBrowserAuth(cachedToken);
