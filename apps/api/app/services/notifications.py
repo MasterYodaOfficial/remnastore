@@ -129,7 +129,10 @@ def _format_amount(amount: int, currency: str) -> str:
 
 def _is_telegram_bot_blocked_error(*, status_code: int, description: str) -> bool:
     normalized = description.strip().lower()
-    return status_code == 403 and "bot was blocked by the user" in normalized
+    return status_code == 403 and (
+        "bot was blocked by the user" in normalized
+        or "user is deactivated" in normalized
+    )
 
 
 def _format_subscription_days_left(days_left: int) -> str:

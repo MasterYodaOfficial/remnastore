@@ -83,6 +83,17 @@ class ApiClient:
             return False
         return True
 
+    async def mark_telegram_account_blocked(self, *, telegram_id: int) -> bool | None:
+        try:
+            payload = await self._post(
+                f"/api/v1/internal/telegram-accounts/{telegram_id}/blocked",
+                {},
+                authorized=True,
+            )
+        except httpx.HTTPError:
+            return None
+        return bool(payload.get("exists"))
+
     async def get_bot_dashboard(self, *, telegram_id: int) -> dict:
         return await self._get(
             f"/api/v1/internal/bot/dashboard/{telegram_id}", authorized=True
