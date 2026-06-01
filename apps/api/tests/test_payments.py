@@ -34,17 +34,22 @@ from app.services.plans import get_subscription_plan
 from app.services.referrals import calculate_referral_reward_amount
 from app.services.payments import (
     CreatePaymentIntentCommand,
+    PaymentConflictError,
     PaymentIntentSnapshot,
     PaymentFlowType,
     PaymentGatewayError,
     PaymentProvider,
+    PaymentServiceError,
     PaymentStatus,
     PaymentWebhookEvent,
     TelegramStarsGateway,
     YooKassaGateway,
     _build_telegram_stars_invoice_payload,
+    _stage_plan_purchase_grant,
+    _validate_telegram_stars_actor,
     expire_stale_payments,
     reconcile_pending_yookassa_payments,
+    validate_telegram_stars_pre_checkout,
 )
 
 PLAN_1M = get_subscription_plan("plan_1m")
@@ -1770,3 +1775,236 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(duplicate_response.status_code, 200)
         self.assertTrue(duplicate_response.json()["duplicate"])
+
+    async def test_validate_telegram_stars_pre_checkout_covers_core_paths(self) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="precheckout@example.com",
+            telegram_id=758107031,
+        )
+        self._current_account_id = account.id
+        response = await self.client.post(
+            "/api/v1/payments/telegram-stars/plans/plan_1m",
+            json={
+                "description": "Telegram Stars plan",
+                "idempotency_key": "precheckout-1",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        provider_payment_id = response.json()["provider_payment_id"]
+
+        async with self._session_factory() as session:
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload="missing",
+                total_amount=PLAN_1M_PRICE_STARS,
+                currency="XTR",
+            )
+            self.assertFalse(ok)
+            self.assertIsNotNone(error)
+
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload=provider_payment_id,
+                total_amount=PLAN_1M_PRICE_STARS,
+                currency="USD",
+            )
+            self.assertFalse(ok)
+            self.assertIsNotNone(error)
+
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload=provider_payment_id,
+                total_amount=PLAN_1M_PRICE_STARS + 1,
+                currency="XTR",
+            )
+            self.assertFalse(ok)
+            self.assertIsNotNone(error)
+
+        async with self._session_factory() as session:
+            payment = (
+                (
+                    await session.execute(
+                        select(Payment).where(
+                            Payment.provider_payment_id == provider_payment_id
+                        )
+                    )
+                )
+                .scalars()
+                .one()
+            )
+            assert payment is not None
+            payment.status = PaymentStatus.SUCCEEDED
+            await session.commit()
+
+        async with self._session_factory() as session:
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload=provider_payment_id,
+                total_amount=PLAN_1M_PRICE_STARS,
+                currency="XTR",
+            )
+            self.assertFalse(ok)
+            self.assertIsNotNone(error)
+
+        async with self._session_factory() as session:
+            payment = (
+                (
+                    await session.execute(
+                        select(Payment).where(
+                            Payment.provider_payment_id == provider_payment_id
+                        )
+                    )
+                )
+                .scalars()
+                .one()
+            )
+            assert payment is not None
+            payment.status = PaymentStatus.PENDING
+            await session.commit()
+
+        async with self._session_factory() as session:
+            stored_account = await session.get(Account, account.id)
+            assert stored_account is not None
+            stored_account.status = AccountStatus.BLOCKED
+            await session.commit()
+
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload=provider_payment_id,
+                total_amount=PLAN_1M_PRICE_STARS,
+                currency="XTR",
+            )
+            self.assertFalse(ok)
+            self.assertIsNotNone(error)
+
+            stored_account.status = AccountStatus.ACTIVE
+            payment = await session.get(Payment, payment.id)
+            assert payment is not None
+            payment.flow_type = PaymentFlowType.WALLET_TOPUP
+            await session.commit()
+
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload=provider_payment_id,
+                total_amount=PLAN_1M_PRICE_STARS,
+                currency="XTR",
+            )
+            self.assertFalse(ok)
+            self.assertIsNotNone(error)
+
+            payment.flow_type = PaymentFlowType.DIRECT_PLAN_PURCHASE
+            await session.commit()
+
+            ok, error = await validate_telegram_stars_pre_checkout(
+                session,
+                telegram_id=account.telegram_id,
+                invoice_payload=provider_payment_id,
+                total_amount=PLAN_1M_PRICE_STARS,
+                currency="XTR",
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(error)
+
+    async def test_validate_telegram_stars_actor_and_stage_plan_purchase_grant(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            balance=0,
+            email="actor@example.com",
+            telegram_id=123456789,
+        )
+
+        async with self._session_factory() as session:
+            with self.assertRaises(PaymentConflictError):
+                await _validate_telegram_stars_actor(
+                    session,
+                    event=PaymentWebhookEvent(
+                        provider=PaymentProvider.TELEGRAM_STARS,
+                        provider_event_id="event-1",
+                        provider_payment_id="payment-1",
+                        status=PaymentStatus.SUCCEEDED,
+                        amount=PLAN_1M_PRICE_STARS,
+                        currency="XTR",
+                        flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                        account_id=account.id,
+                        raw_payload={},
+                    ),
+                )
+
+            with self.assertRaises(PaymentConflictError):
+                await _validate_telegram_stars_actor(
+                    session,
+                    event=PaymentWebhookEvent(
+                        provider=PaymentProvider.TELEGRAM_STARS,
+                        provider_event_id="event-2",
+                        provider_payment_id="payment-2",
+                        status=PaymentStatus.SUCCEEDED,
+                        amount=PLAN_1M_PRICE_STARS,
+                        currency="XTR",
+                        flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                        account_id=account.id,
+                        raw_payload={"telegram_id": 1},
+                    ),
+                )
+
+            await _validate_telegram_stars_actor(
+                session,
+                event=PaymentWebhookEvent(
+                    provider=PaymentProvider.TELEGRAM_STARS,
+                    provider_event_id="event-3",
+                    provider_payment_id="payment-3",
+                    status=PaymentStatus.SUCCEEDED,
+                    amount=PLAN_1M_PRICE_STARS,
+                    currency="XTR",
+                    flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                    account_id=account.id,
+                    raw_payload={"telegram_id": account.telegram_id},
+                ),
+            )
+
+            with self.assertRaises(PaymentServiceError):
+                await _stage_plan_purchase_grant(
+                    session,
+                    payment=Payment(
+                        account_id=account.id,
+                        provider=PaymentProvider.YOOKASSA,
+                        flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                        status=PaymentStatus.SUCCEEDED,
+                        amount=PLAN_1M_PRICE_RUB,
+                        currency="RUB",
+                        provider_payment_id="unstaged",
+                    ),
+                )
+
+            payment = Payment(
+                account_id=account.id,
+                provider=PaymentProvider.YOOKASSA,
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                status=PaymentStatus.SUCCEEDED,
+                amount=PLAN_1M_PRICE_RUB,
+                currency="RUB",
+                provider_payment_id="plan-payment-1",
+                external_reference="plan-payment-1",
+            )
+            session.add(payment)
+            await session.flush()
+
+            with self.assertRaises(PaymentConflictError):
+                await _stage_plan_purchase_grant(session, payment=payment)
+
+            payment.plan_code = "plan_1m"
+            await session.flush()
+            await _stage_plan_purchase_grant(session, payment=payment)
+            await _stage_plan_purchase_grant(session, payment=payment)
+            await session.commit()
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertEqual(grants[0].payment_id, payment.id)

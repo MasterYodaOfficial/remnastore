@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,6 +18,7 @@ from app.api.dependencies import get_current_account
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AccountStatus,
     LedgerEntry,
     LedgerEntryType,
     Payment,
@@ -26,6 +27,7 @@ from app.db.models import (
     PromoCode,
     PromoEffectType,
     PromoRedemption,
+    PromoRedemptionContext,
     PromoRedemptionStatus,
     SubscriptionGrant,
 )
@@ -41,6 +43,8 @@ from app.domain.payments import (
 from app.integrations.remnawave.client import RemnawaveUser
 from app.main import create_app
 from app.services.plans import get_subscription_plan
+from app.services.purchases import PurchaseSource, RemnawaveSyncError
+from app.services import promos as promos_service
 
 PLAN_1M = get_subscription_plan("plan_1m")
 PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
@@ -214,28 +218,65 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         effect_type: PromoEffectType,
         effect_value: int,
         plan_codes: list[str] | None = None,
+        campaign_values: dict | None = None,
+        code_values: dict | None = None,
     ) -> tuple[PromoCampaign, PromoCode]:
         async with self._session_factory() as session:
-            campaign = PromoCampaign(
-                name=f"Promo {code}",
-                status=PromoCampaignStatus.ACTIVE,
-                effect_type=effect_type,
-                effect_value=effect_value,
-                currency="RUB",
-                plan_codes=plan_codes,
-            )
+            campaign_payload = {
+                "name": f"Promo {code}",
+                "status": PromoCampaignStatus.ACTIVE,
+                "effect_type": effect_type,
+                "effect_value": effect_value,
+                "currency": "RUB",
+                "plan_codes": plan_codes,
+            }
+            if campaign_values:
+                campaign_payload.update(campaign_values)
+            campaign = PromoCampaign(**campaign_payload)
             session.add(campaign)
             await session.flush()
-            promo_code = PromoCode(
-                campaign_id=campaign.id,
-                code=code,
-                is_active=True,
-            )
+            promo_code_payload = {
+                "campaign_id": campaign.id,
+                "code": code,
+                "is_active": True,
+            }
+            if code_values:
+                promo_code_payload.update(code_values)
+            promo_code = PromoCode(**promo_code_payload)
             session.add(promo_code)
             await session.commit()
             await session.refresh(campaign)
             await session.refresh(promo_code)
             return campaign, promo_code
+
+    async def _create_subscription_grant(
+        self,
+        *,
+        account_id: uuid.UUID,
+        purchase_source: str,
+        duration_days: int = PLAN_1M_DURATION_DAYS,
+        amount: int = PLAN_1M_PRICE_RUB,
+        currency: str = "RUB",
+        reference_id: str = "grant-ref",
+    ) -> SubscriptionGrant:
+        async with self._session_factory() as session:
+            grant = SubscriptionGrant(
+                account_id=account_id,
+                payment_id=None,
+                purchase_source=purchase_source,
+                reference_type="test",
+                reference_id=reference_id,
+                plan_code="plan_1m",
+                amount=amount,
+                currency=currency,
+                duration_days=duration_days,
+                base_expires_at=datetime.now(),
+                target_expires_at=datetime.now(),
+            )
+            session.add(grant)
+            await session.commit()
+            await session.refresh(grant)
+            return grant
 
     async def _get_account(self, account_id: uuid.UUID) -> Account | None:
         async with self._session_factory() as session:
@@ -501,3 +542,563 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(redemptions[0].status, PromoRedemptionStatus.APPLIED)
         self.assertEqual(redemptions[0].payment_id, stored_payment.id)
         self.assertEqual(redemptions[0].subscription_grant_id, grants[0].id)
+
+    async def test_quote_plan_promo_rejects_plan_mismatch(self) -> None:
+        account = await self._create_account(email="plan-mismatch@example.com")
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="THREEMONTH",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=20,
+            plan_codes=["plan_3m"],
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "threemonth", "currency": "rub"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error_code"], "not_for_plan")
+
+    async def test_quote_plan_promo_respects_subscription_state_requirements(
+        self,
+    ) -> None:
+        inactive_account = await self._create_account(
+            email="inactive@example.com",
+            subscription_status="INACTIVE",
+        )
+        self._current_account_id = inactive_account.id
+        await self._create_promo(
+            code="ACTIVEONLY",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            campaign_values={"requires_active_subscription": True},
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "activeonly", "currency": "rub"},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error_code"], "requires_active_subscription")
+
+        active_account = await self._create_account(
+            email="active@example.com",
+            subscription_status="ACTIVE",
+            subscription_expires_at=datetime.now().replace(year=2099),
+        )
+        self._current_account_id = active_account.id
+        await self._create_promo(
+            code="NOACTIVE",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            campaign_values={"requires_no_active_subscription": True},
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "noactive", "currency": "rub"},
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error_code"], "requires_no_subscription")
+
+    async def test_quote_plan_promo_respects_first_purchase_only(self) -> None:
+        account = await self._create_account(email="first-purchase@example.com")
+        self._current_account_id = account.id
+        await self._create_subscription_grant(
+            account_id=account.id,
+            purchase_source=PurchaseSource.WALLET.value,
+        )
+        await self._create_promo(
+            code="FIRSTONLY",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            campaign_values={"first_purchase_only": True},
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "firstonly", "currency": "rub"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error_code"], "first_purchase_only")
+
+    async def test_quote_plan_promo_rejects_invalid_fixed_price_or_zero_payment(
+        self,
+    ) -> None:
+        account = await self._create_account(email="fixed-price@example.com")
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="NOPRICECUT",
+            effect_type=PromoEffectType.FIXED_PRICE,
+            effect_value=PLAN_1M_PRICE_RUB,
+            plan_codes=["plan_1m"],
+        )
+        fixed_price_response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "nopricecut", "currency": "rub"},
+        )
+        self.assertEqual(fixed_price_response.status_code, 422)
+        self.assertEqual(
+            fixed_price_response.json()["error_code"], "no_price_improvement"
+        )
+
+        await self._create_promo(
+            code="FREECHECKOUT",
+            effect_type=PromoEffectType.FIXED_DISCOUNT,
+            effect_value=PLAN_1M_PRICE_RUB,
+            plan_codes=["plan_1m"],
+        )
+        zero_payment_response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "freecheckout", "currency": "rub"},
+        )
+        self.assertEqual(zero_payment_response.status_code, 422)
+        self.assertEqual(
+            zero_payment_response.json()["error_code"],
+            "zero_payment_use_direct",
+        )
+
+    async def test_quote_plan_promo_rejects_code_assigned_to_another_account(
+        self,
+    ) -> None:
+        owner = await self._create_account(email="owner@example.com")
+        account = await self._create_account(email="other@example.com")
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="PRIVATE",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            code_values={"assigned_account_id": owner.id},
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "private", "currency": "rub"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json()["error_code"],
+            "code_belongs_to_another_account",
+        )
+
+    async def test_redeem_free_days_is_idempotent(self) -> None:
+        account = await self._create_account(email="freedays@example.com", balance=0)
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="FREE7",
+            effect_type=PromoEffectType.FREE_DAYS,
+            effect_value=7,
+        )
+
+        async def fake_apply_paid_purchase(
+            account_obj: Account,
+            *,
+            source,
+            target_expires_at: datetime,
+            gateway_factory=None,
+        ):
+            del gateway_factory
+            self.assertEqual(source.value, "promo")
+            account_obj.remnawave_user_uuid = account_obj.id
+            account_obj.subscription_status = "ACTIVE"
+            account_obj.subscription_expires_at = target_expires_at
+            account_obj.subscription_url = (
+                f"https://panel.test/sub/{account_obj.id.hex[:8]}"
+            )
+            account_obj.subscription_is_trial = False
+            return None
+
+        with patch(
+            "app.services.promos.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
+        ):
+            first_response = await self.client.post(
+                "/api/v1/promos/redeem",
+                json={"code": "free7", "idempotency_key": "free-7"},
+            )
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(first_response.json()["granted_duration_days"], 7)
+        self.assertEqual(first_response.json()["status"], "applied")
+
+        with patch(
+            "app.services.promos.apply_paid_purchase",
+            side_effect=fake_apply_paid_purchase,
+        ):
+            second_response = await self.client.post(
+                "/api/v1/promos/redeem",
+                json={"code": "free7", "idempotency_key": "free-7"},
+            )
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(second_response.json()["granted_duration_days"], 7)
+
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(len(grants), 1)
+        self.assertEqual(grants[0].duration_days, 7)
+
+        redemptions = await self._get_promo_redemptions(account.id)
+        self.assertEqual(len(redemptions), 1)
+        self.assertEqual(redemptions[0].status, PromoRedemptionStatus.APPLIED)
+        self.assertEqual(redemptions[0].subscription_grant_id, grants[0].id)
+
+    async def test_redeem_rejects_same_idempotency_key_for_different_code(self) -> None:
+        account = await self._create_account(email="conflict@example.com", balance=0)
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="BONUS100",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=100,
+        )
+        await self._create_promo(
+            code="BONUS200",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=200,
+        )
+
+        first_response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "bonus100", "idempotency_key": "same-key"},
+        )
+        self.assertEqual(first_response.status_code, 200)
+
+        second_response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "bonus200", "idempotency_key": "same-key"},
+        )
+        self.assertEqual(second_response.status_code, 409)
+        self.assertEqual(
+            second_response.json()["error_code"],
+            "idempotency_promo_conflict",
+        )
+
+    async def test_quote_plan_promo_rejects_direct_only_effect(self) -> None:
+        account = await self._create_account(email="direct-only@example.com")
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="BALANCE500",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=500,
+            plan_codes=["plan_1m"],
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "balance500", "currency": "rub"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json()["error_code"],
+            "cannot_use_for_plan_purchase",
+        )
+
+    async def test_quote_plan_promo_enforces_campaign_and_code_limits(self) -> None:
+        account = await self._create_account(email="limits@example.com")
+        self._current_account_id = account.id
+        campaign, promo_code = await self._create_promo(
+            code="ONCEONLY",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=15,
+            plan_codes=["plan_1m"],
+            campaign_values={"total_redemptions_limit": 1},
+            code_values={"max_redemptions": 1},
+        )
+
+        async with self._session_factory() as session:
+            redemption = PromoRedemption(
+                campaign_id=campaign.id,
+                promo_code_id=promo_code.id,
+                account_id=account.id,
+                status=PromoRedemptionStatus.APPLIED,
+                redemption_context=PromoRedemptionContext.PLAN_PURCHASE,
+                plan_code="plan_1m",
+                effect_type=PromoEffectType.PERCENT_DISCOUNT,
+                effect_value=15,
+                currency="RUB",
+                original_amount=PLAN_1M_PRICE_RUB,
+                discount_amount=150,
+                final_amount=PLAN_1M_PRICE_RUB - 150,
+                granted_duration_days=PLAN_1M_DURATION_DAYS,
+                reference_type="payment",
+                reference_id="prior-redemption",
+            )
+            session.add(redemption)
+            await session.commit()
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "ONCEONLY", "currency": "rub"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error_code"], "campaign_limit_reached")
+
+    async def test_redeem_rejects_blank_idempotency_key(self) -> None:
+        account = await self._create_account(email="blank-idem@example.com")
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="BONUS300",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=300,
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "bonus300", "idempotency_key": "   "},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("detail", response.json())
+
+    async def test_redeem_rejects_discount_only_campaign_for_direct_use(self) -> None:
+        account = await self._create_account(email="discount-direct@example.com")
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="PERCENT20",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=20,
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "percent20", "idempotency_key": "direct-1"},
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["error_code"], "cannot_redeem_directly")
+
+    async def test_redeem_rejects_same_idempotency_key_while_redemption_pending(
+        self,
+    ) -> None:
+        account = await self._create_account(email="pending@example.com")
+        self._current_account_id = account.id
+        campaign, promo_code = await self._create_promo(
+            code="PENDING100",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=100,
+        )
+
+        async with self._session_factory() as session:
+            redemption = PromoRedemption(
+                campaign_id=campaign.id,
+                promo_code_id=promo_code.id,
+                account_id=account.id,
+                status=PromoRedemptionStatus.PENDING,
+                redemption_context=PromoRedemptionContext.DIRECT,
+                effect_type=PromoEffectType.BALANCE_CREDIT,
+                effect_value=100,
+                currency="RUB",
+                reference_type="direct_redeem",
+                reference_id="pending-key",
+            )
+            session.add(redemption)
+            await session.commit()
+
+        response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "pending100", "idempotency_key": "pending-key"},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error_code"], "already_in_progress")
+
+    async def test_quote_plan_promo_rejects_disabled_inactive_and_time_window_states(
+        self,
+    ) -> None:
+        account = await self._create_account(email="promo-states@example.com")
+        self._current_account_id = account.id
+
+        await self._create_promo(
+            code="DISABLED1",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            code_values={"is_active": False},
+        )
+        disabled_response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "disabled1", "currency": "rub"},
+        )
+        self.assertEqual(disabled_response.status_code, 422)
+        self.assertEqual(disabled_response.json()["error_code"], "code_disabled")
+
+        await self._create_promo(
+            code="DRAFT1",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            campaign_values={"status": PromoCampaignStatus.DRAFT},
+        )
+        draft_response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "draft1", "currency": "rub"},
+        )
+        self.assertEqual(draft_response.status_code, 422)
+        self.assertEqual(draft_response.json()["error_code"], "campaign_inactive")
+
+        await self._create_promo(
+            code="FUTURE1",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            campaign_values={"starts_at": datetime.now(UTC) + timedelta(days=1)},
+        )
+        future_response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "future1", "currency": "rub"},
+        )
+        self.assertEqual(future_response.status_code, 422)
+        self.assertEqual(future_response.json()["error_code"], "campaign_not_started")
+
+        await self._create_promo(
+            code="ENDED1",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+            campaign_values={"ends_at": datetime.now(UTC) - timedelta(days=1)},
+        )
+        ended_response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "ended1", "currency": "rub"},
+        )
+        self.assertEqual(ended_response.status_code, 422)
+        self.assertEqual(ended_response.json()["error_code"], "campaign_ended")
+
+    async def test_quote_plan_promo_rejects_blocked_account(self) -> None:
+        account = await self._create_account(
+            email="blocked-promo@example.com",
+            status=AccountStatus.BLOCKED,
+        )
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="BLOCKED10",
+            effect_type=PromoEffectType.PERCENT_DISCOUNT,
+            effect_value=10,
+            plan_codes=["plan_1m"],
+        )
+
+        response = await self.client.post(
+            "/api/v1/promos/plans/plan_1m/quote",
+            json={"promo_code": "blocked10", "currency": "rub"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error_code"], "account_blocked")
+
+    async def test_redeem_rolls_back_when_remote_sync_fails(self) -> None:
+        account = await self._create_account(email="rollback@example.com", balance=0)
+        self._current_account_id = account.id
+        await self._create_promo(
+            code="FREEFAIL",
+            effect_type=PromoEffectType.FREE_DAYS,
+            effect_value=7,
+        )
+
+        with patch(
+            "app.services.promos.apply_paid_purchase",
+            side_effect=RemnawaveSyncError("remnawave unavailable"),
+        ):
+            response = await self.client.post(
+                "/api/v1/promos/redeem",
+                json={"code": "freefail", "idempotency_key": "rollback-1"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(await self._get_promo_redemptions(account.id), [])
+        self.assertEqual(await self._get_subscription_grants(account.id), [])
+
+    async def test_redeem_rejects_idempotency_reuse_by_other_account(self) -> None:
+        first_account = await self._create_account(email="first-idem@example.com")
+        second_account = await self._create_account(email="second-idem@example.com")
+        await self._create_promo(
+            code="BONUS150",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=150,
+        )
+
+        self._current_account_id = first_account.id
+        first_response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "bonus150", "idempotency_key": "shared-idem"},
+        )
+        self.assertEqual(first_response.status_code, 200)
+
+        self._current_account_id = second_account.id
+        second_response = await self.client.post(
+            "/api/v1/promos/redeem",
+            json={"code": "bonus150", "idempotency_key": "shared-idem"},
+        )
+        self.assertEqual(second_response.status_code, 409)
+        self.assertEqual(
+            second_response.json()["error_code"],
+            "idempotency_account_conflict",
+        )
+
+    async def test_mark_promo_redemption_applied_rejects_conflicting_links(
+        self,
+    ) -> None:
+        account = await self._create_account(email="mark-links@example.com")
+        campaign, promo_code = await self._create_promo(
+            code="LINKS1",
+            effect_type=PromoEffectType.BALANCE_CREDIT,
+            effect_value=100,
+        )
+        async with self._session_factory() as session:
+            redemption = PromoRedemption(
+                campaign_id=campaign.id,
+                promo_code_id=promo_code.id,
+                account_id=account.id,
+                status=PromoRedemptionStatus.APPLIED,
+                redemption_context=PromoRedemptionContext.DIRECT,
+                effect_type=PromoEffectType.BALANCE_CREDIT,
+                effect_value=100,
+                currency="RUB",
+                payment_id=10,
+                subscription_grant_id=20,
+                ledger_entry_id=30,
+                reference_type="direct_redeem",
+                reference_id="links-1",
+            )
+            session.add(redemption)
+            await session.commit()
+
+        async with self._session_factory() as session:
+            with self.assertRaises(promos_service.PromoConflictError) as captured:
+                await promos_service.mark_promo_redemption_applied(
+                    session,
+                    reference_type="direct_redeem",
+                    reference_id="links-1",
+                    payment_id=99,
+                )
+            self.assertEqual(captured.exception.code, "already_another_payment")
+
+            with self.assertRaises(promos_service.PromoConflictError) as captured:
+                await promos_service.mark_promo_redemption_applied(
+                    session,
+                    reference_type="direct_redeem",
+                    reference_id="links-1",
+                    subscription_grant_id=98,
+                )
+            self.assertEqual(
+                captured.exception.code,
+                "already_another_subscription_grant",
+            )
+
+            with self.assertRaises(promos_service.PromoConflictError) as captured:
+                await promos_service.mark_promo_redemption_applied(
+                    session,
+                    reference_type="direct_redeem",
+                    reference_id="links-1",
+                    ledger_entry_id=97,
+                )
+            self.assertEqual(
+                captured.exception.code,
+                "already_another_ledger_entry",
+            )
