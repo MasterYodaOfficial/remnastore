@@ -38,6 +38,7 @@ class SubscriptionStateResponse(BaseModel):
     trial_used_at: Optional[datetime] = None
     trial_ends_at: Optional[datetime] = None
     days_left: Optional[int] = None
+    period_started_at: Optional[datetime] = None
 
     @classmethod
     def from_account(cls, account: Account) -> "SubscriptionStateResponse":
@@ -45,6 +46,11 @@ class SubscriptionStateResponse(BaseModel):
         expires_at = account.subscription_expires_at
         is_active = False
         days_left: Optional[int] = None
+        period_started_at = (
+            account.trial_used_at if account.subscription_is_trial else None
+        )
+        if period_started_at is not None and period_started_at.tzinfo is None:
+            period_started_at = period_started_at.replace(tzinfo=timezone.utc)
 
         if expires_at is not None:
             comparable_expires_at = expires_at
@@ -70,4 +76,5 @@ class SubscriptionStateResponse(BaseModel):
             trial_used_at=account.trial_used_at,
             trial_ends_at=account.trial_ends_at,
             days_left=days_left,
+            period_started_at=period_started_at,
         )

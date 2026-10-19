@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Optional
 from uuid import UUID
 
@@ -8,7 +9,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.models import Account, AccountStatus, PromoCode
+from app.db.models import Account, AccountStatus, PromoCode, SubscriptionGrant
 from app.integrations.remnawave import (
     RemnawaveConfigurationError,
     RemnawaveRequestError,
@@ -33,6 +34,7 @@ from app.services.purchases import (
     PurchaseSource,
     stage_wallet_plan_purchase,
     target_remnawave_user_uuid,
+    normalize_datetime,
 )
 from app.services.promos import (
     WALLET_PURCHASE_REFERENCE_TYPE,
@@ -107,8 +109,46 @@ async def _load_account_by_remnawave_user_uuid(
     return result.scalar_one_or_none()
 
 
-async def get_current_subscription(account: Account) -> SubscriptionStateResponse:
-    return SubscriptionStateResponse.from_account(account)
+async def get_current_subscription(
+    session: AsyncSession, *, account: Account
+) -> SubscriptionStateResponse:
+    response = SubscriptionStateResponse.from_account(account)
+    if not response.is_active or response.is_trial or response.expires_at is None:
+        return response
+
+    # Follow only applied grants ending at the current expiry. An incomplete
+    # history or an external panel edit must not invent a 100% baseline.
+    grants = (
+        await session.scalars(
+            select(SubscriptionGrant)
+            .where(
+                SubscriptionGrant.account_id == account.id,
+                SubscriptionGrant.applied_at.is_not(None),
+            )
+            .order_by(
+                SubscriptionGrant.target_expires_at.desc(), SubscriptionGrant.id.desc()
+            )
+        )
+    ).all()
+    cursor = normalize_datetime(response.expires_at)
+    tolerance = timedelta(seconds=1)  # The panel may truncate fractional seconds.
+    for grant in grants:
+        end = normalize_datetime(grant.target_expires_at)
+        start = normalize_datetime(grant.base_expires_at)
+        if abs(end - cursor) > tolerance or start >= end:
+            continue
+        cursor = start
+        if start <= normalize_datetime(grant.created_at) + tolerance:
+            response.period_started_at = start
+            break
+        # A trial followed immediately by a paid purchase is continuous access.
+        trial_end = normalize_datetime(account.trial_ends_at)
+        trial_start = normalize_datetime(account.trial_used_at)
+        if trial_start and trial_end and abs(start - trial_end) <= tolerance:
+            if trial_start < trial_end:
+                response.period_started_at = trial_start
+                break
+    return response
 
 
 async def _find_remnawave_identity_conflict(
@@ -165,7 +205,7 @@ async def sync_current_subscription(
     await session.commit()
     await session.refresh(account)
     await _clear_account_cache(account.id)
-    return SubscriptionStateResponse.from_account(account)
+    return await get_current_subscription(session, account=account)
 
 
 async def get_trial_eligibility(
@@ -290,7 +330,7 @@ async def activate_trial(
     await session.commit()
     await session.refresh(account)
     await _clear_account_cache(account.id)
-    return SubscriptionStateResponse.from_account(account)
+    return await get_current_subscription(session, account=account)
 
 
 async def sync_subscription_by_remnawave_user_uuid(
@@ -355,7 +395,7 @@ async def purchase_subscription_with_wallet(
             expected_amount=expected_amount,
             expected_refund_rub=expected_refund_rub,
         )
-        return SubscriptionStateResponse.from_account(account)
+        return await get_current_subscription(session, account=account)
 
     existing_grant = await get_subscription_grant_by_reference(
         session,
@@ -395,7 +435,7 @@ async def purchase_subscription_with_wallet(
             )
             await session.commit()
             await session.refresh(account)
-            return SubscriptionStateResponse.from_account(account)
+            return await get_current_subscription(session, account=account)
 
     plan = await get_subscription_plan(session, plan_code)
     quote = await quote_plan_promo(
@@ -462,4 +502,4 @@ async def purchase_subscription_with_wallet(
     )
     await session.commit()
     await session.refresh(account)
-    return SubscriptionStateResponse.from_account(account)
+    return await get_current_subscription(session, account=account)

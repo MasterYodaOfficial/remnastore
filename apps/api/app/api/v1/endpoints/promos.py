@@ -13,7 +13,6 @@ from app.schemas.promo import (
     PromoRedeemRequest,
     PromoRedeemResponse,
 )
-from app.schemas.subscription import SubscriptionStateResponse
 from app.services.plans import SubscriptionPlanError
 from app.services.promos import (
     PromoBlockedError,
@@ -25,6 +24,7 @@ from app.services.promos import (
     resolve_plan_checkout_amount,
 )
 from app.services.purchases import RemnawaveSyncError
+from app.services.subscriptions import get_current_subscription
 
 
 router = APIRouter()
@@ -109,5 +109,5 @@ async def redeem_promo(
         balance=result.account.balance,
         balance_credit_amount=result.redemption.balance_credit_amount,
         granted_duration_days=result.redemption.granted_duration_days,
-        subscription=SubscriptionStateResponse.from_account(result.account),
+        subscription=await get_current_subscription(session, account=result.account),
     )

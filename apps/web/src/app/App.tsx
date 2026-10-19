@@ -43,6 +43,7 @@ import {
   capturePendingReferralCodeFromUrl,
   readPendingReferralCode,
   clearPendingReferralCode,
+  rememberSelfReferralRejection,
 } from './lib/referrals';
 import { buildSupportMailtoUrl } from './lib/support';
 import { normalizeReferralMetric, resolveReferralAmount } from './lib/referral-metrics';
@@ -295,6 +296,7 @@ interface BackendSubscriptionState {
   subscription_url?: string | null;
   status?: string | null;
   expires_at?: string | null;
+  period_started_at?: string | null;
   last_synced_at?: string | null;
   is_active: boolean;
   is_trial: boolean;
@@ -533,6 +535,7 @@ interface Subscription {
   isTrial: boolean;
   status?: string | null;
   expiresAt?: string | null;
+  periodStartedAt?: string | null;
   subscriptionUrl?: string | null;
   trialEligibilityReason?: string | null;
 }
@@ -715,7 +718,6 @@ function mapSubscriptionToView(
   const status = subscriptionState?.status ?? account.subscription_status ?? null;
   const expiresAt = subscriptionState?.expires_at ?? account.subscription_expires_at ?? null;
   const trialUsedAt = subscriptionState?.trial_used_at ?? account.trial_used_at ?? null;
-  const trialEndsAt = subscriptionState?.trial_ends_at ?? account.trial_ends_at ?? null;
   const isTrial = subscriptionState?.is_trial ?? account.subscription_is_trial ?? false;
   const fallbackDaysLeft = calculateDaysLeft(expiresAt);
   const isActive =
@@ -726,7 +728,11 @@ function mapSubscriptionToView(
   return {
     isActive,
     daysLeft: daysLeft ?? undefined,
-    totalDays: isTrial ? calculateTotalDays(trialUsedAt, trialEndsAt) : undefined,
+    totalDays: calculateTotalDays(
+      subscriptionState?.period_started_at ?? (isTrial ? trialUsedAt : null),
+      expiresAt
+    ),
+    periodStartedAt: subscriptionState?.period_started_at ?? (isTrial ? trialUsedAt : null),
     hasTrial: trialUi?.can_start_now ?? !hasUsedTrial,
     hasUsedTrial,
     isTrial,
@@ -1295,6 +1301,7 @@ export default function App() {
   const inFlightLinkTokenRef = useRef<string | null>(null);
   const pendingTelegramLinkRefreshRef = useRef(false);
   const pendingPaymentRefreshRef = useRef(false);
+  const paymentCreationRef = useRef(false);
   const pendingReferralClaimRef = useRef(false);
   const settingsPromoIdempotencyKeyRef = useRef<string | null>(null);
   const attemptedWithdrawalsTokenRef = useRef<string | null>(null);
@@ -2288,7 +2295,11 @@ export default function App() {
         if (referralResult?.created) {
           toast.success(t('web.app.toasts.referralClaimed'));
         } else if (referralResult?.reason === 'self_referral') {
-          toast.error(t('web.app.toasts.referralSelfNotAllowed'));
+          const ownReferralCode = backendAccount.referral_code || '';
+          clearPendingReferralCode(ownReferralCode);
+          if (rememberSelfReferralRejection(backendAccount.id, ownReferralCode)) {
+            toast.error(t('web.app.toasts.referralSelfNotAllowed'));
+          }
         } else if (referralResult?.reason === 'referral_code_not_found') {
           toast.error(t('web.app.toasts.referralInvalid'));
         }
@@ -3171,7 +3182,7 @@ export default function App() {
     });
   };
 
-  const claimPendingReferralCode = async (token: string) => {
+  const claimPendingReferralCode = async (token: string, accountId: string) => {
     const referralCode = readPendingReferralCode();
     if (!referralCode) {
       return false;
@@ -3195,18 +3206,20 @@ export default function App() {
         );
 
         if (isReferralAlreadyHandledError(errorCode, detail)) {
-          clearPendingReferralCode();
+          clearPendingReferralCode(referralCode);
           return false;
         }
 
         if (isReferralSelfError(errorCode, detail)) {
-          clearPendingReferralCode();
-          toast.error(t('web.app.toasts.referralSelfNotAllowed'));
+          clearPendingReferralCode(referralCode);
+          if (rememberSelfReferralRejection(accountId, referralCode)) {
+            toast.error(t('web.app.toasts.referralSelfNotAllowed'));
+          }
           return false;
         }
 
         if (isReferralCodeNotFoundError(errorCode, detail)) {
-          clearPendingReferralCode();
+          clearPendingReferralCode(referralCode);
           toast.error(t('web.app.toasts.referralInvalid'));
           return false;
         }
@@ -3215,7 +3228,7 @@ export default function App() {
       }
 
       const payload = (await response.json()) as { created: boolean };
-      clearPendingReferralCode();
+      clearPendingReferralCode(referralCode);
       if (payload.created) {
         toast.success(t('web.app.toasts.referralClaimed'));
       }
@@ -3346,13 +3359,21 @@ export default function App() {
       return;
     }
 
+    if (pendingReferralCode === user.referralCode) {
+      clearPendingReferralCode(pendingReferralCode);
+      if (rememberSelfReferralRejection(user.id, pendingReferralCode)) {
+        toast.error(t('web.app.toasts.referralSelfNotAllowed'));
+      }
+      return;
+    }
+
     if (pendingReferralClaimRef.current) {
       return;
     }
 
     pendingReferralClaimRef.current = true;
     void (async () => {
-      const claimed = await claimPendingReferralCode(accessToken);
+      const claimed = await claimPendingReferralCode(accessToken, user.id);
       if (claimed) {
         await loadUserData(accessToken, user.avatar);
       }
@@ -3517,7 +3538,20 @@ export default function App() {
       };
     });
 
-  const createTopUpPayment = async (amount: number, provider: PaymentMethodProvider) => {
+  const runPaymentCreation = async (createPayment: () => Promise<void>) => {
+    if (paymentCreationRef.current) return;
+    paymentCreationRef.current = true;
+    try {
+      await createPayment();
+    } finally {
+      paymentCreationRef.current = false;
+    }
+  };
+
+  const createTopUpPayment = (amount: number, provider: PaymentMethodProvider) =>
+    runPaymentCreation(() => createTopUpPaymentIntent(amount, provider));
+
+  const createTopUpPaymentIntent = async (amount: number, provider: PaymentMethodProvider) => {
     if (!accessToken || !user) return;
     if (provider !== 'yookassa') {
       throw new Error(t('web.app.toasts.topupUnsupportedMethod'));
@@ -3830,7 +3864,10 @@ export default function App() {
     }
   };
 
-  const createPlanPayment = async (planId: string, provider: PaymentMethodProvider) => {
+  const createPlanPayment = (planId: string, provider: PaymentMethodProvider) =>
+    runPaymentCreation(() => createPlanPaymentIntent(planId, provider));
+
+  const createPlanPaymentIntent = async (planId: string, provider: PaymentMethodProvider) => {
     if (!accessToken || !user) return;
 
     const selectedPlan = plans.find((plan) => plan.id === planId);

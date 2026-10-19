@@ -636,6 +636,10 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("subscription.wallet_purchase.staged", event_types)
         self.assertIn("subscription.wallet_purchase.applied", event_types)
         self.assertIsNotNone(grants[0].applied_at)
+        self.assertEqual(
+            datetime.fromisoformat(body["period_started_at"]).replace(tzinfo=UTC),
+            grants[0].base_expires_at.replace(tzinfo=UTC),
+        )
 
     async def test_wallet_purchase_uses_updated_database_price_duration_and_limit(
         self,
@@ -689,6 +693,9 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(paid_body["has_used_trial"])
         self.assertIsNotNone(paid_body["trial_used_at"])
         self.assertIsNotNone(paid_body["trial_ends_at"])
+        self.assertEqual(
+            paid_body["period_started_at"], trial_response.json()["period_started_at"]
+        )
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
@@ -1098,6 +1105,11 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertGreater(second_expires_at, first_expires_at + timedelta(days=29))
+        self.assertIsNotNone(first_response.json()["period_started_at"])
+        self.assertEqual(
+            first_response.json()["period_started_at"],
+            second_response.json()["period_started_at"],
+        )
 
         stored_account = await self._get_account(account.id)
         self.assertIsNotNone(stored_account)
@@ -1740,6 +1752,124 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["status"], "ACTIVE")
         self.assertEqual(
             response.json()["subscription_url"], "https://panel.test/sub/snapshot"
+        )
+        self.assertIsNone(response.json()["period_started_at"])
+
+    async def test_subscription_period_survives_renewal_and_restarts_after_expiry(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        start = now - timedelta(days=100)
+        end = start + timedelta(days=365)
+        account = await self._create_account(
+            email="period@example.com",
+            subscription_status="ACTIVE",
+            subscription_expires_at=end,
+        )
+        self._current_account_id = account.id
+
+        async def add_grant(base, target, purchased_at, *, applied=True):
+            async with self._session_factory() as session:
+                session.add(
+                    SubscriptionGrant(
+                        account_id=account.id,
+                        plan_code="historical-plan",
+                        amount=100,
+                        duration_days=(target - base).days,
+                        base_expires_at=base,
+                        target_expires_at=target,
+                        created_at=purchased_at,
+                        applied_at=purchased_at if applied else None,
+                    )
+                )
+                await session.commit()
+
+        async def assert_period(expected_start, expected_end):
+            for path in ("/api/v1/subscriptions/", "/api/v1/bootstrap/me"):
+                response = await self.client.get(path)
+                self.assertEqual(response.status_code, 200, response.text)
+                state = response.json()
+                if "subscription" in state:
+                    state = state["subscription"]
+                actual = state["period_started_at"]
+                self.assertEqual(
+                    None if actual is None else datetime.fromisoformat(actual),
+                    expected_start,
+                )
+                self.assertEqual(
+                    datetime.fromisoformat(state["expires_at"]).replace(tzinfo=UTC),
+                    expected_end,
+                )
+
+        await add_grant(start, end, start)
+        await assert_period(start, end)
+
+        renewed_end = end + timedelta(days=30)
+        # Pending purchases must not change the displayed baseline.
+        await add_grant(end, renewed_end, now, applied=False)
+        await assert_period(start, end)
+        await add_grant(end, renewed_end, now)
+        async with self._session_factory() as session:
+            stored = await session.get(Account, account.id)
+            stored.subscription_expires_at = renewed_end
+            await session.commit()
+        await assert_period(start, renewed_end)
+
+        # A subsequent purchase after a real gap begins a new period.
+        new_start = renewed_end + timedelta(days=2)
+        new_end = new_start + timedelta(days=30)
+        await add_grant(new_start, new_end, new_start)
+        async with self._session_factory() as session:
+            stored = await session.get(Account, account.id)
+            stored.subscription_expires_at = new_end
+            await session.commit()
+        await assert_period(new_start, new_end)
+
+        # An expiry edited externally has no reliable matching purchase history.
+        external_end = new_end + timedelta(days=5)
+        async with self._session_factory() as session:
+            stored = await session.get(Account, account.id)
+            stored.subscription_expires_at = external_end
+            await session.commit()
+        await assert_period(None, external_end)
+
+    async def test_subscription_period_does_not_guess_missing_history(self):
+        now = datetime.now(UTC).replace(microsecond=0)
+        previous_expiry = now + timedelta(days=20)
+        end = previous_expiry + timedelta(days=30)
+        account = await self._create_account(
+            email="incomplete-period@example.com",
+            subscription_status="ACTIVE",
+            subscription_expires_at=end,
+        )
+        self._current_account_id = account.id
+        async with self._session_factory() as session:
+            session.add(
+                SubscriptionGrant(
+                    account_id=account.id,
+                    plan_code="historical-plan",
+                    amount=100,
+                    duration_days=30,
+                    base_expires_at=previous_expiry,
+                    target_expires_at=end,
+                    created_at=now,
+                    applied_at=now,
+                )
+            )
+            await session.commit()
+        response = await self.client.get("/api/v1/bootstrap/me")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["subscription"]["period_started_at"])
+
+        # A known trial can supply the missing start when access was continuous.
+        trial_start = previous_expiry - timedelta(days=30)
+        async with self._session_factory() as session:
+            stored = await session.get(Account, account.id)
+            stored.trial_used_at = trial_start
+            stored.trial_ends_at = previous_expiry
+            await session.commit()
+        response = await self.client.get("/api/v1/subscriptions/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            datetime.fromisoformat(response.json()["period_started_at"]), trial_start
         )
 
     async def test_trial_eligibility_endpoint_reports_blocked_existing_and_eligible(

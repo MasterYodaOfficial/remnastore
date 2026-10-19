@@ -607,6 +607,46 @@ class ReferralFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(updated_intent.account_id)
         self.assertIsNone(updated_intent.consumed_at)
 
+    async def test_repeated_telegram_start_param_consumes_self_referral_once(self):
+        account = await self._create_account(
+            telegram_id=700025, referral_code="owner-self"
+        )
+        referrer = await self._create_account(referral_code="another-owner")
+        init_data = {
+            "user": {"id": 700025, "first_name": "Owner", "language_code": "ru"},
+            "start_param": "ref_owner-self",
+        }
+        with patch.object(
+            auth_endpoints, "verify_telegram_init_data", return_value=init_data
+        ):
+            first = await self.client.post(
+                "/api/v1/auth/telegram/webapp", json={"init_data": "stub"}
+            )
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json()["referral_result"]["reason"], "self_referral")
+            second = await self.client.post(
+                "/api/v1/auth/telegram/webapp", json={"init_data": "stub"}
+            )
+            self.assertEqual(second.status_code, 200)
+            self.assertIsNone(second.json()["referral_result"])
+            intent = await self._get_telegram_referral_intent(700025)
+            self.assertEqual(intent.status, "rejected")
+            self.assertEqual(intent.result_reason, "self_referral")
+            init_data["start_param"] = "ref_another-owner"
+            valid = await self.client.post(
+                "/api/v1/auth/telegram/webapp", json={"init_data": "stub"}
+            )
+            self.assertEqual(valid.status_code, 200)
+            self.assertTrue(valid.json()["referral_result"]["applied"])
+            repeated = await self.client.post(
+                "/api/v1/auth/telegram/webapp", json={"init_data": "stub"}
+            )
+            self.assertEqual(repeated.status_code, 200)
+            self.assertIsNone(repeated.json()["referral_result"])
+        stored = await self._get_account_by_telegram_id(700025)
+        self.assertEqual(stored.id, account.id)
+        self.assertEqual(stored.referred_by_account_id, referrer.id)
+
     async def test_telegram_auth_applies_pending_referral_intent(self) -> None:
         referrer = await self._create_account(referral_code="ref-auth")
 

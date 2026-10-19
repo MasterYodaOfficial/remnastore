@@ -426,6 +426,14 @@ async def record_telegram_referral_intent(
         telegram_id,
         for_update=True,
     )
+    if (
+        intent is not None
+        and intent.referral_code == normalized_referral_code
+        and intent.status in {"applied", "rejected"}
+    ):
+        # Telegram keeps start_param in initData on later logins. Do not replay
+        # a consumed referral or show its rejection again for the same code.
+        return intent
     if intent is None:
         intent = TelegramReferralIntent(
             telegram_id=telegram_id,

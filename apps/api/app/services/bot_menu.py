@@ -65,7 +65,7 @@ async def get_bot_dashboard(
             referral=None,
         )
 
-    subscription = await get_current_subscription(account)
+    subscription = await get_current_subscription(session, account=account)
     trial_eligibility = await get_trial_eligibility(session, account=account)
     referral_summary = await get_referral_summary(session, account_id=account.id)
 

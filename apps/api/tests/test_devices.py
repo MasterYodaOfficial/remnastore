@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from httpx import ASGITransport, AsyncClient
+import httpx
+from remnawave import RemnawaveSDK
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -25,6 +27,7 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.integrations.remnawave import RemnawaveRequestError, RemnawaveUser
+from app.integrations.remnawave.client import RemnawaveGateway
 from app.main import create_app
 from app.services.devices import reconcile_device_purchases
 from test_payments import FakeYooKassaGateway
@@ -169,6 +172,40 @@ class DeviceEndpointsTests(unittest.IsolatedAsyncioTestCase):
             item.stop()
         await self.engine.dispose()
         self.tmp.cleanup()
+
+    async def test_devices_endpoint_accepts_current_panel_hwid_response(self):
+        gateway = RemnawaveGateway.__new__(RemnawaveGateway)
+        async with AsyncClient(
+            base_url="https://panel.test/api/",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={
+                        "response": {
+                            "total": 1.0,
+                            "devices": [
+                                {
+                                    "hwid": "current-phone",
+                                    "userId": 123,
+                                    "deviceModel": "iPhone",
+                                    "osVersion": "18",
+                                    "platform": "iOS",
+                                    "createdAt": "2026-10-19T18:55:00Z",
+                                    "updatedAt": "2026-10-19T18:55:00Z",
+                                }
+                            ],
+                        }
+                    },
+                )
+            ),
+        ) as panel:
+            gateway._sdk = RemnawaveSDK(client=panel)
+            self.gateway.get_hwid_devices = gateway.get_hwid_devices
+            response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["devices"][0]["hwid"], "current-phone")
+        self.assertEqual(response.json()["devices"][0]["device_model"], "iPhone")
+        self.assertEqual(response.json()["limit"], 3)
 
     async def _quote(self, quantity=1):
         response = await self.client.post(

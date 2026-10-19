@@ -35,9 +35,10 @@ router = APIRouter()
 
 @router.get("/", response_model=SubscriptionStateResponse)
 async def read_current_subscription(
+    session: AsyncSession = Depends(get_session),
     current_account: Account = Depends(get_current_account),
 ) -> SubscriptionStateResponse:
-    return await get_current_subscription(current_account)
+    return await get_current_subscription(session, account=current_account)
 
 
 @router.get("/trial-eligibility", response_model=TrialEligibilityResponse)

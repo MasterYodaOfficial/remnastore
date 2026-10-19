@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -44,5 +44,9 @@ class SubscriptionGrant(Base):
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), nullable=False
+        # PostgreSQL NOW() is the transaction start, which can precede the
+        # calculated purchase window. Use the actual insert time for new grants.
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        nullable=False,
     )

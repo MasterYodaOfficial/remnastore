@@ -24,6 +24,8 @@ from app.db.models import (
     LedgerEntry,
     LedgerEntryType,
     Notification,
+    NotificationChannel,
+    NotificationDelivery,
     NotificationType,
     Payment,
     PaymentEvent,
@@ -880,6 +882,85 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
         assert stored_account is not None
         self.assertEqual(stored_account.balance, 600)
         self.assertEqual(len(await self._get_notifications(account.id)), 1)
+
+    async def test_expired_then_cancelled_payment_notifies_once_per_channel(self):
+        with patch.object(settings, "telegram_bot_token", "notification-test-token"):
+            for legacy_key in (False, True):
+                with self.subTest(legacy_key=legacy_key):
+                    account = await self._create_account(
+                        email=f"late-cancel-{legacy_key}@example.com",
+                        telegram_id=700100 + int(legacy_key),
+                    )
+                    self._current_account_id = account.id
+                    created = await self.client.post(
+                        "/api/v1/payments/yookassa/topup",
+                        json={
+                            "amount_rub": 500,
+                            "idempotency_key": f"late-cancel-{legacy_key}",
+                        },
+                    )
+                    self.assertEqual(created.status_code, 200)
+                    provider_id = created.json()["provider_payment_id"]
+                    async with self._session_factory() as session:
+                        payment = await session.scalar(
+                            select(Payment).where(
+                                Payment.provider_payment_id == provider_id
+                            )
+                        )
+                        payment.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+                        await session.commit()
+                    async with self._session_factory() as session:
+                        result = await expire_stale_payments(session, limit=10)
+                    self.assertEqual(result.expired, 1)
+                    first_notification = (await self._get_notifications(account.id))[0]
+                    if legacy_key:
+                        async with self._session_factory() as session:
+                            notification = await session.get(
+                                Notification, first_notification.id
+                            )
+                            notification.dedupe_key = (
+                                f"payment_failed:{payment.id}:expired"
+                            )
+                            await session.commit()
+                    event_id = f"late-cancellation-{legacy_key}"
+                    self._fake_gateway.put_event(
+                        event_id,
+                        PaymentWebhookEvent(
+                            provider=PaymentProvider.YOOKASSA,
+                            provider_event_id=event_id,
+                            provider_payment_id=provider_id,
+                            status=PaymentStatus.CANCELLED,
+                            amount=500,
+                            currency="RUB",
+                            flow_type=PaymentFlowType.WALLET_TOPUP,
+                            account_id=account.id,
+                        ),
+                    )
+                    cancelled = await self.client.post(
+                        "/api/v1/webhooks/payments/yookassa",
+                        json={"event_id": event_id},
+                    )
+                    self.assertEqual(cancelled.status_code, 200)
+                    notifications = await self._get_notifications(account.id)
+                    self.assertEqual(
+                        [n.id for n in notifications], [first_notification.id]
+                    )
+                    async with self._session_factory() as session:
+                        deliveries = list(
+                            (
+                                await session.scalars(
+                                    select(NotificationDelivery).where(
+                                        NotificationDelivery.notification_id
+                                        == first_notification.id
+                                    )
+                                )
+                            ).all()
+                        )
+                    self.assertCountEqual(
+                        [d.channel for d in deliveries],
+                        [NotificationChannel.IN_APP, NotificationChannel.TELEGRAM],
+                    )
+                    self.assertEqual(await self._get_ledger_entries(account.id), [])
 
     async def test_yookassa_webhook_cancelled_creates_failure_notification(
         self,
