@@ -334,6 +334,9 @@ async def purchase_subscription_with_wallet(
     plan_code: str,
     idempotency_key: str,
     promo_code: str | None = None,
+    extra_devices: int | None = None,
+    expected_amount: int | None = None,
+    expected_refund_rub: int | None = None,
 ) -> SubscriptionStateResponse:
     if account.status == AccountStatus.BLOCKED:
         raise SubscriptionPurchaseBlockedError(
@@ -348,6 +351,9 @@ async def purchase_subscription_with_wallet(
             plan_code=plan_code,
             idempotency_key=idempotency_key,
             gateway_factory=get_remnawave_gateway,
+            extra_devices=extra_devices,
+            expected_amount=expected_amount,
+            expected_refund_rub=expected_refund_rub,
         )
         return SubscriptionStateResponse.from_account(account)
 
@@ -407,6 +413,9 @@ async def purchase_subscription_with_wallet(
         idempotency_key=idempotency_key,
         amount_override=quote.final_amount,
         duration_days_override=quote.final_duration_days,
+        extra_devices=extra_devices,
+        expected_amount=expected_amount,
+        expected_refund_rub=expected_refund_rub,
     )
     resolved_reference_id = str(grant.reference_id or idempotency_key)
     if resolved_reference_id != idempotency_key:

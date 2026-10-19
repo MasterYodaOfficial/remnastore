@@ -82,6 +82,54 @@ function buildNotificationsResponse(unreadCount: number) {
   };
 }
 
+for (const width of [390, 1440]) {
+  test(`device management and common-expiry checkout at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await mockAuthenticatedMobileSession(page, { initialUnreadCount: 0 });
+    let extraCount = 0;
+    let registered = [{ hwid: 'private-phone', platform: 'iOS', device_model: 'iPhone' }];
+    const expiresAt = '2027-01-01T00:00:00Z';
+    await page.route('**/api/v1/payments/plans', async (route) => route.fulfill({ json: [{ code: 'plan_1m', name: '1 месяц', price_rub: 199, price_stars: null, duration_days: 30, features: [], popular: false }] }));
+    await page.route('**/api/v1/devices**', async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith('/remove')) { registered = []; await route.fulfill({ status: 204 }); return; }
+      if (path.includes('/plans/')) {
+        const count = route.request().postDataJSON().extra_devices ?? extraCount;
+        await route.fulfill({ json: { extra_devices: count, extra_device_price_rub: 50, extra_amount_rub: count * 50, base_amount_rub: 199, total_amount_rub: 199 + count * 50, refund_rub: count < extraCount ? 45 : 0, expires_at: expiresAt, base_limit: 3, limit: 3 + count } }); return;
+      }
+      if (path.endsWith('/quote')) { await route.fulfill({ json: { quantity: 1, amount_rub: 45, limit: 4, expires_at: expiresAt, quote_token: 'signed-test-quote' } }); return; }
+      if (path.endsWith('/purchase')) { extraCount = 1; await route.fulfill({ json: { applied: true, refunded: false } }); return; }
+      await route.fulfill({ json: { base_limit: 3, extra_count: extraCount, renewal_extra_count: extraCount, limit: 3 + extraCount, devices: registered, expires_at: expiresAt, can_purchase: true, sync_pending: false, is_active: true } });
+    });
+    await page.route('**/api/v1/subscriptions/wallet/plans/plan_1m', async (route) => {
+      const body = route.request().postDataJSON();
+      expect(body.extra_devices).toBe(2);
+      expect(body.expected_amount).toBe(299);
+      await route.fulfill({ json: bootstrapPayload.subscription });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Настройки', exact: true }).click();
+    await page.getByRole('button', { name: /Устройства Подключения/ }).click();
+    await expect(page.getByText('iPhone', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Удалить', exact: true }).click();
+    await expect(page.getByRole('alertdialog')).toBeVisible();
+    await page.getByRole('button', { name: 'Подтвердить', exact: true }).click();
+    await expect(page.getByText('iPhone', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).click();
+    await page.getByRole('button', { name: 'Оплатить 45 ₽ с баланса', exact: true }).click();
+    await expect(page.getByText('Готово. Лимит устройств увеличен.')).toBeVisible();
+    await page.getByRole('button', { name: 'Тарифы', exact: true }).click();
+    await page.getByRole('button', { name: width < 768 ? 'Выбрать оплату' : 'Оформить', exact: true }).click();
+    await expect(page.getByText('Итого: 249 ₽')).toBeVisible();
+    await page.getByRole('region', { name: 'Дополнительные устройства', exact: true }).getByRole('spinbutton').fill('2');
+    await expect(page.getByText('Итого: 299 ₽')).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('devices-checkout.png') });
+    const request = page.waitForRequest('**/api/v1/subscriptions/wallet/plans/plan_1m');
+    await page.getByRole('button', { name: /^С баланса/ }).click();
+    await request;
+  });
+}
+
 function buildReferralSummaryResponse(availableForWithdraw: number) {
   return {
     referral_code: "ALICE123",

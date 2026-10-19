@@ -9,7 +9,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import MetaData, Table, create_engine, inspect, select
 
 from app.db.models import SubscriptionPlanRecord
 from app.core.config import settings
@@ -61,9 +61,11 @@ class SubscriptionPlanMigrationTests(unittest.TestCase):
                 self.migration.upgrade()
             rows = (
                 connection.execute(
-                    select(SubscriptionPlanRecord.__table__).order_by(
-                        SubscriptionPlanRecord.sort_order
-                    )
+                    select(
+                        Table(
+                            "subscription_plans", MetaData(), autoload_with=connection
+                        )
+                    ).order_by(SubscriptionPlanRecord.sort_order)
                 )
                 .mappings()
                 .all()

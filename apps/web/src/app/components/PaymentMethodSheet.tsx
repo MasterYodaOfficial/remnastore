@@ -17,6 +17,8 @@ interface PaymentMethodSheetProps {
   subtitle?: string;
   methods: PaymentMethodOption[];
   isSubmitting?: boolean;
+  methodsDisabled?: boolean;
+  children?: React.ReactNode;
   selectedProvider?: PaymentMethodProvider | null;
   onClose: () => void;
   onSelect: (provider: PaymentMethodProvider) => void;
@@ -47,6 +49,8 @@ export function PaymentMethodSheet({
   subtitle,
   methods,
   isSubmitting = false,
+  methodsDisabled = false,
+  children,
   selectedProvider = null,
   onClose,
   onSelect,
@@ -69,7 +73,7 @@ export function PaymentMethodSheet({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-3 sm:items-center sm:p-4">
-      <div className="flex max-h-[min(calc(100dvh-1.5rem),calc(100svh-1.5rem))] w-full max-w-lg flex-col overflow-hidden rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-xl sm:max-h-[min(calc(100dvh-2rem),calc(100svh-2rem))]">
+      <div role="dialog" aria-modal="true" aria-label={title} className="flex max-h-[min(calc(100dvh-1.5rem),calc(100svh-1.5rem))] w-full max-w-lg flex-col overflow-hidden rounded-[28px] bg-[var(--tg-theme-bg-color,#ffffff)] shadow-xl sm:max-h-[min(calc(100dvh-2rem),calc(100svh-2rem))]">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-[var(--tg-theme-hint-color,#e5e5e5)] border-opacity-30 bg-[var(--tg-theme-bg-color,#ffffff)] p-5">
           <div className="space-y-1">
             <h2 className="text-xl font-bold text-[var(--tg-theme-text-color,#000000)]">{title}</h2>
@@ -133,6 +137,7 @@ export function PaymentMethodSheet({
             </div>
           ) : null}
 
+          {children}
           {methods.map((method) => {
             const isSelected = selectedProvider === method.provider;
 
@@ -141,7 +146,7 @@ export function PaymentMethodSheet({
                 key={method.provider}
                 type="button"
                 onClick={() => onSelect(method.provider)}
-                disabled={isSubmitting}
+                disabled={isSubmitting || methodsDisabled}
                 className="flex w-full items-start gap-4 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] p-4 text-left transition hover:border-[var(--tg-theme-button-color,#3390ec)] hover:bg-[var(--tg-theme-bg-color,#ffffff)] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--tg-theme-bg-color,#ffffff)]">

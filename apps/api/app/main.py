@@ -16,6 +16,7 @@ from app.db.session import SessionLocal
 from app.middleware.request_context import register_request_context_middleware
 from app.services.admin_auth import ensure_bootstrap_admin
 from app.services.cache import get_cache
+from app.services.devices import DeviceServiceError
 
 
 def create_app() -> FastAPI:
@@ -39,6 +40,14 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(ApiError, api_error_handler)
+
+    async def device_error_handler(request, exc: DeviceServiceError):
+        return await api_error_handler(
+            request,
+            ApiError(status_code=exc.status_code, detail=str(exc), error_code=exc.code),
+        )
+
+    app.add_exception_handler(DeviceServiceError, device_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
     register_request_context_middleware(
         app, emit_access_log=settings.access_log_enabled

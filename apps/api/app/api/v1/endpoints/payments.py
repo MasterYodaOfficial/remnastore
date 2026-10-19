@@ -60,6 +60,7 @@ async def list_subscription_plans(
             duration_days=plan.duration_days,
             features=list(plan.features),
             popular=plan.popular,
+            extra_device_price_rub=plan.extra_device_price_rub,
         )
         for plan in plans
     ]
@@ -172,6 +173,9 @@ async def create_yookassa_plan_purchase(
             description=payload.description,
             idempotency_key=payload.idempotency_key,
             promo_code=payload.promo_code,
+            extra_devices=payload.extra_devices,
+            expected_amount=payload.expected_amount,
+            expected_refund_rub=payload.expected_refund_rub,
         )
     except SubscriptionPlanError as exc:
         raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc
@@ -218,6 +222,9 @@ async def create_telegram_stars_plan_purchase(
             description=payload.description,
             idempotency_key=payload.idempotency_key,
             promo_code=payload.promo_code,
+            extra_devices=payload.extra_devices,
+            expected_amount=payload.expected_amount,
+            expected_refund_rub=payload.expected_refund_rub,
         )
     except SubscriptionPlanError as exc:
         raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc

@@ -90,6 +90,9 @@ async def purchase_with_wallet(
             plan_code=plan_code,
             idempotency_key=payload.idempotency_key,
             promo_code=payload.promo_code,
+            extra_devices=payload.extra_devices,
+            expected_amount=payload.expected_amount,
+            expected_refund_rub=payload.expected_refund_rub,
         )
     except SubscriptionPlanError as exc:
         raise api_error_from_exception(status.HTTP_404_NOT_FOUND, exc) from exc

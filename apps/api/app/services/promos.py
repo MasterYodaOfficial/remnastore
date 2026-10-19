@@ -668,6 +668,14 @@ async def redeem_promo_code(
             redemption.balance_credit_amount = campaign.effect_value
             redemption.ledger_entry_id = ledger_entry.id
         else:
+            from app.services.devices import (
+                ensure_no_pending_device_purchase,
+                ensure_no_pending_plan_purchase,
+                snapshot_device_pricing,
+            )
+
+            await ensure_no_pending_device_purchase(session, managed_account.id)
+            await ensure_no_pending_plan_purchase(session, managed_account.id)
             base_expires_at, target_expires_at = compute_paid_plan_window(
                 managed_account,
                 duration_days=campaign.effect_value,
@@ -694,6 +702,7 @@ async def redeem_promo_code(
                 gateway_factory=gateway_factory,
             )
             subscription_grant.applied_at = utcnow()
+            await snapshot_device_pricing(session, subscription_grant)
             redemption.subscription_grant_id = subscription_grant.id
             redemption.granted_duration_days = campaign.effect_value
     except RemnawaveSyncError:
