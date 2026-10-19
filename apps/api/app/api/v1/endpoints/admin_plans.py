@@ -31,6 +31,7 @@ def _serialize_subscription_plan(plan) -> AdminSubscriptionPlanResponse:
         features=list(plan.features),
         device_limit=plan.device_limit,
         popular=plan.popular,
+        extra_device_price_rub=plan.extra_device_price_rub,
     )
 
 
@@ -60,6 +61,7 @@ async def create_subscription_plan(
             features=payload.features,
             device_limit=payload.device_limit,
             popular=payload.popular,
+            extra_device_price_rub=payload.extra_device_price_rub,
         )
     except SubscriptionPlanError as exc:
         if exc.code == "admin_plan_validation_failed":
@@ -89,6 +91,7 @@ async def update_subscription_plan(
             features=payload.features,
             device_limit=payload.device_limit,
             popular=payload.popular,
+            extra_device_price_rub=payload.extra_device_price_rub,
         )
     except SubscriptionPlanError as exc:
         if exc.code == "admin_plan_not_found":

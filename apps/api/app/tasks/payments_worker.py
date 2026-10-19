@@ -14,6 +14,7 @@ from app.services.payments import (
     reconcile_pending_yookassa_payments,
 )
 from app.services.purchases import reconcile_pending_wallet_plan_purchases
+from app.services.devices import reconcile_device_purchases
 
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,9 @@ async def _run_reconcile_wallet_grants_once() -> None:
             result = await reconcile_pending_wallet_plan_purchases(
                 session,
                 limit=max(1, int(settings.payment_jobs_batch_size)),
+            )
+            await reconcile_device_purchases(
+                session, limit=max(1, int(settings.payment_jobs_batch_size))
             )
         if result.processed > 0:
             logger.info(

@@ -370,6 +370,8 @@
           "priceStars": "Цена в Telegram Stars",
           "priceStarsPlaceholder": "Оставьте пустым, если оплата в Stars не нужна",
           "deviceLimit": "Лимит устройств",
+          "extraDevicePriceRub": "Одно дополнительное устройство, ₽ за весь срок тарифа",
+          "extraDevicePriceRubPlaceholder": "Пусто — дополнительные устройства не продаются",
           "deviceLimitPlaceholder": "Пусто = используется лимит по умолчанию",
           "popular": "Показывать как основной тариф",
           "features": "Преимущества тарифа",
@@ -397,6 +399,7 @@
           "priceStarsInvalid": "Цена в Telegram Stars должна быть целым числом больше нуля.",
           "durationInvalid": "Срок тарифа должен быть целым числом больше нуля.",
           "deviceLimitInvalid": "Лимит устройств должен быть целым числом больше нуля или пустым.",
+          "extraDevicePriceInvalid": "Цена дополнительного устройства должна быть целым числом больше нуля или пустой.",
           "featuresRequired": "Добавьте хотя бы одно преимущество тарифа."
         },
         "notices": {

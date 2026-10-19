@@ -51,6 +51,8 @@ function getEntryLabel(entryType: string): string {
       return t('web.balanceHistory.entryLabels.topup');
     case 'subscription_debit':
       return t('web.balanceHistory.entryLabels.subscriptionDebit');
+    case 'device_debit':
+      return t('web.devices.checkoutTitle');
     case 'referral_reward':
       return t('web.balanceHistory.entryLabels.referralReward');
     case 'withdrawal_reserve':

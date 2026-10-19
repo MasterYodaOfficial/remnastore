@@ -85,6 +85,7 @@ class AdminSubscriptionPlanResponse(BaseModel):
     duration_days: int
     features: list[str]
     device_limit: int | None = None
+    extra_device_price_rub: int | None = None
     popular: bool = False
 
 
@@ -96,6 +97,7 @@ class AdminSubscriptionPlanCreateRequest(BaseModel):
     duration_days: int = Field(gt=0)
     features: list[str] = Field(..., min_length=1)
     device_limit: int | None = Field(default=None, ge=0)
+    extra_device_price_rub: int | None = Field(default=None, gt=0)
     popular: bool = False
 
     @field_validator("code", "name")
@@ -131,6 +133,7 @@ class AdminSubscriptionPlanUpdateRequest(BaseModel):
     duration_days: int = Field(gt=0)
     features: list[str] = Field(..., min_length=1)
     device_limit: int | None = Field(default=None, ge=0)
+    extra_device_price_rub: int | None = Field(default=None, gt=0)
     popular: bool = False
 
     @field_validator("name")

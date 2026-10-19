@@ -278,6 +278,7 @@ type AdminSubscriptionPlan = {
   duration_days: number;
   features: string[];
   device_limit: number | null;
+  extra_device_price_rub?: number | null;
   popular: boolean;
 };
 
@@ -2088,6 +2089,7 @@ export default function App() {
   const [planEditorName, setPlanEditorName] = useState("");
   const [planEditorPriceRub, setPlanEditorPriceRub] = useState("");
   const [planEditorPriceStars, setPlanEditorPriceStars] = useState("");
+  const [planEditorExtraDevicePrice, setPlanEditorExtraDevicePrice] = useState("");
   const [planEditorDurationDays, setPlanEditorDurationDays] = useState("");
   const [planEditorDeviceLimit, setPlanEditorDeviceLimit] = useState("");
   const [planEditorPopular, setPlanEditorPopular] = useState(false);
@@ -2630,6 +2632,7 @@ export default function App() {
     setPlanEditorName("");
     setPlanEditorPriceRub("");
     setPlanEditorPriceStars("");
+    setPlanEditorExtraDevicePrice("");
     setPlanEditorDurationDays("");
     setPlanEditorDeviceLimit("");
     setPlanEditorPopular(false);
@@ -2641,6 +2644,7 @@ export default function App() {
     setPlanEditorCode(plan.code);
     setPlanEditorName(plan.name);
     setPlanEditorPriceRub(String(plan.price_rub));
+    setPlanEditorExtraDevicePrice(plan.extra_device_price_rub != null ? String(plan.extra_device_price_rub) : "");
     setPlanEditorPriceStars(plan.price_stars !== null ? String(plan.price_stars) : "");
     setPlanEditorDurationDays(String(plan.duration_days));
     setPlanEditorDeviceLimit(plan.device_limit !== null ? String(plan.device_limit) : "");
@@ -4323,6 +4327,7 @@ export default function App() {
     const parsedPriceStars = planEditorPriceStars.trim()
       ? Number.parseInt(planEditorPriceStars, 10)
       : null;
+    const parsedExtraDevicePrice = planEditorExtraDevicePrice.trim() ? Number(planEditorExtraDevicePrice) : null;
     const parsedDurationDays = Number.parseInt(planEditorDurationDays, 10);
     const parsedDeviceLimit = planEditorDeviceLimit.trim()
       ? Number.parseInt(planEditorDeviceLimit, 10)
@@ -4353,6 +4358,10 @@ export default function App() {
       setError(t("admin.plans.form.validation.deviceLimitInvalid"));
       return;
     }
+    if (parsedExtraDevicePrice !== null && (!Number.isSafeInteger(parsedExtraDevicePrice) || parsedExtraDevicePrice <= 0)) {
+      setError(t("admin.plans.form.validation.extraDevicePriceInvalid"));
+      return;
+    }
     if (parsedFeatures.length === 0) {
       setError(t("admin.plans.form.validation.featuresRequired"));
       return;
@@ -4375,6 +4384,7 @@ export default function App() {
         price_stars: parsedPriceStars,
         duration_days: parsedDurationDays,
         device_limit: parsedDeviceLimit,
+        extra_device_price_rub: parsedExtraDevicePrice,
         popular: planEditorPopular,
         features: parsedFeatures,
       };
@@ -7512,6 +7522,12 @@ export default function App() {
                         placeholder={t("admin.plans.form.fields.priceStarsPlaceholder")}
                         disabled={planSubmitting}
                       />
+                    </label>
+                    <label className="form-field">
+                      <span>{t("admin.plans.form.fields.extraDevicePriceRub")}</span>
+                      <input type="number" min="1" step="1" value={planEditorExtraDevicePrice}
+                        onChange={(event) => setPlanEditorExtraDevicePrice(event.target.value)}
+                        placeholder={t("admin.plans.form.fields.extraDevicePriceRubPlaceholder")} disabled={planSubmitting} />
                     </label>
                     <label className="form-field">
                       <span>{t("admin.plans.form.fields.deviceLimit")}</span>

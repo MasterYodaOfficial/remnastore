@@ -23,6 +23,7 @@ export interface StoredPaymentAttempt {
   planId?: string;
   planName?: string;
   promoCode?: string;
+  extraDevices?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +35,7 @@ interface PaymentAttemptMatch {
   amount?: number;
   planId?: string;
   promoCode?: string;
+  extraDevices?: number;
 }
 
 const PAYMENT_ATTEMPTS_STORAGE_KEY = 'remnastore.payment_attempts';
@@ -110,6 +112,7 @@ function normalizeAttempt(rawValue: unknown): StoredPaymentAttempt | null {
     planId: rawAttempt.planId || undefined,
     planName: rawAttempt.planName || undefined,
     promoCode: normalizePromoCode(rawAttempt.promoCode),
+    extraDevices: typeof rawAttempt.extraDevices === 'number' ? rawAttempt.extraDevices : undefined,
     createdAt: rawAttempt.createdAt,
     updatedAt: rawAttempt.updatedAt,
   };
@@ -174,7 +177,8 @@ function matchesAttemptContext(attempt: StoredPaymentAttempt, match: PaymentAtte
   }
 
   if (match.kind === 'plan') {
-    return attempt.planId === match.planId && attempt.promoCode === normalizePromoCode(match.promoCode);
+    return attempt.planId === match.planId && attempt.promoCode === normalizePromoCode(match.promoCode)
+      && (attempt.extraDevices ?? 0) === (match.extraDevices ?? 0);
   }
 
   return attempt.amount === match.amount;

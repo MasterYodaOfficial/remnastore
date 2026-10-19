@@ -21,6 +21,7 @@ class LedgerEntryType(str, enum.Enum):
     TOPUP_MANUAL = "topup_manual"
     TOPUP_PAYMENT = "topup_payment"
     SUBSCRIPTION_DEBIT = "subscription_debit"
+    DEVICE_DEBIT = "device_debit"
     REFERRAL_REWARD = "referral_reward"
     WITHDRAWAL_RESERVE = "withdrawal_reserve"
     WITHDRAWAL_RELEASE = "withdrawal_release"

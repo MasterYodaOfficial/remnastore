@@ -21,6 +21,9 @@ class TrialEligibilityResponse(BaseModel):
 class WalletPlanPurchaseRequest(BaseModel):
     idempotency_key: str = Field(min_length=1)
     promo_code: str | None = None
+    extra_devices: int | None = Field(default=None, ge=0, le=100)
+    expected_amount: int | None = Field(default=None, gt=0)
+    expected_refund_rub: int | None = Field(default=None, ge=0)
 
 
 class SubscriptionStateResponse(BaseModel):

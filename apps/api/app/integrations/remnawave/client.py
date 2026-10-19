@@ -12,6 +12,10 @@ from remnawave import RemnawaveSDK
 from remnawave.enums import UserStatus
 from remnawave.exceptions import ApiError, NotFoundError
 from remnawave.models.internal_squads import InternalSquadDto
+from remnawave.models.hwid import (
+    DeleteUserHwidDeviceRequestDto,
+    DeleteUserAllHwidDeviceRequestDto,
+)
 from remnawave.models.users import (
     CreateUserRequestDto,
     UpdateUserRequestDto,
@@ -232,6 +236,43 @@ def _dedupe_users_by_uuid(users: list[RemnawaveUser]) -> list[RemnawaveUser]:
 
 
 class RemnawaveGateway:
+    async def get_hwid_devices(self, user_uuid: UUID) -> list[dict]:
+        try:
+            response = await self._sdk.hwid.get_hwid_user(str(user_uuid))
+            return [
+                device.model_dump(mode="json", by_alias=False)
+                for device in response.devices
+            ]
+        except NotFoundError:
+            return []
+        except (ApiError, httpx.HTTPError, ValidationError) as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+
+    async def delete_hwid_device(self, user_uuid: UUID, hwid: str) -> None:
+        try:
+            await self._sdk.hwid.delete_hwid_to_user(
+                DeleteUserHwidDeviceRequestDto(user_uuid=user_uuid, hwid=hwid)
+            )
+        except (ApiError, httpx.HTTPError, ValidationError) as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+
+    async def reset_hwid_devices(self, user_uuid: UUID) -> None:
+        try:
+            await self._sdk.hwid.delete_all_hwid_user(
+                DeleteUserAllHwidDeviceRequestDto(user_uuid=user_uuid)
+            )
+        except (ApiError, httpx.HTTPError, ValidationError) as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+
+    async def set_hwid_device_limit(self, user_uuid: UUID, limit: int) -> None:
+        """Only change the device limit; leave status, expiry and traffic untouched."""
+        try:
+            await self._sdk.users.update_user(
+                UpdateUserRequestDto(uuid=user_uuid, hwid_device_limit=limit)
+            )
+        except (ApiError, httpx.HTTPError, ValidationError) as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+
     def __init__(self) -> None:
         if not settings.remnawave_api_url or not settings.remnawave_api_token:
             raise RemnawaveConfigurationError("Remnawave is not configured")

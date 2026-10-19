@@ -238,6 +238,13 @@ async def grant_subscription_manually(
         return existing_result
 
     account = await load_purchase_account_for_update(session, account_id=account_id)
+    from app.services.devices import (
+        ensure_no_pending_device_purchase,
+        ensure_no_pending_plan_purchase,
+    )
+
+    await ensure_no_pending_device_purchase(session, account_id)
+    await ensure_no_pending_plan_purchase(session, account_id)
     base_expires_at, target_expires_at = compute_paid_plan_window(
         account,
         duration_days=plan.duration_days,
@@ -310,6 +317,9 @@ async def grant_subscription_manually(
         raise
 
     grant.applied_at = utcnow()
+    from app.services.devices import snapshot_device_pricing
+
+    await snapshot_device_pricing(session, grant, plan)
     await append_account_event(
         session,
         account_id=account.id,

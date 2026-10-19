@@ -148,6 +148,7 @@ class AdminPlansEndpointsTests(unittest.IsolatedAsyncioTestCase):
                 "code": "plan_12m",
                 "name": "12 месяцев",
                 "price_rub": 1990,
+                "extra_device_price_rub": 480,
                 "price_stars": 999,
                 "duration_days": 365,
                 "features": ["Год доступа", "Максимальная выгода"],
@@ -158,6 +159,7 @@ class AdminPlansEndpointsTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(create_response.status_code, 200)
         self.assertEqual(create_response.json()["device_limit"], 3)
+        self.assertEqual(create_response.json()["extra_device_price_rub"], 480)
 
         update_response = await self.client.put(
             "/api/v1/admin/plans/plan_12m",
@@ -165,6 +167,7 @@ class AdminPlansEndpointsTests(unittest.IsolatedAsyncioTestCase):
             json={
                 "name": "12 месяцев плюс",
                 "price_rub": 2190,
+                "extra_device_price_rub": 450,
                 "price_stars": 1099,
                 "duration_days": 365,
                 "features": ["Год доступа", "Поддержка без очереди"],
@@ -185,6 +188,7 @@ class AdminPlansEndpointsTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(persisted)
             self.assertEqual(persisted.name, updated["name"])
             self.assertEqual(persisted.device_limit, 5)
+            self.assertEqual(persisted.extra_device_price_rub, 450)
             self.assertEqual(persisted.features, updated["features"])
 
         public_response = await self.client.get("/api/v1/payments/plans")
@@ -193,6 +197,7 @@ class AdminPlansEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(public_plan["price_rub"], 2190)
         self.assertEqual(public_plan["duration_days"], 365)
+        self.assertEqual(public_plan["extra_device_price_rub"], 450)
 
         async with self._session_factory() as session:
             self.assertEqual(
