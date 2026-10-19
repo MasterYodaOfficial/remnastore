@@ -25,6 +25,8 @@ interface BalanceHistoryPageProps {
   onLoadMore?: () => void;
 }
 
+const INITIAL_VISIBLE_LEDGER_ENTRIES_COUNT = 20;
+
 function formatHistoryDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -91,7 +93,18 @@ export function BalanceHistoryPage({
   onBack,
   onLoadMore,
 }: BalanceHistoryPageProps) {
-  const hasMore = typeof onLoadMore === 'function' && items.length < total;
+  const [visibleCount, setVisibleCount] = React.useState(INITIAL_VISIBLE_LEDGER_ENTRIES_COUNT);
+  const visibleItems = items.slice(0, visibleCount);
+  const hasBufferedItems = items.length > visibleItems.length;
+  const hasRemoteItems = typeof onLoadMore === 'function' && items.length < total;
+  const hasMore = hasBufferedItems || hasRemoteItems;
+
+  function handleLoadMore() {
+    setVisibleCount((current) => current + INITIAL_VISIBLE_LEDGER_ENTRIES_COUNT);
+    if (!hasBufferedItems) {
+      onLoadMore?.();
+    }
+  }
 
   return (
     <InfoPageLayout
@@ -105,7 +118,7 @@ export function BalanceHistoryPage({
         </div>
       ) : items.length > 0 ? (
         <div className="space-y-3">
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const accent = getEntryAccent(item.amount);
             const Icon = accent.icon;
             return (
@@ -146,7 +159,7 @@ export function BalanceHistoryPage({
 
           {hasMore ? (
             <button
-              onClick={onLoadMore}
+              onClick={handleLoadMore}
               disabled={isLoadingMore}
               className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-bg-color,#ffffff)] px-4 py-3 text-sm font-semibold text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
