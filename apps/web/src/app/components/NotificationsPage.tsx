@@ -70,6 +70,8 @@ interface NotificationsPageProps {
   onOpenAction?: (notification: NotificationItemView, action?: NotificationAction) => void;
 }
 
+const INITIAL_VISIBLE_NOTIFICATIONS_COUNT = 20;
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -225,7 +227,11 @@ export function NotificationsPage({
   onLoadMore,
   onOpenAction,
 }: NotificationsPageProps) {
-  const hasMore = typeof onLoadMore === 'function' && items.length < total;
+  const [visibleCount, setVisibleCount] = React.useState(INITIAL_VISIBLE_NOTIFICATIONS_COUNT);
+  const visibleItems = items.slice(0, visibleCount);
+  const hasBufferedItems = items.length > visibleItems.length;
+  const hasRemoteItems = typeof onLoadMore === 'function' && items.length < total;
+  const hasMore = hasBufferedItems || hasRemoteItems;
   const [selectedBroadcastId, setSelectedBroadcastId] = React.useState<number | null>(null);
   const selectedBroadcastNotification =
     items.find((item) => item.id === selectedBroadcastId) ?? null;
@@ -240,6 +246,13 @@ export function NotificationsPage({
     setSelectedBroadcastId(notification.id);
     if (!notification.isRead) {
       onMarkRead(notification.id);
+    }
+  }
+
+  function handleLoadMore() {
+    setVisibleCount((current) => current + INITIAL_VISIBLE_NOTIFICATIONS_COUNT);
+    if (!hasBufferedItems) {
+      onLoadMore?.();
     }
   }
 
@@ -286,7 +299,7 @@ export function NotificationsPage({
           </div>
         ) : items.length > 0 ? (
           <div className="space-y-3">
-            {items.map((item) => {
+            {visibleItems.map((item) => {
               const broadcastPayload = getBroadcastPayload(item);
               const broadcastActions = getNotificationActions(item, broadcastPayload);
               const primaryBroadcastAction = broadcastActions[0] ?? null;
@@ -474,7 +487,7 @@ export function NotificationsPage({
 
             {hasMore && (
               <button
-                onClick={onLoadMore}
+                onClick={handleLoadMore}
                 disabled={isLoadingMore}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] bg-[var(--tg-theme-secondary-bg-color,#f4f4f5)] px-4 py-3 text-sm font-medium text-[var(--tg-theme-text-color,#000000)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
