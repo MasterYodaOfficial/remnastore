@@ -235,11 +235,12 @@ async def read_bot_dashboard(
 
 @router.get("/bot/plans", response_model=BotPlanListResponse)
 async def read_bot_plans(
+    session: AsyncSession = Depends(get_session),
     authorization: str | None = Header(default=None),
 ) -> BotPlanListResponse:
     verify_internal_api_token(authorization)
     try:
-        return get_bot_plans()
+        return await get_bot_plans(session)
     except SubscriptionPlanError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)

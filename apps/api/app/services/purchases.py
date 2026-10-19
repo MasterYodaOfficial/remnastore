@@ -270,14 +270,12 @@ async def apply_paid_purchase(
     *,
     source: PurchaseSource,
     target_expires_at: datetime,
-    plan_code: str | None = None,
     hwid_device_limit: int | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> PurchaseResult:
     resolved_hwid_device_limit = hwid_device_limit
     if resolved_hwid_device_limit is None:
-        plan = get_subscription_plan(plan_code) if plan_code is not None else None
-        resolved_hwid_device_limit = resolve_plan_device_limit(plan)
+        resolved_hwid_device_limit = resolve_plan_device_limit(None)
 
     return await _apply_subscription_purchase(
         account,
@@ -383,7 +381,7 @@ async def stage_wallet_plan_purchase(
     duration_days_override: int | None = None,
 ) -> SubscriptionGrant:
     normalized_idempotency_key = _normalize_required_reference_id(idempotency_key)
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     amount = plan.price_rub if amount_override is None else amount_override
     duration_days = (
         plan.duration_days if duration_days_override is None else duration_days_override
@@ -535,7 +533,9 @@ async def finalize_wallet_plan_purchase(
             account,
             source=PurchaseSource.WALLET,
             target_expires_at=grant.target_expires_at,
-            plan_code=grant.plan_code,
+            hwid_device_limit=resolve_plan_device_limit(
+                await get_subscription_plan(session, grant.plan_code)
+            ),
             gateway_factory=gateway_factory,
         )
         await apply_first_referral_reward_for_grant(

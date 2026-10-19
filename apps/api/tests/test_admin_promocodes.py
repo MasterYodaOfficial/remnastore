@@ -9,6 +9,8 @@ from uuid import uuid4
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from plan_fixtures import PLAN_1M, seed_subscription_plans
+
 from app.db.base import Base
 from app.db.models import (
     PromoCode,
@@ -21,9 +23,7 @@ from app.db.session import get_session
 from app.main import create_app
 from app.services.admin_auth import create_admin
 from app.services.i18n import translate
-from app.services.plans import get_subscription_plan
 
-PLAN_1M = get_subscription_plan("plan_1m")
 PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
 
 
@@ -44,6 +44,7 @@ class AdminPromoEndpointsTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await seed_subscription_plans(conn)
 
         import app.services.cache as cache_module
         import app.services.admin_auth as admin_auth_service

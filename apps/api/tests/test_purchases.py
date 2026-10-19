@@ -149,7 +149,6 @@ class PurchaseServiceTests(unittest.IsolatedAsyncioTestCase):
             account,
             source=PurchaseSource.DIRECT_PAYMENT,
             target_expires_at=target_expires_at,
-            plan_code="plan_1m",
             gateway_factory=lambda: gateway,
         )
 

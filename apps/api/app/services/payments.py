@@ -50,7 +50,11 @@ from app.services.notifications import (
     notify_payment_failed,
     notify_payment_succeeded,
 )
-from app.services.plans import SubscriptionPlanError, get_subscription_plan
+from app.services.plans import (
+    SubscriptionPlanError,
+    get_subscription_plan,
+    resolve_plan_device_limit,
+)
 from app.services.promos import (
     PAYMENT_REFERENCE_TYPE,
     get_promo_redemption_by_reference,
@@ -945,7 +949,7 @@ def _should_finalize_payment(
     return True
 
 
-def _extract_plan_duration_days(payment: Payment) -> int:
+async def _extract_plan_duration_days(session: AsyncSession, payment: Payment) -> int:
     metadata = payment.request_metadata or {}
     raw_value = metadata.get("rm_plan_duration_days")
     if raw_value is not None:
@@ -963,7 +967,9 @@ def _extract_plan_duration_days(payment: Payment) -> int:
 
     if payment.plan_code:
         try:
-            return get_subscription_plan(payment.plan_code).duration_days
+            return (
+                await get_subscription_plan(session, payment.plan_code)
+            ).duration_days
         except SubscriptionPlanError as exc:
             raise PaymentConflictError(str(exc)) from exc
 
@@ -1423,7 +1429,7 @@ async def create_yookassa_plan_purchase_payment(
     promo_code: str | None = None,
     source: str = "api",
 ) -> PaymentIntentSnapshot:
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     if promo_code is not None and idempotency_key:
         existing_payment = await _get_payment_by_idempotency_key(
             session,
@@ -1530,7 +1536,7 @@ async def create_telegram_stars_plan_purchase_payment(
     if account.telegram_id is None:
         raise _payment_exception(PaymentConflictError, "stars_telegram_required")
 
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     if plan.price_stars is None:
         raise PaymentGatewayConfigurationError(
             translate("api.plans.errors.stars_price_not_configured"),
@@ -1715,7 +1721,7 @@ async def _stage_plan_purchase_grant(
         return
 
     account = await _load_account_for_update(session, account_id=payment.account_id)
-    duration_days = _extract_plan_duration_days(payment)
+    duration_days = await _extract_plan_duration_days(session, payment)
     base_expires_at, target_expires_at = compute_paid_plan_window(
         account,
         duration_days=duration_days,
@@ -1820,7 +1826,9 @@ async def _finalize_direct_plan_purchase(
             account,
             source=PurchaseSource.DIRECT_PAYMENT,
             target_expires_at=grant.target_expires_at,
-            plan_code=grant.plan_code,
+            hwid_device_limit=resolve_plan_device_limit(
+                await get_subscription_plan(session, grant.plan_code)
+            ),
         )
         await apply_first_referral_reward_for_grant(
             session,

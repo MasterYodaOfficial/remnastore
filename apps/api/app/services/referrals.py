@@ -668,7 +668,7 @@ async def apply_first_referral_reward_for_grant(
     referrer_account = await _load_account_for_update(
         session, attribution.referrer_account_id
     )
-    plan = get_subscription_plan(grant.plan_code)
+    plan = await get_subscription_plan(session, grant.plan_code)
     reward_rate = get_effective_referral_reward_rate(referrer_account)
     gross_purchase_amount_rub = int(plan.price_rub)
     payment_commission_rate = get_referral_reward_payment_commission_rate(grant)

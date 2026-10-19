@@ -90,7 +90,7 @@ async def get_bot_dashboard(
     )
 
 
-def get_bot_plans() -> BotPlanListResponse:
+async def get_bot_plans(session: AsyncSession) -> BotPlanListResponse:
     return BotPlanListResponse(
         items=[
             SubscriptionPlanResponse(
@@ -101,8 +101,9 @@ def get_bot_plans() -> BotPlanListResponse:
                 duration_days=plan.duration_days,
                 features=list(plan.features),
                 popular=plan.popular,
+            extra_device_price_rub=plan.extra_device_price_rub,
             )
-            for plan in get_subscription_plans()
+            for plan in await get_subscription_plans(session)
         ]
     )
 
