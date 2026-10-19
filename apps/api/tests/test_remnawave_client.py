@@ -2,14 +2,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 import unittest
 import uuid
+import json
+import base64
+
+import httpx
+from remnawave import RemnawaveSDK
 
 from app.core.config import settings
 from app.integrations.remnawave.client import (
     RemnawaveConfigurationError,
     RemnawaveGateway,
+    RemnawaveRequestError,
     build_remnawave_description,
     build_remnawave_username,
 )
@@ -130,43 +135,122 @@ class _FakeUsersHttpClient:
 
 
 class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_hwid_operations_are_scoped_to_user_and_limit_patch_is_minimal(self):
-        from remnawave.models.hwid import HwidDeviceDto
+    def test_sdk_happ_encryption_remains_compatible_with_patched_cryptography(self):
+        from remnawave.utils.happ_crypt import create_happ_crypto_link
 
+        for method in ("v3", "v4"):
+            with self.subTest(method=method):
+                link = create_happ_crypto_link(
+                    "https://panel.test/sub/example", method=method
+                )
+                prefix = f"happ://crypt{method[1:]}/"
+                self.assertTrue(link.startswith(prefix))
+                self.assertEqual(
+                    len(base64.b64decode(link[len(prefix) :], validate=True)), 512
+                )
+
+    async def test_hwid_operations_are_scoped_to_user_and_limit_patch_is_minimal(self):
         user_uuid = uuid.uuid4()
         gateway = self._make_gateway(squads=[])
-        device = HwidDeviceDto(
-            hwid="phone",
-            userUuid=user_uuid,
-            platform="iOS",
-            osVersion="18",
-            deviceModel="iPhone",
-            userAgent="Happ",
-            createdAt=datetime.now(UTC),
-            updatedAt=datetime.now(UTC),
-        )
-        gateway._sdk.hwid = SimpleNamespace(
-            get_hwid_user=AsyncMock(return_value=SimpleNamespace(devices=[device])),
-            delete_hwid_to_user=AsyncMock(),
-            delete_all_hwid_user=AsyncMock(),
-        )
-        self.assertEqual(
-            (await gateway.get_hwid_devices(user_uuid))[0]["hwid"], "phone"
-        )
-        await gateway.delete_hwid_device(user_uuid, "phone")
-        body = gateway._sdk.hwid.delete_hwid_to_user.call_args.args[0]
-        self.assertEqual(str(body.user_uuid), str(user_uuid))
-        self.assertEqual(body.hwid, "phone")
-        await gateway.reset_hwid_devices(user_uuid)
-        self.assertEqual(
-            str(gateway._sdk.hwid.delete_all_hwid_user.call_args.args[0].user_uuid),
-            str(user_uuid),
-        )
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "response": {
+                        "total": 1.0,
+                        "devices": [
+                            {
+                                "hwid": "phone",
+                                "userId": 123,
+                                "platform": "iOS",
+                                "osVersion": "18",
+                                "deviceModel": "iPhone",
+                                "userAgent": "Happ",
+                                "requestIp": None,
+                                "createdAt": "2026-10-19T18:55:00Z",
+                                "updatedAt": "2026-10-19T18:55:00Z",
+                            }
+                        ],
+                    }
+                },
+            )
+
+        async with httpx.AsyncClient(
+            base_url="https://panel.test/api/", transport=httpx.MockTransport(respond)
+        ) as client:
+            gateway._sdk.hwid = RemnawaveSDK(client=client).hwid
+            device = (await gateway.get_hwid_devices(user_uuid))[0]
+            self.assertEqual(device["hwid"], "phone")
+            self.assertEqual(device["device_model"], "iPhone")
+            self.assertEqual(device["os_version"], "18")
+            self.assertNotIn("userId", device)
+            self.assertEqual(requests[0].url.path, f"/api/hwid/devices/{user_uuid}")
+            await gateway.delete_hwid_device(user_uuid, "phone")
+            self.assertEqual(requests[1].url.path, "/api/hwid/devices/delete")
+            self.assertEqual(
+                json.loads(requests[1].content),
+                {"userUuid": str(user_uuid), "hwid": "phone"},
+            )
+            await gateway.reset_hwid_devices(user_uuid)
+            self.assertEqual(requests[2].url.path, "/api/hwid/devices/delete-all")
+            self.assertEqual(
+                json.loads(requests[2].content), {"userUuid": str(user_uuid)}
+            )
         await gateway.set_hwid_device_limit(user_uuid, 5)
         self.assertEqual(
             gateway._sdk.users.updated_bodies[-1].model_fields_set,
             {"uuid", "hwid_device_limit"},
         )
+
+    async def test_hwid_response_accepts_legacy_and_current_identity_fields(self):
+        gateway = self._make_gateway(squads=[])
+        user_uuid = uuid.uuid4()
+        for identity in ({"userUuid": str(user_uuid)}, {"userId": 123}):
+            with self.subTest(identity_field=next(iter(identity))):
+                async with httpx.AsyncClient(
+                    base_url="https://panel.test/api/",
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            json={
+                                "response": {
+                                    "total": 1,
+                                    "devices": [{"hwid": "phone", **identity}],
+                                }
+                            },
+                        )
+                    ),
+                ) as client:
+                    gateway._sdk.hwid = RemnawaveSDK(client=client).hwid
+                    self.assertEqual(
+                        (await gateway.get_hwid_devices(user_uuid))[0]["hwid"], "phone"
+                    )
+
+    async def test_hwid_errors_are_not_reported_as_empty_or_successful_devices(self):
+        gateway = self._make_gateway(squads=[])
+        user_uuid = uuid.uuid4()
+        for response in (
+            httpx.Response(403, json={"message": "Forbidden"}),
+            httpx.Response(500, json={"message": "Internal error"}),
+            httpx.Response(200, json={"response": {"total": 1, "devices": [{}]}}),
+            httpx.Response(200, content=b"not-json"),
+        ):
+            with self.subTest(status=response.status_code):
+                async with httpx.AsyncClient(
+                    base_url="https://panel.test/api/",
+                    transport=httpx.MockTransport(lambda request: response),
+                ) as client:
+                    gateway._sdk.hwid = RemnawaveSDK(client=client).hwid
+                    with self.assertRaises(RemnawaveRequestError):
+                        await gateway.get_hwid_devices(user_uuid)
+                    if response.status_code != 200:
+                        with self.assertRaises(RemnawaveRequestError):
+                            await gateway.delete_hwid_device(user_uuid, "phone")
+                        with self.assertRaises(RemnawaveRequestError):
+                            await gateway.reset_hwid_devices(user_uuid)
 
     def setUp(self) -> None:
         self._original_username_prefix = settings.remnawave_username_prefix

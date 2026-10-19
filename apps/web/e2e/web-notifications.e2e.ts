@@ -47,6 +47,42 @@ const bootstrapPayload = {
   },
 };
 
+for (const width of [390, 1440]) {
+  test(`subscription period and renewal at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const start = Date.parse('2026-01-01T12:00:00Z');
+    const day = 86_400_000;
+    await page.clock.setFixedTime(new Date(start + 100 * day));
+    let expiresAt = new Date(start + 365 * day).toISOString();
+    let periodStartedAt: string | null = new Date(start).toISOString();
+    await mockAuthenticatedMobileSession(page, {
+      initialUnreadCount: 0,
+      getBootstrapPayload: () => ({
+        ...bootstrapPayload,
+        subscription: {
+          ...bootstrapPayload.subscription,
+          days_left: 265,
+          expires_at: expiresAt,
+          period_started_at: periodStartedAt,
+        },
+      }),
+    });
+    await page.goto('/');
+    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '73');
+    await expect(page.getByText('265 из 365 дн.')).toBeVisible();
+    await expect(page.getByText(/^Действует до /)).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath('subscription-period.png') });
+    expiresAt = new Date(start + 395 * day).toISOString();
+    await page.reload();
+    await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '75');
+    await expect(page.getByText('295 из 395 дн.')).toBeVisible();
+    periodStartedAt = null;
+    await page.reload();
+    await expect(page.getByText(/^Действует до /)).toBeVisible();
+    await expect(page.getByRole('progressbar')).toHaveCount(0);
+  });
+}
+
 function buildNotificationsResponse(unreadCount: number) {
   return {
     items: [
@@ -306,6 +342,29 @@ async function mockAuthenticatedMobileSession(
 }
 
 test.describe("web mobile browser smoke", () => {
+  test("shows an own referral warning once and still accepts another referral link", async ({ page }) => {
+    await mockAuthenticatedMobileSession(page);
+    const claims: string[] = [];
+    await page.route("**/api/v1/referrals/claim", async (route) => {
+      claims.push(route.request().postDataJSON().referral_code);
+      await route.fulfill({ json: { created: true, referred_by_account_id: "another-owner" } });
+    });
+    await page.goto("/?ref=ALICE123");
+    await expect(page.getByText("Нельзя использовать собственную реферальную ссылку", { exact: true })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("remnastore.pending_referral_code"))).toBeNull();
+    expect(claims).toEqual([]);
+
+    await page.goto("/?ref=ALICE123");
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("remnastore.pending_referral_code"))).toBeNull();
+    await expect(page.getByRole("button", { name: "Настройки", exact: true })).toBeVisible();
+    await expect(page.getByText("Нельзя использовать собственную реферальную ссылку", { exact: true })).toHaveCount(0);
+    expect(claims).toEqual([]);
+
+    await page.goto("/?ref=OTHER123");
+    await expect.poll(() => claims).toEqual(["OTHER123"]);
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("remnastore.pending_referral_code"))).toBeNull();
+  });
+
   test("signs in with email password and restores the browser account", async ({ page }) => {
     await mockAuthenticatedMobileSession(page, {
       initialUnreadCount: 0,
@@ -439,7 +498,9 @@ test.describe("web mobile browser smoke", () => {
   }) => {
     await mockAuthenticatedMobileSession(page, { initialUnreadCount: 0 });
 
+    let createdPayments = 0;
     await page.route("**/api/v1/payments/yookassa/topup", async (route) => {
+      createdPayments += 1;
       const request = route.request();
       const payload = request.postDataJSON() as {
         amount_rub: number;
@@ -485,10 +546,14 @@ test.describe("web mobile browser smoke", () => {
     await page.getByRole("button", { name: "Пополнить" }).click();
 
     await expect(page.getByRole("heading", { name: "Пополнение баланса" })).toBeVisible();
-    await page.getByRole("button", { name: /1.?000 ₽/ }).click();
+    await page.getByRole("button", { name: /1.?000 ₽/ }).evaluate((button) => {
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
 
     await expect(page).toHaveURL("https://pay.example/topup/confirm");
     await expect(page.getByRole("heading", { name: "Mock YooKassa" })).toBeVisible();
+    expect(createdPayments).toBe(1);
   });
 
   test("creates withdrawal request and refreshes referral payouts", async ({ page }) => {

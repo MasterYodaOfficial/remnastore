@@ -2,6 +2,7 @@ import { t } from '../../lib/i18n';
 import { telegramBotUrl as TELEGRAM_BOT_URL } from '../../../utils/runtime-config'
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = 'remnastore.pending_referral_code';
+const SELF_REFERRAL_REJECTION_STORAGE_PREFIX = 'remnastore.self_referral_rejection.';
 
 function normalizeReferralCode(referralCode: string | null | undefined): string | null {
   if (!referralCode) {
@@ -42,12 +43,28 @@ export function readPendingReferralCode(): string | null {
   return normalizeReferralCode(window.localStorage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY));
 }
 
-export function clearPendingReferralCode() {
+export function clearPendingReferralCode(expectedCode?: string) {
   if (typeof window === 'undefined') {
     return;
   }
 
+  if (expectedCode !== undefined && readPendingReferralCode() !== normalizeReferralCode(expectedCode)) {
+    return;
+  }
+
   window.localStorage.removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
+}
+
+// Return true only for the first rejection of this account's current code.
+export function rememberSelfReferralRejection(accountId: string, referralCode: string): boolean {
+  const normalized = normalizeReferralCode(referralCode);
+  if (typeof window === 'undefined' || !normalized) {
+    return true;
+  }
+  const key = `${SELF_REFERRAL_REJECTION_STORAGE_PREFIX}${accountId}`;
+  const previous = window.localStorage.getItem(key);
+  window.localStorage.setItem(key, normalized);
+  return previous !== normalized;
 }
 
 export function getActiveReferralCode(): string | null {

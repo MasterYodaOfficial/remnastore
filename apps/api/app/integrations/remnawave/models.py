@@ -7,6 +7,24 @@ from uuid import UUID
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
+class RemnawaveHwidDevice(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # User identifiers changed from userUuid to userId in panel responses.
+    # Ownership comes from the user-scoped endpoint; neither is needed here.
+    hwid: str = Field(min_length=1)
+    platform: str | None = None
+    os_version: str | None = Field(default=None, alias="osVersion")
+    device_model: str | None = Field(default=None, alias="deviceModel")
+    user_agent: str | None = Field(default=None, alias="userAgent")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
+class RemnawaveHwidDevicesResponse(BaseModel):
+    devices: list[RemnawaveHwidDevice]
+
+
 class RemnawaveNode(BaseModel):
     id: str
     name: str

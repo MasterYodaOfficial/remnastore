@@ -705,6 +705,27 @@ async def notify_payment_failed(
     if resolved_status not in FINAL_FAILED_PAYMENT_STATUSES:
         raise ValueError(f"unsupported failed payment status: {resolved_status}")
 
+    dedupe_key = f"payment_failed:{payment.id}"
+    # Older releases included the status in the key. Reuse those notifications
+    # too when a provider reports cancellation after local expiry.
+    existing = await session.scalar(
+        select(Notification)
+        .where(
+            Notification.account_id == payment.account_id,
+            Notification.dedupe_key.in_(
+                [dedupe_key]
+                + [
+                    f"{dedupe_key}:{value.value}"
+                    for value in FINAL_FAILED_PAYMENT_STATUSES
+                ]
+            ),
+        )
+        .order_by(Notification.id.asc())
+        .limit(1)
+    )
+    if existing is not None:
+        return existing
+
     provider_label = _get_payment_provider_label(payment.provider)
     if payment.flow_type == PaymentFlowType.WALLET_TOPUP:
         title = translate("api.notifications.payment_failed.topup.title")
@@ -740,7 +761,7 @@ async def notify_payment_failed(
             "flow_type": payment.flow_type.value,
             "status": resolved_status.value,
         },
-        dedupe_key=f"payment_failed:{payment.id}:{resolved_status.value}",
+        dedupe_key=dedupe_key,
     )
 
 
@@ -1117,6 +1138,7 @@ async def process_pending_telegram_deliveries(
             NotificationDelivery.id.asc(),
         )
         .limit(limit)
+        .with_for_update(of=NotificationDelivery, skip_locked=True)
     )
     rows = await session.execute(query)
 

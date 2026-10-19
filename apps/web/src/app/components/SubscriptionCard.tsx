@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ExternalLink, Sparkles } from 'lucide-react';
 import { t } from '../../lib/i18n';
 import { AppLogo } from './AppLogo';
@@ -8,6 +8,8 @@ interface SubscriptionCardProps {
     isActive: boolean;
     daysLeft?: number;
     totalDays?: number;
+    expiresAt?: string | null;
+    periodStartedAt?: string | null;
     hasTrial: boolean;
     hasUsedTrial: boolean;
     isTrial?: boolean;
@@ -19,23 +21,11 @@ interface SubscriptionCardProps {
   onOpenAccess: () => void;
 }
 
-function getSafeTotalDays(daysLeft?: number, totalDays?: number): number {
-  if (typeof totalDays === 'number' && totalDays > 0) {
-    return totalDays;
-  }
-
-  if (typeof daysLeft === 'number' && daysLeft > 0) {
-    return Math.max(daysLeft, 30);
-  }
-
-  return 30;
-}
-
 function getStatusTone(daysLeft?: number) {
-  if (!daysLeft || daysLeft > 7) {
+  if (daysLeft === undefined || daysLeft > 7) {
     return {
       accent: 'var(--tg-theme-button-color,#3390ec)',
-      label: t('web.subscriptionCard.toneComfort'),
+      label: null,
     };
   }
 
@@ -59,10 +49,38 @@ export function SubscriptionCard({
   onBuy,
   onOpenAccess,
 }: SubscriptionCardProps) {
-  const daysLeft = Math.max(0, subscription.daysLeft ?? 0);
-  const totalDays = getSafeTotalDays(subscription.daysLeft, subscription.totalDays);
-  const progressValue = subscription.isActive ? Math.min(100, (daysLeft / totalDays) * 100) : 0;
-  const statusTone = getStatusTone(subscription.daysLeft);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!subscription.isActive) return;
+    const refresh = () => setNow(Date.now());
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [subscription.isActive]);
+  const endsAt = Date.parse(subscription.expiresAt ?? '');
+  const startsAt = Date.parse(subscription.periodStartedAt ?? '');
+  const hasEndDate = Number.isFinite(endsAt);
+  const remainingMs = hasEndDate ? Math.max(0, endsAt - now) : null;
+  const daysLeft = remainingMs !== null
+    ? Math.ceil(remainingMs / 86_400_000)
+    : Math.max(0, subscription.daysLeft ?? 0);
+  const durationMs = Number.isFinite(startsAt) && hasEndDate && startsAt < endsAt
+    ? endsAt - startsAt
+    : null;
+  const totalDays = durationMs !== null
+    ? Math.ceil(durationMs / 86_400_000)
+    : subscription.totalDays;
+  const progressValue = totalDays !== undefined && totalDays > 0
+    ? Math.max(0, Math.min(100, durationMs !== null && remainingMs !== null
+      ? (remainingMs / durationMs) * 100
+      : (daysLeft / totalDays) * 100))
+    : null;
+  const statusTone = getStatusTone(daysLeft);
   const configReady = Boolean(subscription.subscriptionUrl);
 
   return (
@@ -135,31 +153,45 @@ export function SubscriptionCard({
               </div>
             </div>
 
-            <div className="mt-4 flex items-center justify-between gap-3 text-sm">
-              <div className="font-medium text-[var(--tg-theme-text-color,#000000)]">
-                {statusTone.label}
-              </div>
-              <div className="text-[var(--tg-theme-hint-color,#999999)]">
-                {t('web.subscriptionCard.periodProgress', {
-                  progress: Math.round(progressValue),
+            {hasEndDate && (
+              <div className="mt-4 text-sm text-[var(--tg-theme-hint-color,#999999)]">
+                {t('web.subscriptionCard.validUntil', {
+                  date: new Intl.DateTimeFormat('ru-RU', {
+                    day: 'numeric', month: 'long', year: 'numeric',
+                  }).format(endsAt),
                 })}
               </div>
-            </div>
+            )}
 
-            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[rgba(148,163,184,0.18)]">
-              <div
-                className="h-full rounded-full transition-[width]"
-                style={{
-                  width: `${progressValue}%`,
-                  backgroundColor: statusTone.accent,
-                }}
-              />
-            </div>
+            {statusTone.label && (
+              <div className="mt-3 text-sm font-medium" style={{ color: statusTone.accent }}>
+                {statusTone.label}
+              </div>
+            )}
 
-            <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[var(--tg-theme-hint-color,#999999)]">
-              <span>{t('web.subscriptionCard.stockLabel')}</span>
-              <span>{t('web.subscriptionCard.stockValue', { daysLeft, totalDays })}</span>
-            </div>
+            {progressValue !== null && (
+              <div className="mt-4">
+                <div className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
+                  {t('web.subscriptionCard.periodProgress', { progress: Math.round(progressValue) })}
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label={t('web.subscriptionCard.progressLabel')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(progressValue)}
+                  className="mt-2 h-2.5 overflow-hidden rounded-full bg-[rgba(148,163,184,0.18)]"
+                >
+                  <div
+                    className="h-full rounded-full transition-[width]"
+                    style={{ width: `${progressValue}%`, backgroundColor: statusTone.accent }}
+                  />
+                </div>
+                <div className="mt-2 text-xs text-[var(--tg-theme-hint-color,#999999)]">
+                  {t('web.subscriptionCard.stockValue', { daysLeft, totalDays })}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">

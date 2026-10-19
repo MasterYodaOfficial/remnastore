@@ -10,12 +10,13 @@ dependencies = [
     "httpx>=0.27.0",
     "pydantic-settings>=2.3.0",
     "redis>=5.2.1",
-    "remnawave>=2.6.3",
+    "remnawave>=2.8.0,<3",
     "sqlalchemy[asyncio]>=2.0.0",
     "uvicorn[standard]>=0.30.0",
     "alembic>=1.13.3",
     "yookassa==3.10.0",
     "aiosqlite>=0.22.1",
+    "tzdata>=2026.1; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
@@ -23,6 +24,11 @@ dev = [
     "coverage[toml]>=7.10.0,<8",
     "ruff>=0.15.7",
 ]
+
+[tool.uv]
+# remnawave 2.8 caps cryptography below 47. Its RSA link helper is covered by
+# our compatibility test; use the patched crypto release instead of that cap.
+override-dependencies = ["cryptography>=50.0.0,<51"]
 
 [tool.coverage.run]
 branch = true

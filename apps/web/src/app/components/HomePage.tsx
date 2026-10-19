@@ -7,6 +7,8 @@ interface HomePageProps {
     isActive: boolean;
     daysLeft?: number;
     totalDays?: number;
+    expiresAt?: string | null;
+    periodStartedAt?: string | null;
     hasTrial: boolean;
     hasUsedTrial: boolean;
   };

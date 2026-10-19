@@ -12,10 +12,6 @@ from remnawave import RemnawaveSDK
 from remnawave.enums import UserStatus
 from remnawave.exceptions import ApiError, NotFoundError
 from remnawave.models.internal_squads import InternalSquadDto
-from remnawave.models.hwid import (
-    DeleteUserHwidDeviceRequestDto,
-    DeleteUserAllHwidDeviceRequestDto,
-)
 from remnawave.models.users import (
     CreateUserRequestDto,
     UpdateUserRequestDto,
@@ -23,6 +19,7 @@ from remnawave.models.users import (
 )
 
 from app.core.config import settings
+from app.integrations.remnawave.models import RemnawaveHwidDevicesResponse
 
 
 class RemnawaveConfigurationError(Exception):
@@ -236,33 +233,47 @@ def _dedupe_users_by_uuid(users: list[RemnawaveUser]) -> list[RemnawaveUser]:
 
 
 class RemnawaveGateway:
+    async def _hwid_request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        try:
+            response = await self._sdk.hwid.client.request(method, path, **kwargs)
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as exc:
+            raise RemnawaveRequestError(_response_error_message(exc.response)) from exc
+        except httpx.HTTPError as exc:
+            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+
     async def get_hwid_devices(self, user_uuid: UUID) -> list[dict]:
         try:
-            response = await self._sdk.hwid.get_hwid_user(str(user_uuid))
+            response = await self._hwid_request("GET", f"hwid/devices/{user_uuid}")
+            payload = RemnawaveHwidDevicesResponse.model_validate(
+                _unwrap_response_envelope(response.json())
+            )
             return [
                 device.model_dump(mode="json", by_alias=False)
-                for device in response.devices
+                for device in payload.devices
             ]
-        except NotFoundError:
-            return []
-        except (ApiError, httpx.HTTPError, ValidationError) as exc:
+        except RemnawaveRequestError as exc:
+            if (
+                isinstance(exc.__cause__, httpx.HTTPStatusError)
+                and exc.__cause__.response.status_code == 404
+            ):
+                return []
+            raise
+        except ValueError as exc:
             raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
     async def delete_hwid_device(self, user_uuid: UUID, hwid: str) -> None:
-        try:
-            await self._sdk.hwid.delete_hwid_to_user(
-                DeleteUserHwidDeviceRequestDto(user_uuid=user_uuid, hwid=hwid)
-            )
-        except (ApiError, httpx.HTTPError, ValidationError) as exc:
-            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+        await self._hwid_request(
+            "POST",
+            "hwid/devices/delete",
+            json={"userUuid": str(user_uuid), "hwid": hwid},
+        )
 
     async def reset_hwid_devices(self, user_uuid: UUID) -> None:
-        try:
-            await self._sdk.hwid.delete_all_hwid_user(
-                DeleteUserAllHwidDeviceRequestDto(user_uuid=user_uuid)
-            )
-        except (ApiError, httpx.HTTPError, ValidationError) as exc:
-            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+        await self._hwid_request(
+            "POST", "hwid/devices/delete-all", json={"userUuid": str(user_uuid)}
+        )
 
     async def set_hwid_device_limit(self, user_uuid: UUID, limit: int) -> None:
         """Only change the device limit; leave status, expiry and traffic untouched."""
