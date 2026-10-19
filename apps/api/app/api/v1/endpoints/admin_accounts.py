@@ -283,10 +283,11 @@ async def export_accounts(
 
 @router.get("/subscription-plans", response_model=list[SubscriptionPlanResponse])
 async def list_admin_subscription_plans(
+    session: AsyncSession = Depends(get_session),
     _: Admin = Depends(get_current_admin),
 ) -> list[SubscriptionPlanResponse]:
     try:
-        plans = get_subscription_plans()
+        plans = await get_subscription_plans(session)
     except SubscriptionPlanError as exc:
         raise api_error_from_exception(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -302,6 +303,7 @@ async def list_admin_subscription_plans(
             duration_days=plan.duration_days,
             features=list(plan.features),
             popular=plan.popular,
+            extra_device_price_rub=plan.extra_device_price_rub,
         )
         for plan in plans
     ]

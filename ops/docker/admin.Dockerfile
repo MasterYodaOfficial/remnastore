@@ -10,9 +10,17 @@ RUN npm ci --no-progress --registry=${NPM_REGISTRY}
 COPY apps/admin ./
 COPY packages/locales /app/packages/locales
 
+ARG APP_VERSION=dev
+ARG APP_REVISION=unknown
+ENV VITE_APP_VERSION=${APP_VERSION} VITE_APP_REVISION=${APP_REVISION}
 RUN npm run build
 
 FROM nginx:1.29-alpine
+ARG APP_VERSION=dev
+ARG APP_REVISION=unknown
+LABEL org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${APP_REVISION} \
+      org.opencontainers.image.source="https://github.com/MasterYodaOfficial/remnastore"
 ENV RUNTIME_CONFIG_PATH=/usr/share/nginx/html/runtime-config.js
 ENV RUNTIME_CONFIG_KEYS=VITE_API_BASE_URL
 COPY ops/docker/admin.nginx.conf /etc/nginx/conf.d/default.conf

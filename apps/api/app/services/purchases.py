@@ -270,14 +270,12 @@ async def apply_paid_purchase(
     *,
     source: PurchaseSource,
     target_expires_at: datetime,
-    plan_code: str | None = None,
     hwid_device_limit: int | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> PurchaseResult:
     resolved_hwid_device_limit = hwid_device_limit
     if resolved_hwid_device_limit is None:
-        plan = get_subscription_plan(plan_code) if plan_code is not None else None
-        resolved_hwid_device_limit = resolve_plan_device_limit(plan)
+        resolved_hwid_device_limit = resolve_plan_device_limit(None)
 
     return await _apply_subscription_purchase(
         account,
@@ -381,9 +379,18 @@ async def stage_wallet_plan_purchase(
     idempotency_key: str,
     amount_override: int | None = None,
     duration_days_override: int | None = None,
+    extra_devices: int | None = None,
+    expected_amount: int | None = None,
+    expected_refund_rub: int | None = None,
 ) -> SubscriptionGrant:
+    from app.services.devices import (
+        build_renewal_device_quote,
+        prepare_device_checkout,
+        DeviceServiceError,
+    )
+
     normalized_idempotency_key = _normalize_required_reference_id(idempotency_key)
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     amount = plan.price_rub if amount_override is None else amount_override
     duration_days = (
         plan.duration_days if duration_days_override is None else duration_days_override
@@ -401,6 +408,15 @@ async def stage_wallet_plan_purchase(
         for_update=True,
     )
     if existing_grant is not None:
+        metadata = existing_grant.device_metadata or {}
+        amount += metadata.get("extra_amount_rub", 0)
+        if extra_devices is not None and extra_devices != metadata.get(
+            "extra_count", 0
+        ):
+            raise DeviceServiceError(
+                "?????????? ????????? ? ???? ??????? ??? ?????????????.",
+                "devices_idempotency_conflict",
+            )
         _validate_existing_wallet_grant(
             existing_grant,
             account_id=account_id,
@@ -425,17 +441,21 @@ async def stage_wallet_plan_purchase(
             return pending_grant
         raise _purchase_exception(PurchaseConflictError, "wallet_pending_purchase")
 
-    await apply_debit_in_transaction(
+    account = await prepare_device_checkout(session, account_id)
+    device_quote = await build_renewal_device_quote(
         session,
-        account_id=account_id,
-        amount=amount,
-        entry_type=LedgerEntryType.SUBSCRIPTION_DEBIT,
-        reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
-        reference_id=normalized_idempotency_key,
-        comment=f"Wallet purchase of plan {plan.code}",
-        idempotency_key=f"wallet_purchase:{normalized_idempotency_key}:debit",
+        account=account,
+        plan=plan,
+        extra_devices=extra_devices,
+        expected_refund_rub=expected_refund_rub,
+        duration_days=duration_days,
     )
-    account = await load_purchase_account_for_update(session, account_id=account_id)
+    amount += device_quote["extra_amount_rub"]
+    if expected_amount is not None and expected_amount != amount:
+        raise DeviceServiceError(
+            "????????? ??????????. ???????? ?????? ????? ???????.",
+            "devices_quote_changed",
+        )
     base_expires_at, target_expires_at = compute_paid_plan_window(
         account,
         duration_days=duration_days,
@@ -451,11 +471,22 @@ async def stage_wallet_plan_purchase(
         amount=amount,
         currency="RUB",
         duration_days=duration_days,
+        device_metadata=device_quote,
         base_expires_at=base_expires_at,
         target_expires_at=target_expires_at,
     )
     session.add(grant)
     await session.flush()
+    await apply_debit_in_transaction(
+        session,
+        account_id=account_id,
+        amount=amount,
+        entry_type=LedgerEntryType.SUBSCRIPTION_DEBIT,
+        reference_type=WALLET_PURCHASE_REFERENCE_TYPE,
+        reference_id=normalized_idempotency_key,
+        comment=f"Wallet purchase of plan {plan.code}",
+        idempotency_key=f"wallet_purchase:{normalized_idempotency_key}:debit",
+    )
     await append_account_event(
         session,
         account_id=account_id,
@@ -507,6 +538,8 @@ async def finalize_wallet_plan_purchase(
     idempotency_key: str,
     gateway_factory: GatewayFactory | None = None,
 ) -> Account:
+    from app.services.devices import apply_grant_device_entitlements, DeviceServiceError
+
     normalized_idempotency_key = _normalize_required_reference_id(idempotency_key)
     grant = await get_subscription_grant_by_reference(
         session,
@@ -535,13 +568,21 @@ async def finalize_wallet_plan_purchase(
             account,
             source=PurchaseSource.WALLET,
             target_expires_at=grant.target_expires_at,
-            plan_code=grant.plan_code,
+            hwid_device_limit=resolve_plan_device_limit(
+                await get_subscription_plan(session, grant.plan_code)
+            ),
             gateway_factory=gateway_factory,
+        )
+        await apply_grant_device_entitlements(
+            session, account=account, grant=grant, gateway_factory=gateway_factory
         )
         await apply_first_referral_reward_for_grant(
             session,
             grant=grant,
         )
+    except DeviceServiceError as exc:
+        await session.rollback()
+        raise RemnawaveSyncError(str(exc), code=exc.code) from exc
     except RemnawaveSyncError:
         await session.rollback()
         raise
@@ -577,6 +618,9 @@ async def purchase_plan_with_wallet(
     idempotency_key: str,
     amount_override: int | None = None,
     duration_days_override: int | None = None,
+    extra_devices: int | None = None,
+    expected_amount: int | None = None,
+    expected_refund_rub: int | None = None,
     gateway_factory: GatewayFactory | None = None,
 ) -> Account:
     grant = await stage_wallet_plan_purchase(
@@ -586,6 +630,9 @@ async def purchase_plan_with_wallet(
         idempotency_key=idempotency_key,
         amount_override=amount_override,
         duration_days_override=duration_days_override,
+        extra_devices=extra_devices,
+        expected_amount=expected_amount,
+        expected_refund_rub=expected_refund_rub,
     )
     return await finalize_wallet_plan_purchase(
         session,

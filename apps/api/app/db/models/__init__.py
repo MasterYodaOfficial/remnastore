@@ -48,6 +48,13 @@ from app.db.models.referral import (
     TelegramReferralIntent,
 )
 from app.db.models.subscription_grant import SubscriptionGrant
+from app.db.models.subscription_plan import SubscriptionPlanRecord
+from app.db.models.device import (
+    AccountDeviceSettings,
+    DevicePricingPeriod,
+    DevicePurchase,
+    DevicePrepayment,
+)
 from app.db.models.withdrawal import (
     Withdrawal,
     WithdrawalDestinationType,
@@ -98,6 +105,11 @@ __all__ = [
     "ReferralReward",
     "TelegramReferralIntent",
     "SubscriptionGrant",
+    "SubscriptionPlanRecord",
+    "AccountDeviceSettings",
+    "DevicePricingPeriod",
+    "DevicePurchase",
+    "DevicePrepayment",
     "Withdrawal",
     "WithdrawalStatus",
     "WithdrawalDestinationType",

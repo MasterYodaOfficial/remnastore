@@ -50,7 +50,11 @@ from app.services.notifications import (
     notify_payment_failed,
     notify_payment_succeeded,
 )
-from app.services.plans import SubscriptionPlanError, get_subscription_plan
+from app.services.plans import (
+    SubscriptionPlanError,
+    get_subscription_plan,
+    resolve_plan_device_limit,
+)
 from app.services.promos import (
     PAYMENT_REFERENCE_TYPE,
     get_promo_redemption_by_reference,
@@ -233,7 +237,9 @@ class YooKassaGateway:
         )
 
     def _build_metadata(self, command: CreatePaymentIntentCommand) -> dict[str, str]:
-        metadata = dict(command.metadata)
+        metadata = {
+            key: value for key, value in command.metadata.items() if key != "rm_devices"
+        }
         metadata["rm_account_id"] = str(command.account_id)
         metadata["rm_flow_type"] = command.flow_type.value
         if command.plan_code:
@@ -945,7 +951,7 @@ def _should_finalize_payment(
     return True
 
 
-def _extract_plan_duration_days(payment: Payment) -> int:
+async def _extract_plan_duration_days(session: AsyncSession, payment: Payment) -> int:
     metadata = payment.request_metadata or {}
     raw_value = metadata.get("rm_plan_duration_days")
     if raw_value is not None:
@@ -963,7 +969,9 @@ def _extract_plan_duration_days(payment: Payment) -> int:
 
     if payment.plan_code:
         try:
-            return get_subscription_plan(payment.plan_code).duration_days
+            return (
+                await get_subscription_plan(session, payment.plan_code)
+            ).duration_days
         except SubscriptionPlanError as exc:
             raise PaymentConflictError(str(exc)) from exc
 
@@ -1422,8 +1430,44 @@ async def create_yookassa_plan_purchase_payment(
     idempotency_key: str | None = None,
     promo_code: str | None = None,
     source: str = "api",
+    extra_devices: int | None = None,
+    expected_amount: int | None = None,
+    expected_refund_rub: int | None = None,
 ) -> PaymentIntentSnapshot:
-    plan = get_subscription_plan(plan_code)
+    from app.services.devices import (
+        build_renewal_device_quote,
+        prepare_device_checkout,
+        DeviceServiceError,
+    )
+
+    if idempotency_key:
+        existing = await _get_payment_by_idempotency_key(
+            session, provider=PaymentProvider.YOOKASSA, idempotency_key=idempotency_key
+        )
+        if existing is not None:
+            _validate_existing_idempotent_payment(
+                existing,
+                account=account,
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                amount=existing.amount,
+                plan_code=plan_code,
+            )
+            prior = json.loads(
+                (existing.request_metadata or {}).get("rm_devices", "{}")
+            )
+            if (
+                extra_devices is not None
+                and extra_devices != prior.get("extra_count", 0)
+            ) or (promo_code or "").strip().upper() != (
+                existing.request_metadata or {}
+            ).get("rm_promo_code", ""):
+                raise DeviceServiceError(
+                    "????????? ???? ??????? ??? ?????????????. ??????? ????? ??????.",
+                    "devices_idempotency_conflict",
+                )
+            return _payment_to_snapshot(existing)
+    account = await prepare_device_checkout(session, account.id)
+    plan = await get_subscription_plan(session, plan_code)
     if promo_code is not None and idempotency_key:
         existing_payment = await _get_payment_by_idempotency_key(
             session,
@@ -1465,6 +1509,21 @@ async def create_yookassa_plan_purchase_payment(
         )
         amount = quote.final_amount
         duration_days = quote.final_duration_days
+    device_quote = await build_renewal_device_quote(
+        session,
+        account=account,
+        plan=plan,
+        currency="RUB",
+        extra_devices=extra_devices,
+        expected_refund_rub=expected_refund_rub,
+        duration_days=duration_days,
+    )
+    amount += device_quote["extra_amount_rub"]
+    if expected_amount is not None and expected_amount != amount:
+        raise DeviceServiceError(
+            "????????? ??????????. ???????? ?????? ????? ???????.",
+            "devices_quote_changed",
+        )
     plan_description = description or translate(
         "api.payments.descriptions.plan", plan_name=plan.name
     )
@@ -1482,6 +1541,7 @@ async def create_yookassa_plan_purchase_payment(
         idempotency_key=idempotency_key,
         source=source,
         metadata={
+            "rm_devices": json.dumps(device_quote),
             "rm_plan_code": plan.code,
             "rm_plan_name": plan.name,
             "rm_plan_duration_days": str(duration_days),
@@ -1526,11 +1586,49 @@ async def create_telegram_stars_plan_purchase_payment(
     idempotency_key: str | None = None,
     promo_code: str | None = None,
     source: str = "api",
+    extra_devices: int | None = None,
+    expected_amount: int | None = None,
+    expected_refund_rub: int | None = None,
 ) -> PaymentIntentSnapshot:
     if account.telegram_id is None:
         raise _payment_exception(PaymentConflictError, "stars_telegram_required")
 
-    plan = get_subscription_plan(plan_code)
+    from app.services.devices import (
+        build_renewal_device_quote,
+        prepare_device_checkout,
+        DeviceServiceError,
+    )
+
+    if idempotency_key:
+        existing = await _get_payment_by_idempotency_key(
+            session,
+            provider=PaymentProvider.TELEGRAM_STARS,
+            idempotency_key=idempotency_key,
+        )
+        if existing is not None:
+            _validate_existing_idempotent_payment(
+                existing,
+                account=account,
+                flow_type=PaymentFlowType.DIRECT_PLAN_PURCHASE,
+                amount=existing.amount,
+                plan_code=plan_code,
+            )
+            prior = json.loads(
+                (existing.request_metadata or {}).get("rm_devices", "{}")
+            )
+            if (
+                extra_devices is not None
+                and extra_devices != prior.get("extra_count", 0)
+            ) or (promo_code or "").strip().upper() != (
+                existing.request_metadata or {}
+            ).get("rm_promo_code", ""):
+                raise DeviceServiceError(
+                    "????????? ???? ??????? ??? ?????????????. ??????? ????? ??????.",
+                    "devices_idempotency_conflict",
+                )
+            return _payment_to_snapshot(existing)
+    account = await prepare_device_checkout(session, account.id)
+    plan = await get_subscription_plan(session, plan_code)
     if plan.price_stars is None:
         raise PaymentGatewayConfigurationError(
             translate("api.plans.errors.stars_price_not_configured"),
@@ -1579,6 +1677,20 @@ async def create_telegram_stars_plan_purchase_payment(
         amount = quote.final_amount
         duration_days = quote.final_duration_days
 
+    device_quote = await build_renewal_device_quote(
+        session,
+        account=account,
+        plan=plan,
+        currency="XTR",
+        extra_devices=extra_devices,
+        expected_refund_rub=expected_refund_rub,
+        duration_days=duration_days,
+    )
+    if expected_amount is not None and expected_amount != amount:
+        raise DeviceServiceError(
+            "????????? ??????????. ???????? ?????? ????? ???????.",
+            "devices_quote_changed",
+        )
     plan_description = description or translate(
         "api.payments.descriptions.plan_stars",
         plan_name=plan.name,
@@ -1595,6 +1707,7 @@ async def create_telegram_stars_plan_purchase_payment(
         idempotency_key=idempotency_key,
         source=source,
         metadata={
+            "rm_devices": json.dumps(device_quote),
             "rm_plan_code": plan.code,
             "rm_plan_name": plan.name,
             "rm_plan_duration_days": str(duration_days),
@@ -1715,7 +1828,7 @@ async def _stage_plan_purchase_grant(
         return
 
     account = await _load_account_for_update(session, account_id=payment.account_id)
-    duration_days = _extract_plan_duration_days(payment)
+    duration_days = await _extract_plan_duration_days(session, payment)
     base_expires_at, target_expires_at = compute_paid_plan_window(
         account,
         duration_days=duration_days,
@@ -1729,6 +1842,9 @@ async def _stage_plan_purchase_grant(
         plan_code=payment.plan_code,
         amount=payment.amount,
         currency=payment.currency,
+        device_metadata=json.loads(
+            (payment.request_metadata or {}).get("rm_devices", "null")
+        ),
         duration_days=duration_days,
         base_expires_at=base_expires_at,
         target_expires_at=target_expires_at,
@@ -1796,6 +1912,8 @@ async def _finalize_direct_plan_purchase(
     *,
     payment_id: int,
 ) -> bool:
+    from app.services.devices import apply_grant_device_entitlements, DeviceServiceError
+
     payment = await _get_payment_by_id(session, payment_id=payment_id, for_update=True)
     if payment is None:
         raise PaymentServiceError(f"Payment not found: {payment_id}")
@@ -1820,12 +1938,18 @@ async def _finalize_direct_plan_purchase(
             account,
             source=PurchaseSource.DIRECT_PAYMENT,
             target_expires_at=grant.target_expires_at,
-            plan_code=grant.plan_code,
+            hwid_device_limit=resolve_plan_device_limit(
+                await get_subscription_plan(session, grant.plan_code)
+            ),
         )
+        await apply_grant_device_entitlements(session, account=account, grant=grant)
         await apply_first_referral_reward_for_grant(
             session,
             grant=grant,
         )
+    except DeviceServiceError as exc:
+        await session.rollback()
+        raise PaymentGatewayError(str(exc)) from exc
     except RemnawaveSyncError as exc:
         await session.rollback()
         raise PaymentGatewayError(str(exc)) from exc

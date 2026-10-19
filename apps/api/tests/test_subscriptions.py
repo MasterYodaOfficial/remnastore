@@ -15,6 +15,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from plan_fixtures import PLAN_1M, TEST_PLANS, seed_subscription_plans
+
 from app.api.dependencies import get_current_account
 from app.core.config import settings
 from app.db.base import Base
@@ -34,17 +36,16 @@ from app.db.models import (
     PromoRedemptionContext,
     PromoRedemptionStatus,
     SubscriptionGrant,
+    SubscriptionPlanRecord,
 )
 from app.db.session import get_session
 from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
 from app.main import create_app
 from app.services.i18n import translate
 from app.services.referrals import calculate_referral_reward_amount
-from app.services.plans import get_subscription_plans
 from app.services.purchases import reconcile_pending_wallet_plan_purchases
 from app.services import subscriptions as subscriptions_service
 
-PLAN_1M = next(plan for plan in get_subscription_plans() if plan.code == "plan_1m")
 PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
 
 
@@ -249,6 +250,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await seed_subscription_plans(conn)
 
         import app.services.cache as cache_module
 
@@ -635,6 +637,35 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("subscription.wallet_purchase.applied", event_types)
         self.assertIsNotNone(grants[0].applied_at)
 
+    async def test_wallet_purchase_uses_updated_database_price_duration_and_limit(
+        self,
+    ) -> None:
+        account = await self._create_account(
+            email="updated-plan@example.com", balance=1000
+        )
+        self._current_account_id = account.id
+        async with self._session_factory() as session:
+            plan = await session.get(SubscriptionPlanRecord, "plan_1m")
+            plan.price_rub = 350
+            plan.duration_days = 45
+            plan.device_limit = 7
+            await session.commit()
+
+        response = await self.client.post(
+            "/api/v1/subscriptions/wallet/plans/plan_1m",
+            json={"idempotency_key": "updated-database-plan"},
+        )
+        self.assertEqual(response.status_code, 200)
+        stored_account = await self._get_account(account.id)
+        self.assertEqual(stored_account.balance, 650)
+        grants = await self._get_subscription_grants(account.id)
+        self.assertEqual(grants[0].amount, 350)
+        self.assertEqual(grants[0].duration_days, 45)
+        self.assertEqual(
+            grants[0].target_expires_at - grants[0].base_expires_at, timedelta(days=45)
+        )
+        self.assertEqual(self._fake_gateway.calls[0]["hwid_device_limit"], 7)
+
     async def test_wallet_plan_purchase_after_trial_clears_current_trial_flag(
         self,
     ) -> None:
@@ -822,7 +853,7 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_response.status_code, 502)
 
         alternate_plan_code = next(
-            plan.code for plan in get_subscription_plans() if plan.code != "plan_1m"
+            plan.code for plan in TEST_PLANS if plan.code != "plan_1m"
         )
         second_response = await self.client.post(
             f"/api/v1/subscriptions/wallet/plans/{alternate_plan_code}",

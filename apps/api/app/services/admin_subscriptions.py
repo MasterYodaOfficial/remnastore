@@ -219,7 +219,7 @@ async def grant_subscription_manually(
     idempotency_key: str,
     gateway_factory: GatewayFactory | None = None,
 ) -> AdminSubscriptionGrantResult:
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     normalized_comment = _normalize_required_comment(comment)
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -238,6 +238,13 @@ async def grant_subscription_manually(
         return existing_result
 
     account = await load_purchase_account_for_update(session, account_id=account_id)
+    from app.services.devices import (
+        ensure_no_pending_device_purchase,
+        ensure_no_pending_plan_purchase,
+    )
+
+    await ensure_no_pending_device_purchase(session, account_id)
+    await ensure_no_pending_plan_purchase(session, account_id)
     base_expires_at, target_expires_at = compute_paid_plan_window(
         account,
         duration_days=plan.duration_days,
@@ -302,7 +309,7 @@ async def grant_subscription_manually(
             account,
             source=PurchaseSource.ADMIN,
             target_expires_at=target_expires_at,
-            plan_code=plan.code,
+            hwid_device_limit=resolve_plan_device_limit(plan),
             gateway_factory=gateway_factory or get_remnawave_gateway,
         )
     except RemnawaveSyncError:
@@ -310,6 +317,9 @@ async def grant_subscription_manually(
         raise
 
     grant.applied_at = utcnow()
+    from app.services.devices import snapshot_device_pricing
+
+    await snapshot_device_pricing(session, grant, plan)
     await append_account_event(
         session,
         account_id=account.id,

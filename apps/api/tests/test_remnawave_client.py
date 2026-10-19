@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 import unittest
 import uuid
 
@@ -129,6 +130,44 @@ class _FakeUsersHttpClient:
 
 
 class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_hwid_operations_are_scoped_to_user_and_limit_patch_is_minimal(self):
+        from remnawave.models.hwid import HwidDeviceDto
+
+        user_uuid = uuid.uuid4()
+        gateway = self._make_gateway(squads=[])
+        device = HwidDeviceDto(
+            hwid="phone",
+            userUuid=user_uuid,
+            platform="iOS",
+            osVersion="18",
+            deviceModel="iPhone",
+            userAgent="Happ",
+            createdAt=datetime.now(UTC),
+            updatedAt=datetime.now(UTC),
+        )
+        gateway._sdk.hwid = SimpleNamespace(
+            get_hwid_user=AsyncMock(return_value=SimpleNamespace(devices=[device])),
+            delete_hwid_to_user=AsyncMock(),
+            delete_all_hwid_user=AsyncMock(),
+        )
+        self.assertEqual(
+            (await gateway.get_hwid_devices(user_uuid))[0]["hwid"], "phone"
+        )
+        await gateway.delete_hwid_device(user_uuid, "phone")
+        body = gateway._sdk.hwid.delete_hwid_to_user.call_args.args[0]
+        self.assertEqual(str(body.user_uuid), str(user_uuid))
+        self.assertEqual(body.hwid, "phone")
+        await gateway.reset_hwid_devices(user_uuid)
+        self.assertEqual(
+            str(gateway._sdk.hwid.delete_all_hwid_user.call_args.args[0].user_uuid),
+            str(user_uuid),
+        )
+        await gateway.set_hwid_device_limit(user_uuid, 5)
+        self.assertEqual(
+            gateway._sdk.users.updated_bodies[-1].model_fields_set,
+            {"uuid", "hwid_device_limit"},
+        )
+
     def setUp(self) -> None:
         self._original_username_prefix = settings.remnawave_username_prefix
         self._original_user_label = settings.remnawave_user_label

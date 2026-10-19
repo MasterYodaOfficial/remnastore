@@ -21,14 +21,10 @@ if (BASE_ROOT / "apps" / "api" / "app").exists():
     REPO_ROOT = BASE_ROOT
     API_APP_ROOT = REPO_ROOT / "apps" / "api"
     DEFAULT_LEGACY_DB = REPO_ROOT / "testdb_db" / "db_2.sqlite3"
-    DEFAULT_PLANS_JSON = (
-        REPO_ROOT / "apps" / "api" / "app" / "config" / "subscription-plans.json"
-    )
 elif (BASE_ROOT / "app").exists():
     REPO_ROOT = BASE_ROOT
     API_APP_ROOT = BASE_ROOT
     DEFAULT_LEGACY_DB = BASE_ROOT / "testdb_db" / "db_2.sqlite3"
-    DEFAULT_PLANS_JSON = BASE_ROOT / "app" / "config" / "subscription-plans.json"
 else:
     raise RuntimeError(
         "Unsupported legacy migration layout: API sources were not found"
@@ -62,8 +58,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plans-json",
         type=Path,
-        default=DEFAULT_PLANS_JSON,
-        help=f"Path to current subscription plans JSON. Default: {DEFAULT_PLANS_JSON}",
+        default=None,
+        help="Optional offline plans JSON override. By default, reads the target database",
     )
     parser.add_argument(
         "--database-url",
@@ -392,7 +388,7 @@ class MigrationAccountPlan:
 @dataclass(slots=True)
 class MigrationPlan:
     legacy_db_path: Path
-    current_plans_path: Path
+    current_plans_path: Path | None
     current_plans_by_duration: dict[int, CurrentPlan]
     legacy_tariffs: dict[int, LegacyTariff]
     account_plans: list[MigrationAccountPlan]
@@ -417,7 +413,9 @@ class MigrationPlan:
         return {
             "generated_at": datetime.now(UTC).isoformat(),
             "legacy_db_path": str(self.legacy_db_path),
-            "current_plans_path": str(self.current_plans_path),
+            "current_plans_path": str(self.current_plans_path)
+            if self.current_plans_path
+            else "database",
             "plan_mapping": plan_mapping,
             "summary": self.summary,
             "issue_samples": self.issue_samples,
@@ -451,6 +449,33 @@ def _load_current_plans(path: Path) -> dict[int, CurrentPlan]:
             price_rub=int(item["price_rub"]),
         )
     return plans_by_duration
+
+
+async def _load_current_plans_from_database(
+    database_url: str,
+) -> dict[int, CurrentPlan]:
+    from app.services.plans import get_subscription_plans
+
+    engine, session_factory = await _open_target_session_factory(database_url)
+    try:
+        async with session_factory() as session:
+            plans = await get_subscription_plans(session)
+        if not plans:
+            raise ValueError("The target database subscription catalog is empty")
+        plans_by_duration: dict[int, CurrentPlan] = {}
+        for plan in plans:
+            if plan.duration_days in plans_by_duration:
+                raise ValueError(
+                    f"Duplicate current plan duration_days={plan.duration_days}"
+                )
+            plans_by_duration[plan.duration_days] = CurrentPlan(
+                code=plan.code,
+                duration_days=plan.duration_days,
+                price_rub=plan.price_rub,
+            )
+        return plans_by_duration
+    finally:
+        await engine.dispose()
 
 
 def _connect_legacy_db(path: Path) -> sqlite3.Connection:
@@ -679,7 +704,7 @@ def _should_import_blocked_bot_user(
 def build_migration_plan(
     *,
     legacy_db_path: Path,
-    current_plans_path: Path,
+    current_plans_path: Path | None,
     users: dict[int, LegacyUser],
     subscriptions_by_user: dict[int, list[LegacySubscription]],
     payments_by_user: dict[int, list[LegacyPayment]],
@@ -907,7 +932,7 @@ def _print_report(report: dict[str, Any]) -> None:
     summary = report["summary"]
     print("Legacy migration dry-run")
     print(f"Legacy DB: {report['legacy_db_path']}")
-    print(f"Plans JSON: {report['current_plans_path']}")
+    print(f"Plans source: {report['current_plans_path']}")
     print()
     print("Summary")
     for key in (
@@ -1794,12 +1819,26 @@ async def report_remnawave_state(
 async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
     if not args.legacy_db.exists():
         raise SystemExit(f"Legacy DB not found: {args.legacy_db}")
-    if not args.plans_json.exists():
+    if args.plans_json is not None and not args.plans_json.exists():
         raise SystemExit(f"Plans JSON not found: {args.plans_json}")
     _ensure_positive_batch_size(args.db_batch_size, name="db_batch_size")
     _ensure_positive_batch_size(args.remnawave_batch_size, name="remnawave_batch_size")
 
-    current_plans_by_duration = _load_current_plans(args.plans_json)
+    database_url = args.database_url
+    if args.plans_json is None or args.apply_db or args.sync_remnawave:
+        if not database_url:
+            from app.core.config import settings
+
+            database_url = settings.database_url
+        if not database_url:
+            raise SystemExit(
+                "Target DATABASE_URL is required; use --plans-json for an offline dry run"
+            )
+    current_plans_by_duration = (
+        _load_current_plans(args.plans_json)
+        if args.plans_json is not None
+        else await _load_current_plans_from_database(database_url)
+    )
     connection = _connect_legacy_db(args.legacy_db)
     try:
         legacy_tariffs = _load_legacy_tariffs(connection)
@@ -1826,16 +1865,6 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
     )
     if do_dry_run:
         _print_report(report)
-
-    database_url = args.database_url
-    if (args.apply_db or args.sync_remnawave) and not database_url:
-        from app.core.config import settings
-
-        database_url = settings.database_url
-    if (args.apply_db or args.sync_remnawave) and not database_url:
-        raise SystemExit(
-            "Target database URL is required for --apply-db or --sync-remnawave"
-        )
 
     if args.apply_db:
         db_summary = await apply_db_import(

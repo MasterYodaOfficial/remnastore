@@ -174,11 +174,11 @@ def _get_payment_provider_label(provider: PaymentProvider) -> str:
     return provider.value
 
 
-def _get_payment_plan_name(payment: Payment) -> str | None:
+async def _get_payment_plan_name(session: AsyncSession, payment: Payment) -> str | None:
     if not payment.plan_code:
         return None
     try:
-        return get_subscription_plan(payment.plan_code).name
+        return (await get_subscription_plan(session, payment.plan_code)).name
     except SubscriptionPlanError:
         return payment.plan_code
 
@@ -667,7 +667,7 @@ async def notify_payment_succeeded(
             provider=_get_payment_provider_label(payment.provider),
         )
     else:
-        plan_name = _get_payment_plan_name(payment) or translate(
+        plan_name = (await _get_payment_plan_name(session, payment)) or translate(
             "api.notifications.plan_fallback"
         )
         title = translate("api.notifications.payment_succeeded.plan.title")
@@ -714,7 +714,7 @@ async def notify_payment_failed(
             provider=provider_label,
         )
     else:
-        plan_name = _get_payment_plan_name(payment) or translate(
+        plan_name = (await _get_payment_plan_name(session, payment)) or translate(
             "api.notifications.plan_fallback"
         )
         title = translate("api.notifications.payment_failed.plan.title")

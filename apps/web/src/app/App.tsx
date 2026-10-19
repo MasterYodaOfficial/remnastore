@@ -22,6 +22,9 @@ import { Header } from './components/Header';
 import type { ReferralFeedFilter } from './components/ReferralPage';
 import { ReferralCard } from './components/ReferralCard';
 import { PromoRedeemCard, type PromoRedeemMessage } from './components/PromoRedeemCard';
+import { DevicesPanel } from './components/DevicesPanel';
+import { DeviceRenewalOptions } from './components/DeviceRenewalOptions';
+import { deviceRequest, type DeviceRenewalQuote } from './lib/devices';
 import { SubscriptionCard } from './components/SubscriptionCard';
 import { ThemeToggle } from './components/ThemeToggle';
 import { BottomNav } from './components/BottomNav';
@@ -1230,6 +1233,23 @@ export default function App() {
   const [planPromoMessage, setPlanPromoMessage] = useState<PromoRedeemMessage | null>(null);
   const [paymentMethodSelection, setPaymentMethodSelection] = useState<PaymentSelectionState | null>(null);
   const [paymentMethodSubmitting, setPaymentMethodSubmitting] = useState<PaymentMethodProvider | null>(null);
+  const [deviceRenewalQuote, setDeviceRenewalQuote] = useState<DeviceRenewalQuote | null>(null);
+  const [deviceRenewalCount, setDeviceRenewalCount] = useState<number | null>(null);
+  const [deviceRenewalError, setDeviceRenewalError] = useState<string | null>(null);
+  const devicePlanId = paymentMethodSelection?.kind === 'plan' ? paymentMethodSelection.planId : null;
+  const devicePromoCode = planPromoPlanId === devicePlanId ? planPromoRubQuote?.promo_code ?? null : null;
+  useEffect(() => {
+    setDeviceRenewalQuote(null);
+    setDeviceRenewalError(null);
+    if (!devicePlanId || !accessToken) return;
+    const controller = new AbortController();
+    void deviceRequest<DeviceRenewalQuote>(BACKEND_API, accessToken, `/plans/${encodeURIComponent(devicePlanId)}/quote`, {
+      method: 'POST', signal: controller.signal,
+      body: { extra_devices: deviceRenewalCount, promo_code: devicePromoCode },
+    }).then((quote) => { if (!controller.signal.aborted) setDeviceRenewalQuote(quote); })
+      .catch((error: unknown) => { if (!controller.signal.aborted) setDeviceRenewalError(error instanceof Error ? error.message : t('web.devices.error')); });
+    return () => controller.abort();
+  }, [accessToken, devicePlanId, devicePromoCode, deviceRenewalCount]);
   const [checkoutAttempts, setCheckoutAttempts] = useState<StoredPaymentAttempt[]>([]);
   const [desktopSelectedPlanId, setDesktopSelectedPlanId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('home');
@@ -1615,6 +1635,7 @@ export default function App() {
           provider: attempt.provider,
           planId: attempt.planId,
           promoCode: attempt.promoCode,
+          extraDevices: attempt.extraDevices,
         }
       : {
           accountId: attempt.accountId,
@@ -1728,6 +1749,7 @@ export default function App() {
           provider: StoredPaymentAttemptProvider;
           planId: string;
           promoCode?: string;
+          extraDevices?: number;
         }
       | {
           accountId: string;
@@ -1755,6 +1777,7 @@ export default function App() {
           planId: string;
           planName: string;
           promoCode?: string;
+          extraDevices?: number;
         }
       | {
           kind: 'topup';
@@ -1785,6 +1808,7 @@ export default function App() {
             planId: checkout.planId,
             planName: checkout.planName,
             promoCode: checkout.promoCode,
+            extraDevices: checkout.extraDevices,
           }
         : {}),
     };
@@ -3813,6 +3837,11 @@ export default function App() {
     if (!selectedPlan) {
       throw new Error(t('web.app.toasts.planNotFound'));
     }
+    if (!deviceRenewalQuote) throw new Error(t('web.devices.error'));
+    const deviceCount = deviceRenewalQuote.extra_devices;
+    const expectedAmount = provider === 'telegram_stars'
+      ? planPromoStarsQuote?.final_amount ?? selectedPlan.priceStars
+      : deviceRenewalQuote.total_amount_rub;
 
     const promoCodeForProvider =
       provider === 'telegram_stars'
@@ -3850,6 +3879,9 @@ export default function App() {
             body: JSON.stringify({
               idempotency_key: createClientIdempotencyKey(`wallet-plan-${planId}`),
               promo_code: promoCodeForProvider,
+              extra_devices: deviceCount,
+              expected_amount: expectedAmount,
+              expected_refund_rub: deviceRenewalQuote.refund_rub,
             }),
           }
         );
@@ -3884,6 +3916,7 @@ export default function App() {
           provider,
           planId,
           promoCode: promoCodeForProvider ?? undefined,
+          extraDevices: deviceCount,
         });
 
         const activeAttempt = resumableAttempt.activeAttempt;
@@ -3940,6 +3973,9 @@ export default function App() {
           }),
           idempotency_key: createClientIdempotencyKey(`plan-${planId}`),
           promo_code: promoCodeForProvider,
+          extra_devices: deviceCount,
+          expected_amount: expectedAmount,
+              expected_refund_rub: deviceRenewalQuote.refund_rub,
           ...(useTelegramStars
             ? {}
             : { success_url: getPaymentReturnUrl({ preferTelegramBot: hasTelegramContext }) }),
@@ -3965,6 +4001,7 @@ export default function App() {
         planId,
         planName: selectedPlan.name,
         promoCode: promoCodeForProvider ?? undefined,
+        extraDevices: deviceCount,
       });
       toast.success(
         useTelegramStars ? t('web.app.toasts.openStars') : t('web.app.toasts.openPlanYookassa')
@@ -3982,6 +4019,8 @@ export default function App() {
             kind: 'plan',
             provider: paymentIntent.provider as StoredPaymentAttemptProvider,
             planId,
+            promoCode: promoCodeForProvider ?? undefined,
+            extraDevices: deviceCount,
           });
 
           if (!activeAttempt) {
@@ -4010,6 +4049,8 @@ export default function App() {
   };
 
   const handleBuyPlan = async (planId: string) => {
+    setDeviceRenewalCount(null);
+    setDeviceRenewalQuote(null);
     const selectedPlan = plans.find((plan) => plan.id === planId);
     if (!selectedPlan) {
       toast.error(t('web.app.toasts.planNotFound'));
@@ -4054,6 +4095,7 @@ export default function App() {
     }
 
     const selection = paymentMethodSelection;
+    if (selection.kind === 'plan' && (!deviceRenewalQuote || isApplyingPlanPromo)) return;
     setPaymentMethodSelection(null);
     setPaymentMethodSubmitting(provider);
 
@@ -4493,11 +4535,16 @@ export default function App() {
             },
           },
           getAvailablePlanPaymentMethods(
-            selectedPlanForPaymentSheet,
+            { ...selectedPlanForPaymentSheet, price: deviceRenewalQuote?.total_amount_rub ?? selectedPlanForPaymentSheet.price },
             isTelegramWebApp,
             user.balance,
-            currentPlanPromoContext ?? undefined
-          )
+            currentPlanPromoContext ? {
+              ...currentPlanPromoContext,
+              rubQuote: currentPlanPromoContext.rubQuote && deviceRenewalQuote ? {
+                ...currentPlanPromoContext.rubQuote, final_amount: deviceRenewalQuote.total_amount_rub,
+              } : currentPlanPromoContext.rubQuote,
+            } : undefined
+          ).filter((method) => !deviceRenewalQuote?.extra_devices || method.provider !== 'telegram_stars')
         )
       : (paymentMethodSelection?.methods ?? []);
   const bottomNavActiveTab: PrimaryAppTab =
@@ -4548,6 +4595,7 @@ export default function App() {
         subtitle={getPaymentSheetSubtitle(paymentMethodSelection)}
         methods={paymentMethodSheetMethods}
         isSubmitting={Boolean(paymentMethodSubmitting)}
+        methodsDisabled={paymentMethodSelection.kind === 'plan' && (!deviceRenewalQuote || isApplyingPlanPromo)}
         selectedProvider={paymentMethodSubmitting}
         onClose={() => {
           if (!paymentMethodSubmitting) {
@@ -4562,7 +4610,9 @@ export default function App() {
         onApplyPromo={paymentMethodSelection?.kind === 'plan' ? handleApplyPlanPromo : undefined}
         isApplyingPromo={isApplyingPlanPromo}
         promoMessage={paymentMethodSelection?.kind === 'plan' ? planPromoMessage : null}
-      />
+      >
+        {paymentMethodSelection.kind === 'plan' && <DeviceRenewalOptions quote={deviceRenewalQuote} error={deviceRenewalError} onCountChange={setDeviceRenewalCount} />}
+      </LazyPaymentMethodSheet>
     </Suspense>
   ) : null;
 
@@ -4682,6 +4732,8 @@ export default function App() {
       case 'settings':
         return (
           <LazySettingsPage
+            apiBase={BACKEND_API} accessToken={accessToken} balance={user.balance}
+            onDevicesChanged={refreshUserData} onTopUp={() => void handleTopUp()} onConnectDevice={() => setActiveTab('home')}
             theme={theme}
             onThemeChange={setTheme}
             onLogout={handleLogout}
@@ -5229,6 +5281,9 @@ export default function App() {
                     {t('web.settings.labels.russian')}
                   </div>
                 </div>
+
+                {accessToken && <DevicesPanel apiBase={BACKEND_API} accessToken={accessToken} balance={user.balance}
+                  onChanged={refreshUserData} onTopUp={() => void handleTopUp()} onConnect={() => setActiveTab('home')} />}
 
                 <PromoRedeemCard
                   code={settingsPromoCode}

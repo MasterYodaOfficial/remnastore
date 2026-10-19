@@ -6,6 +6,7 @@ usage() {
 Usage:
   scripts/test.sh api   Run API tests through uv
   scripts/test.sh bot   Run bot tests through uv
+  scripts/test.sh release   Run release tooling tests through uv
   scripts/test.sh all   Run all Python tests through uv
 
 Examples:
@@ -25,6 +26,10 @@ run_bot() {
   PYTHONPATH=apps/bot uv run --no-sync python -m unittest discover -s apps/bot/tests -p 'test_*.py'
 }
 
+run_release() {
+  uv run --no-sync python -m unittest discover -s scripts/tests -p 'test_*.py'
+}
+
 case "$target" in
   api)
     run_api
@@ -35,6 +40,10 @@ case "$target" in
   all)
     run_api
     run_bot
+    run_release
+    ;;
+  release)
+    run_release
     ;;
   help|-h|--help)
     usage

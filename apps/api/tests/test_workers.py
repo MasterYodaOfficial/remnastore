@@ -145,6 +145,10 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ),
             ) as wallet_mock,
+            patch(
+                "app.tasks.payments_worker.reconcile_device_purchases",
+                new=AsyncMock(return_value=1),
+            ) as devices_mock,
         ):
             await payments_worker._run_expire_stale_once()
             await payments_worker._run_reconcile_yookassa_once()
@@ -153,6 +157,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         expire_mock.assert_awaited_once()
         reconcile_mock.assert_awaited_once()
         wallet_mock.assert_awaited_once()
+        devices_mock.assert_awaited_once()
         self.assertEqual(len(cache.release_calls), 3)
 
     async def test_payments_worker_skips_when_lock_not_acquired(self) -> None:

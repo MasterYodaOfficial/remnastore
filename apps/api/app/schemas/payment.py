@@ -20,12 +20,18 @@ class CreateYooKassaPlanPurchaseRequest(BaseModel):
     description: str | None = None
     idempotency_key: str | None = None
     promo_code: str | None = None
+    extra_devices: int | None = Field(default=None, ge=0, le=100)
+    expected_amount: int | None = Field(default=None, gt=0)
+    expected_refund_rub: int | None = Field(default=None, ge=0)
 
 
 class CreateTelegramStarsPlanPurchaseRequest(BaseModel):
     description: str | None = None
     idempotency_key: str | None = None
     promo_code: str | None = None
+    extra_devices: int | None = Field(default=None, ge=0, le=100)
+    expected_amount: int | None = Field(default=None, gt=0)
+    expected_refund_rub: int | None = Field(default=None, ge=0)
 
 
 class SubscriptionPlanResponse(BaseModel):
@@ -36,6 +42,7 @@ class SubscriptionPlanResponse(BaseModel):
     duration_days: int
     features: list[str]
     popular: bool = False
+    extra_device_price_rub: int | None = None
 
 
 class PaymentIntentResponse(BaseModel):

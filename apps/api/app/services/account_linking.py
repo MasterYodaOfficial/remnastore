@@ -12,6 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.models import (
     Account,
+    AccountDeviceSettings,
+    DevicePrepayment,
+    DevicePricingPeriod,
+    DevicePurchase,
     AccountStatus,
     AdminActionLog,
     AuthAccount,
@@ -446,7 +450,7 @@ async def _resolve_latest_paid_device_limit_from_grants(
     if plan_code is None:
         return resolve_plan_device_limit(None)
     try:
-        plan = get_subscription_plan(plan_code)
+        plan = await get_subscription_plan(session, plan_code)
     except SubscriptionPlanError:
         return resolve_plan_device_limit(None)
     return resolve_plan_device_limit(plan)
@@ -1204,6 +1208,29 @@ async def merge_accounts(
     source_account = await _load_account_for_update(
         session, account_id=source_account_id
     )
+    from app.services.devices import (
+        ensure_no_pending_device_purchase,
+        ensure_no_pending_plan_purchase,
+    )
+
+    target_devices = await session.get(AccountDeviceSettings, target_account.id)
+    source_devices = await session.get(AccountDeviceSettings, source_account.id)
+    for merging_account, device_settings in (
+        (target_account, target_devices),
+        (source_account, source_devices),
+    ):
+        await ensure_no_pending_device_purchase(session, merging_account.id)
+        if device_settings is not None:
+            await ensure_no_pending_plan_purchase(session, merging_account.id)
+    if (
+        target_devices
+        and source_devices
+        and target_devices.extra_count
+        and source_devices.extra_count
+    ):
+        raise AccountMergeConflictError(
+            "На обоих аккаунтах оплачены дополнительные устройства. Обратитесь в поддержку для объединения."
+        )
     _ensure_no_scalar_conflicts(target_account, source_account)
     remnawave_gateway, remote_users = await _collect_remnawave_users_for_merge(
         target_account=target_account,
@@ -1326,6 +1353,19 @@ async def merge_accounts(
         source_account_id=source_account.id,
         target_account_id=target_account.id,
     )
+    if source_devices:
+        if not target_devices or source_devices.extra_count:
+            if target_devices:
+                await session.delete(target_devices)
+                await session.flush()
+            source_devices.account_id = target_account.id
+        else:
+            await session.delete(source_devices)
+    for model in (DevicePurchase, DevicePrepayment, DevicePricingPeriod):
+        for device_record in await session.scalars(
+            select(model).where(model.account_id == source_account.id)
+        ):
+            device_record.account_id = target_account.id
     await _move_notifications(
         session,
         source_account_id=source_account.id,

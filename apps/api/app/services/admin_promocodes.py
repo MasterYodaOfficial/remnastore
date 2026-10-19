@@ -75,13 +75,15 @@ def _normalize_currency(value: str) -> str:
     return normalized
 
 
-def _normalize_plan_codes(plan_codes: Sequence[str] | None) -> list[str] | None:
+async def _normalize_plan_codes(
+    session: AsyncSession, plan_codes: Sequence[str] | None
+) -> list[str] | None:
     if plan_codes is None:
         return None
 
     normalized: list[str] = []
     seen: set[str] = set()
-    available_plan_codes = {plan.code for plan in get_subscription_plans()}
+    available_plan_codes = {plan.code for plan in await get_subscription_plans(session)}
     for raw_code in plan_codes:
         code = _normalize_required_text(raw_code, field_name="plan_code", max_length=64)
         if code in seen:
@@ -219,7 +221,7 @@ async def create_promo_campaign(
     normalized_name = _normalize_required_text(name, field_name="name", max_length=255)
     normalized_description = _normalize_optional_text(description, max_length=2000)
     normalized_currency = _normalize_currency(currency)
-    normalized_plan_codes = _normalize_plan_codes(plan_codes)
+    normalized_plan_codes = await _normalize_plan_codes(session, plan_codes)
     normalized_total_limit = _normalize_optional_positive_int(
         total_redemptions_limit,
         field_name="total_redemptions_limit",
@@ -348,7 +350,7 @@ async def update_promo_campaign(
     normalized_name = _normalize_required_text(name, field_name="name", max_length=255)
     normalized_description = _normalize_optional_text(description, max_length=2000)
     normalized_currency = _normalize_currency(currency)
-    normalized_plan_codes = _normalize_plan_codes(plan_codes)
+    normalized_plan_codes = await _normalize_plan_codes(session, plan_codes)
     normalized_total_limit = _normalize_optional_positive_int(
         total_redemptions_limit,
         field_name="total_redemptions_limit",

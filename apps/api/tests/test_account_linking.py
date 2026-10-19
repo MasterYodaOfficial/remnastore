@@ -10,6 +10,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from plan_fixtures import seed_subscription_plans
+
 from app.api.dependencies import get_current_account
 from app.core.config import settings
 from app.db.base import Base
@@ -165,6 +167,7 @@ class AccountLinkingFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await seed_subscription_plans(conn)
 
         import app.services.cache as cache_module
 

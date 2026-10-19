@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches:
       - dev
@@ -11,6 +12,28 @@ permissions:
   contents: read
 
 jobs:
+  release-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate Russian release description
+        env:
+          CHECK_RELEASE_BASE: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' }}
+        run: |
+          if [[ "$CHECK_RELEASE_BASE" == "true" ]]; then
+            python scripts/release.py check --base-ref origin/main
+          else
+            python scripts/release.py check
+          fi
+      - name: Test release publication and recovery
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+
   python-quality:
     runs-on: ubuntu-latest
     env:
@@ -137,3 +160,15 @@ jobs:
 
       - name: Build admin
         run: npm run build
+
+  docker-release:
+    needs: [release-quality, python-quality, web-quality, admin-quality]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      publish: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

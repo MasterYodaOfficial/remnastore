@@ -15,9 +15,16 @@ import {
 } from 'lucide-react';
 import { PromoRedeemCard, type PromoRedeemMessage } from './PromoRedeemCard';
 import { ThemeToggle } from './ThemeToggle';
+import { DevicesPanel } from './DevicesPanel';
 import { t } from '../../lib/i18n';
 
 interface SettingsPageProps {
+  apiBase?: string;
+  accessToken?: string | null;
+  balance?: number;
+  onDevicesChanged?: () => Promise<unknown>;
+  onTopUp?: () => void;
+  onConnectDevice?: () => void;
   theme: 'light' | 'dark';
   onThemeChange: (theme: 'light' | 'dark') => void;
   onLogout: () => void;
@@ -73,6 +80,7 @@ function TelegramIcon(props: React.SVGProps<SVGSVGElement>) {
 }
 
 export function SettingsPage({
+  apiBase = "", accessToken, balance = 0, onDevicesChanged, onTopUp, onConnectDevice,
   theme,
   onThemeChange,
   onLogout,
@@ -372,6 +380,11 @@ export function SettingsPage({
           </div>
         </div>
       </div>
+
+      {accessToken && onDevicesChanged && onTopUp && onConnectDevice && (
+        <DevicesPanel apiBase={apiBase} accessToken={accessToken} balance={balance}
+          onChanged={onDevicesChanged} onTopUp={onTopUp} onConnect={onConnectDevice} />
+      )}
 
       {onPromoCodeChange && onRedeemPromo ? (
         <PromoRedeemCard

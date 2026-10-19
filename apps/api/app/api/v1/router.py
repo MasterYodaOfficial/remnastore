@@ -18,6 +18,7 @@ from app.api.v1.endpoints.payments import router as payments_router
 from app.api.v1.endpoints.promos import router as promos_router
 from app.api.v1.endpoints.referrals import router as referrals_router
 from app.api.v1.endpoints.subscriptions import router as subscriptions_router
+from app.api.v1.endpoints.devices import router as devices_router
 from app.api.v1.endpoints.users import router as users_router
 from app.api.v1.endpoints.withdrawals import router as withdrawals_router
 from app.api.v1.endpoints.webapp import router as webapp_router
@@ -41,6 +42,7 @@ protected_router.include_router(
 )
 protected_router.include_router(payments_router, prefix="/payments", tags=["payments"])
 protected_router.include_router(promos_router, prefix="/promos", tags=["promos"])
+protected_router.include_router(devices_router, prefix="/devices", tags=["devices"])
 protected_router.include_router(
     referrals_router, prefix="/referrals", tags=["referrals"]
 )

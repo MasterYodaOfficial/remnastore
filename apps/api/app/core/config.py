@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     app_name: str = "remnastore-api"
     app_version: str = "0.1.0"
+    app_revision: str = "unknown"
     log_level: str = "INFO"
     log_format: str = Field(default="text", validation_alias="LOG_FORMAT")
     log_to_file: bool = Field(default=False, validation_alias="LOG_TO_FILE")
