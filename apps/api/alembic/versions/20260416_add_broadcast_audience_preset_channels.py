@@ -7,8 +7,6 @@ Create Date: 2026-04-16
 
 from __future__ import annotations
 
-import json
-
 import sqlalchemy as sa
 from alembic import op
 
@@ -30,26 +28,25 @@ def upgrade() -> None:
     if not inspector.has_table("broadcast_audience_presets"):
         return
 
-    existing_columns = _get_column_names(inspector, "broadcast_audience_presets")
+    existing_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("broadcast_audience_presets")
+    }
     if "channels" not in existing_columns:
         op.add_column(
             "broadcast_audience_presets",
             sa.Column("channels", sa.JSON(), nullable=True),
         )
 
-    default_channels = json.dumps(["in_app"])
+    presets = sa.table("broadcast_audience_presets", sa.column("channels", sa.JSON()))
     op.execute(
-        sa.text(
-            "UPDATE broadcast_audience_presets "
-            "SET channels = CAST(:default_channels AS JSON) "
-            "WHERE channels IS NULL"
-        ).bindparams(default_channels=default_channels)
+        presets.update().where(presets.c.channels.is_(None)).values(channels=["in_app"])
     )
-    op.alter_column(
-        "broadcast_audience_presets",
-        "channels",
-        nullable=False,
-    )
+    if "channels" not in existing_columns or existing_columns["channels"]["nullable"]:
+        # SQLite versions used by CI need table recreation to change nullability.
+        # On PostgreSQL the same batch operation emits a normal ALTER COLUMN.
+        with op.batch_alter_table("broadcast_audience_presets") as batch_op:
+            batch_op.alter_column("channels", existing_type=sa.JSON(), nullable=False)
 
 
 def downgrade() -> None:
