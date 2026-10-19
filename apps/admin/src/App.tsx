@@ -5790,6 +5790,9 @@ export default function App() {
           <span className="eyebrow">{t("admin.dashboard.heroEyebrow")}</span>
           <h1>{t("admin.dashboard.heroTitle")}</h1>
           <p>{t("admin.dashboard.heroDescription")}</p>
+          <small title={import.meta.env.VITE_APP_REVISION || "unknown"}>
+            {t("admin.common.releaseVersion", { version: import.meta.env.VITE_APP_VERSION || "dev" })}
+          </small>
         </div>
         <div className="hero-side">
           <div className="hero-blade" aria-hidden="true">

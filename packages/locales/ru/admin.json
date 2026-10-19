@@ -26,6 +26,7 @@
       "withdrawals": "Выводы"
     },
     "common": {
+      "releaseVersion": "Версия админки: {version}",
       "noData": "Нет данных",
       "invalidDate": "Некорректная дата",
       "notSpecified": "Не указано",

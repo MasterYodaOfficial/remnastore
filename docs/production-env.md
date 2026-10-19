@@ -133,12 +133,15 @@ BOT_WEBHOOK_PATH=/bot/webhook
 По умолчанию compose тянет публичные образы:
 
 - `DOCKERHUB_REPOSITORY=masteryodaofficial/remnastorepy`
-- `API_IMAGE_TAG=api-latest`
-- `BOT_IMAGE_TAG=bot-latest`
-- `WEB_IMAGE_TAG=web-latest`
-- `ADMIN_IMAGE_TAG=admin-latest`
+- `REMNASTORE_VERSION=latest` — последний опубликованный выпуск всех сервисов
 
-Если нужно зафиксировать конкретный релиз, меняйте теги в `.env`.
+Для фиксации выпуска задайте `REMNASTORE_VERSION=1.0.0`. Compose выберет
+`api-1.0.0`, `bot-1.0.0`, `web-1.0.0` и `admin-1.0.0`; фоновые задачи используют
+тот же образ, что API. Берите Compose из вложений соответствующего GitHub Release.
+
+Старые `API_IMAGE_TAG`, `BOT_IMAGE_TAG`, `WEB_IMAGE_TAG`, `ADMIN_IMAGE_TAG`
+поддерживаются и имеют приоритет. Удалите или закомментируйте их, чтобы версия
+регулировалась одним параметром. Не заменяйте действующий `.env` шаблоном.
 
 ## Что обычно можно не менять на первом запуске
 

@@ -20,8 +20,8 @@
 
 ```bash
 mkdir -p /opt/remnastore && cd /opt/remnastore
-curl -fsSL -o compose.yml https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/compose.yml
-curl -fsSL -o .env.example https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/.env.example
+curl -fsSL -o compose.yml https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/compose.yml
+curl -fsSL -o .env.example https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/env.example
 cp .env.example .env
 nano .env
 docker compose pull
@@ -157,9 +157,14 @@ BOT_WEBHOOK_PATH=/bot/webhook
 
 ## Обновление проекта
 
+Сначала прочитайте описание выпуска и сделайте резервную копию PostgreSQL.
+При `REMNASTORE_VERSION=latest` команды ниже устанавливают последний
+опубликованный выпуск. При фиксированной версии используйте файлы из вложений
+этой версии, как показано ниже в разделе фиксации релиза.
+
 ```bash
 cd /opt/remnastore
-curl -fsSL -o compose.yml https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/compose.yml
+curl -fsSL -o compose.yml https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/compose.yml
 docker compose pull
 docker compose up -d
 docker compose logs -f --tail=100
@@ -168,7 +173,7 @@ docker compose logs -f --tail=100
 Если в новой версии появились дополнительные переменные:
 
 ```bash
-curl -fsSL -o .env.example https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/.env.example
+curl -fsSL -o .env.example https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/env.example
 ```
 
 После этого перенесите недостающие ключи в свой `.env`.
@@ -228,14 +233,41 @@ docker compose --profile tools run --rm legacy-migration --apply-db \
 
 ## Фиксация конкретного релиза
 
-Если не хотите всегда тянуть `latest`, задайте в `.env`:
+Одна настройка в `.env` задаёт версию API, бота, кабинета, админки и всех
+worker-сервисов:
 
 ```env
-API_IMAGE_TAG=api-<tag>
-BOT_IMAGE_TAG=bot-<tag>
-WEB_IMAGE_TAG=web-<tag>
-ADMIN_IMAGE_TAG=admin-<tag>
+REMNASTORE_VERSION=1.0.0
 ```
+
+Для автоматического выбора последнего выпуска используйте `latest`.
+Фактические теги в одном Docker Hub репозитории имеют префикс компонента:
+`api-1.0.0`, `bot-1.0.0`, `web-1.0.0`, `admin-1.0.0` или соответствующие `*-latest`.
+
+Удалите или закомментируйте старые `API_IMAGE_TAG`, `BOT_IMAGE_TAG`, `WEB_IMAGE_TAG`
+и `ADMIN_IMAGE_TAG`: индивидуальные настройки имеют приоритет над общей версией.
+
+Compose и пример переменных берите из того же релиза:
+
+```bash
+cd /opt/remnastore
+curl -fsSL -o compose.yml https://github.com/MasterYodaOfficial/remnastore/releases/download/v1.0.0/compose.yml
+curl -fsSL -o .env.example https://github.com/MasterYodaOfficial/remnastore/releases/download/v1.0.0/env.example
+# Установите REMNASTORE_VERSION=1.0.0 в существующем .env.
+docker compose pull && docker compose up -d --wait
+```
+
+Действующий `.env` с секретами сохраняется. Вложения `VERSION` и `images.json`
+содержат номер, SHA коммита и digest каждого образа. Версия и SHA также доступны
+в `/api/v1/health`, версия админки — в её шапке.
+
+Номерные образы сохраняются для повторной установки. Возврат на старый образ
+не отменяет миграции БД: откат после изменения схемы требует совместимой БД
+или восстановления резервной копии.
+
+Русское описание публикуется автоматически из `releases/<версия>.md` после
+успешного CI в `main`. Подготовка следующего выпуска описана
+в [releases/README.md](../releases/README.md).
 
 ## Что проверить после запуска
 

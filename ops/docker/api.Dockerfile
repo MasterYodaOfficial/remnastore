@@ -19,4 +19,11 @@ COPY scripts/legacy_migration.py ./scripts/legacy_migration.py
 COPY ops/docker/api.entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+ARG APP_VERSION=dev
+ARG APP_REVISION=unknown
+ENV APP_VERSION=${APP_VERSION} APP_REVISION=${APP_REVISION}
+LABEL org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.revision=${APP_REVISION} \
+      org.opencontainers.image.source="https://github.com/MasterYodaOfficial/remnastore"
+
 CMD ["/app/entrypoint.sh"]
