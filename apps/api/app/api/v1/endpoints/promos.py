@@ -38,8 +38,8 @@ async def quote_plan_promo_effect(
     current_account: Account = Depends(get_current_account),
 ) -> PromoPlanQuoteResponse:
     try:
-        base_amount = resolve_plan_checkout_amount(
-            plan_code=plan_code, currency=payload.currency.upper()
+        base_amount = await resolve_plan_checkout_amount(
+            session, plan_code=plan_code, currency=payload.currency.upper()
         )
         quote = await quote_plan_promo(
             session,

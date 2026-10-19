@@ -446,7 +446,7 @@ async def _resolve_latest_paid_device_limit_from_grants(
     if plan_code is None:
         return resolve_plan_device_limit(None)
     try:
-        plan = get_subscription_plan(plan_code)
+        plan = await get_subscription_plan(session, plan_code)
     except SubscriptionPlanError:
         return resolve_plan_device_limit(None)
     return resolve_plan_device_limit(plan)

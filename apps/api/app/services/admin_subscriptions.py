@@ -219,7 +219,7 @@ async def grant_subscription_manually(
     idempotency_key: str,
     gateway_factory: GatewayFactory | None = None,
 ) -> AdminSubscriptionGrantResult:
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     normalized_comment = _normalize_required_comment(comment)
     normalized_idempotency_key = _normalize_required_text(
         idempotency_key,
@@ -302,7 +302,7 @@ async def grant_subscription_manually(
             account,
             source=PurchaseSource.ADMIN,
             target_expires_at=target_expires_at,
-            plan_code=plan.code,
+            hwid_device_limit=resolve_plan_device_limit(plan),
             gateway_factory=gateway_factory or get_remnawave_gateway,
         )
     except RemnawaveSyncError:

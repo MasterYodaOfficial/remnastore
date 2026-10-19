@@ -36,19 +36,22 @@ def _serialize_subscription_plan(plan) -> AdminSubscriptionPlanResponse:
 
 @router.get("", response_model=list[AdminSubscriptionPlanResponse])
 async def list_subscription_plans(
+    session: AsyncSession = Depends(get_session),
     _: Admin = Depends(get_current_admin),
 ) -> list[AdminSubscriptionPlanResponse]:
-    plans = await list_admin_subscription_plans()
+    plans = await list_admin_subscription_plans(session)
     return [_serialize_subscription_plan(plan) for plan in plans]
 
 
 @router.post("", response_model=AdminSubscriptionPlanResponse)
 async def create_subscription_plan(
     payload: AdminSubscriptionPlanCreateRequest,
+    session: AsyncSession = Depends(get_session),
     _: Admin = Depends(get_current_admin),
 ) -> AdminSubscriptionPlanResponse:
     try:
         plan = await create_admin_subscription_plan(
+            session,
             code=payload.code,
             name=payload.name,
             price_rub=payload.price_rub,
@@ -72,10 +75,12 @@ async def create_subscription_plan(
 async def update_subscription_plan(
     payload: AdminSubscriptionPlanUpdateRequest,
     plan_code: str = Path(..., min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
     _: Admin = Depends(get_current_admin),
 ) -> AdminSubscriptionPlanResponse:
     try:
         plan = await update_admin_subscription_plan(
+            session,
             plan_code,
             name=payload.name,
             price_rub=payload.price_rub,

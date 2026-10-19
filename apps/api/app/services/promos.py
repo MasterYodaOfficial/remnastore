@@ -362,7 +362,7 @@ async def quote_plan_promo(
     currency: str,
     code: str,
 ) -> PromoPlanQuote:
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     campaign, promo_code = await _load_validated_promo_for_context(
         session,
         account=account,
@@ -713,8 +713,10 @@ async def redeem_promo_code(
     )
 
 
-def resolve_plan_checkout_amount(*, plan_code: str, currency: str) -> int:
-    plan = get_subscription_plan(plan_code)
+async def resolve_plan_checkout_amount(
+    session: AsyncSession, *, plan_code: str, currency: str
+) -> int:
+    plan = await get_subscription_plan(session, plan_code)
     if currency == "RUB":
         return plan.price_rub
     if currency == "XTR":

@@ -391,7 +391,7 @@ async def purchase_subscription_with_wallet(
             await session.refresh(account)
             return SubscriptionStateResponse.from_account(account)
 
-    plan = get_subscription_plan(plan_code)
+    plan = await get_subscription_plan(session, plan_code)
     quote = await quote_plan_promo(
         session,
         account=account,

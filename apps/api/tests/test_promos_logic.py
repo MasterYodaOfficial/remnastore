@@ -2,6 +2,8 @@ import unittest
 import uuid
 from unittest.mock import patch
 
+from plan_fixtures import PLAN_1M
+
 from app.db.models import PromoEffectType, PromoRedemption
 from app.services.promos import (
     PromoConflictError,
@@ -147,19 +149,34 @@ class PromoLogicUnitTests(unittest.TestCase):
             )
         self.assertEqual(captured.exception.code, "idempotency_effect_conflict")
 
-    def test_resolve_plan_checkout_amount_supports_rub_and_stars(self) -> None:
+
+class PromoCheckoutAmountTests(unittest.IsolatedAsyncioTestCase):
+    @patch("app.services.promos.get_subscription_plan", return_value=PLAN_1M)
+    async def test_resolve_plan_checkout_amount_supports_rub_and_stars(
+        self, _get_plan
+    ) -> None:
         self.assertGreater(
-            resolve_plan_checkout_amount(plan_code="plan_1m", currency="RUB"), 0
+            await resolve_plan_checkout_amount(
+                None, plan_code="plan_1m", currency="RUB"
+            ),
+            0,
         )
         self.assertGreater(
-            resolve_plan_checkout_amount(plan_code="plan_1m", currency="XTR"), 0
+            await resolve_plan_checkout_amount(
+                None, plan_code="plan_1m", currency="XTR"
+            ),
+            0,
         )
 
-    def test_resolve_plan_checkout_amount_rejects_unsupported_or_missing_stars_price(
+    @patch("app.services.promos.get_subscription_plan", return_value=PLAN_1M)
+    async def test_resolve_plan_checkout_amount_rejects_unsupported_or_missing_stars_price(
         self,
+        _get_plan,
     ) -> None:
         with self.assertRaises(PromoValidationError) as captured:
-            resolve_plan_checkout_amount(plan_code="plan_1m", currency="USD")
+            await resolve_plan_checkout_amount(
+                None, plan_code="plan_1m", currency="USD"
+            )
         self.assertEqual(captured.exception.code, "unsupported_currency")
 
         with patch(
@@ -167,7 +184,9 @@ class PromoLogicUnitTests(unittest.TestCase):
             return_value=type("Plan", (), {"price_rub": 100, "price_stars": None})(),
         ):
             with self.assertRaises(Exception) as captured:
-                resolve_plan_checkout_amount(plan_code="plan_1m", currency="XTR")
+                await resolve_plan_checkout_amount(
+                    None, plan_code="plan_1m", currency="XTR"
+                )
 
         self.assertEqual(
             getattr(captured.exception, "code", None), "stars_price_not_configured"

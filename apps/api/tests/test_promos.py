@@ -14,6 +14,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from plan_fixtures import PLAN_1M, seed_subscription_plans
+
 from app.api.dependencies import get_current_account
 from app.db.base import Base
 from app.db.models import (
@@ -42,11 +44,9 @@ from app.domain.payments import (
 )
 from app.integrations.remnawave.client import RemnawaveUser
 from app.main import create_app
-from app.services.plans import get_subscription_plan
 from app.services.purchases import PurchaseSource, RemnawaveSyncError
 from app.services import promos as promos_service
 
-PLAN_1M = get_subscription_plan("plan_1m")
 PLAN_1M_PRICE_RUB = PLAN_1M.price_rub
 PLAN_1M_DURATION_DAYS = PLAN_1M.duration_days
 
@@ -142,6 +142,7 @@ class PromoFlowTests(unittest.IsolatedAsyncioTestCase):
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await seed_subscription_plans(conn)
 
         import app.services.cache as cache_module
         import app.services.payments as payments_service

@@ -111,6 +111,33 @@ curl -fsSL -o .env.example https://raw.githubusercontent.com/MasterYodaOfficial/
 
 После этого перенесите недостающие ключи в свой `.env`.
 
+## Переход на хранение тарифов в БД
+
+Начиная с миграции `20261019_subscription_plans`, каталог тарифов хранится в
+PostgreSQL, в таблице `subscription_plans`. Управление остаётся в разделе тарифов
+админки. Изменения применяются без перезапуска и сохраняются при замене контейнера.
+
+При первом запуске миграция переносит каталог из
+`/app/app/config/subscription-plans.json`. Затем приложение работает только с БД.
+При последующих обновлениях тарифы из образа не перезаписывают записи в БД.
+
+Если вы меняли тарифы в админке старой версии, сохраните JSON **до удаления или
+пересоздания старого контейнера**, чтобы перенести именно ваши цены и настройки:
+
+```bash
+cd /opt/remnastore
+docker compose cp api:/app/app/config/subscription-plans.json ./subscription-plans.backup.json
+docker compose pull
+docker compose stop api worker notifications-worker broadcast-worker
+docker compose run --rm \
+  -v "$PWD/subscription-plans.backup.json:/app/app/config/subscription-plans.json:ro" \
+  api uv run --no-sync alembic -c alembic.ini upgrade head
+docker compose up -d
+```
+
+Если каталог не менялся, достаточно обычного обновления: миграция автоматически
+импортирует начальные тарифы. После перехода JSON редактировать больше не нужно.
+
 ## Перенос старой SQLite
 
 Если нужно перетащить пользователей из старой SQLite базы, исходники проекта на сервере не нужны. В `api`-образ уже встроен migration tool.

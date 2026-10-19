@@ -41,9 +41,11 @@ router = APIRouter()
 
 
 @router.get("/plans", response_model=list[SubscriptionPlanResponse])
-async def list_subscription_plans() -> list[SubscriptionPlanResponse]:
+async def list_subscription_plans(
+    session: AsyncSession = Depends(get_session),
+) -> list[SubscriptionPlanResponse]:
     try:
-        plans = get_subscription_plans()
+        plans = await get_subscription_plans(session)
     except SubscriptionPlanError as exc:
         raise api_error_from_exception(
             status.HTTP_503_SERVICE_UNAVAILABLE, exc

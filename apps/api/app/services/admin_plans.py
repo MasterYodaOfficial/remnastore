@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,11 +14,14 @@ from app.services.plans import (
 )
 
 
-async def list_admin_subscription_plans() -> list[SubscriptionPlan]:
-    return list(await asyncio.to_thread(get_subscription_plans))
+async def list_admin_subscription_plans(
+    session: AsyncSession,
+) -> list[SubscriptionPlan]:
+    return list(await get_subscription_plans(session))
 
 
 async def create_admin_subscription_plan(
+    session: AsyncSession,
     *,
     code: str,
     name: str,
@@ -31,8 +32,8 @@ async def create_admin_subscription_plan(
     device_limit: int | None,
     popular: bool,
 ) -> SubscriptionPlan:
-    return await asyncio.to_thread(
-        create_subscription_plan,
+    plan = await create_subscription_plan(
+        session,
         code=code,
         name=name,
         price_rub=price_rub,
@@ -42,9 +43,12 @@ async def create_admin_subscription_plan(
         device_limit=device_limit,
         popular=popular,
     )
+    await session.commit()
+    return plan
 
 
 async def update_admin_subscription_plan(
+    session: AsyncSession,
     plan_code: str,
     *,
     name: str,
@@ -55,8 +59,8 @@ async def update_admin_subscription_plan(
     device_limit: int | None,
     popular: bool,
 ) -> SubscriptionPlan:
-    return await asyncio.to_thread(
-        update_subscription_plan,
+    plan = await update_subscription_plan(
+        session,
         plan_code,
         name=name,
         price_rub=price_rub,
@@ -66,6 +70,8 @@ async def update_admin_subscription_plan(
         device_limit=device_limit,
         popular=popular,
     )
+    await session.commit()
+    return plan
 
 
 async def delete_admin_subscription_plan(
@@ -104,4 +110,5 @@ async def delete_admin_subscription_plan(
                 code="admin_plan_in_use",
             )
 
-    await asyncio.to_thread(delete_subscription_plan, plan_code)
+    await delete_subscription_plan(session, plan_code)
+    await session.commit()
