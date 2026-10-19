@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DashboardCard } from "./components/DashboardCard";
 import { DetailFact } from "./components/DetailFact";
 import { parseAdminApiErrorPayload } from "./lib/api-errors";
@@ -2112,6 +2112,10 @@ export default function App() {
   const [broadcastTotal, setBroadcastTotal] = useState(0);
   const [selectedBroadcastId, setSelectedBroadcastId] = useState<number | null>(null);
   const [broadcastSelectionMode, setBroadcastSelectionMode] = useState<"existing" | "new">("existing");
+  const broadcastSelectionRef = useRef({ id: selectedBroadcastId, mode: broadcastSelectionMode, token });
+  useLayoutEffect(() => {
+    broadcastSelectionRef.current = { id: selectedBroadcastId, mode: broadcastSelectionMode, token };
+  }, [broadcastSelectionMode, selectedBroadcastId, token]);
   const [selectedBroadcast, setSelectedBroadcast] = useState<AdminBroadcast | null>(null);
   const [broadcastsLoading, setBroadcastsLoading] = useState(false);
   const [broadcastSubmitting, setBroadcastSubmitting] = useState(false);
@@ -3089,13 +3093,17 @@ export default function App() {
           "/api/v1/admin/broadcasts?limit=50&offset=0",
           activeToken,
         );
+        if (broadcastSelectionRef.current.token !== activeToken) {
+          return [];
+        }
+        const selectionMode = broadcastSelectionRef.current.mode;
         setBroadcastItems(response.items);
         setBroadcastTotal(response.total);
         setSelectedBroadcastId((currentSelection) =>
-          response.items.some((item) => item.id === currentSelection)
-            ? currentSelection
-            : broadcastSelectionMode === "new"
-              ? null
+          selectionMode === "new"
+            ? null
+            : response.items.some((item) => item.id === currentSelection)
+              ? currentSelection
               : (response.items[0]?.id ?? null),
         );
         return response.items;
@@ -3110,7 +3118,7 @@ export default function App() {
         setBroadcastsLoading(false);
       }
     },
-    [broadcastSelectionMode],
+    [],
   );
 
   const loadBroadcastAudiencePresets = useCallback(
@@ -3145,11 +3153,18 @@ export default function App() {
 
   const loadBroadcastDetail = useCallback(
     async (broadcastId: number, activeToken: string): Promise<AdminBroadcast | null> => {
+      const selection = broadcastSelectionRef.current;
+      const isCurrentSelection = () =>
+        broadcastSelectionRef.current === selection &&
+        selection.id === broadcastId && selection.mode === "existing" && selection.token === activeToken;
       try {
         const broadcast = await adminFetch<AdminBroadcast>(
           `/api/v1/admin/broadcasts/${broadcastId}`,
           activeToken,
         );
+        if (!isCurrentSelection()) {
+          return null;
+        }
         setSelectedBroadcast(broadcast);
         setBroadcastEstimate({
           channels: broadcast.channels,
@@ -3161,6 +3176,9 @@ export default function App() {
         setBroadcastEstimateError(null);
         return broadcast;
       } catch (fetchError) {
+        if (!isCurrentSelection()) {
+          return null;
+        }
         setSelectedBroadcast(null);
         setBroadcastEstimate(null);
         setError(fetchError instanceof Error ? fetchError.message : "Не удалось загрузить черновик рассылки");

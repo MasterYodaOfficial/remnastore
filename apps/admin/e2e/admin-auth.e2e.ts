@@ -306,31 +306,66 @@ test.describe("admin browser smoke", () => {
       .toBeNull();
   });
 
-  test("keeps new broadcast draft form values while typing", async ({ page }) => {
-    await mockAdminSession(page);
-    await page.goto("/");
+  for (const pendingRequest of ["list", "detail"] as const) {
+    test(`keeps a new broadcast draft when an earlier ${pendingRequest} response arrives`, async ({ page }) => {
+      await mockAdminSession(page);
+      let releaseResponse!: () => void;
+      let markRequested!: () => void;
+      const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+      const requested = new Promise<void>((resolve) => { markRequested = resolve; });
+      const endpoint = pendingRequest === "list"
+        ? "**/api/v1/admin/broadcasts?*"
+        : "**/api/v1/admin/broadcasts/1";
+      let firstRequest = true;
+      await page.route(endpoint, async (route) => {
+        if (firstRequest) {
+          firstRequest = false;
+          markRequested();
+          await responseGate;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(pendingRequest === "list" ? broadcastListResponse : broadcastListResponse.items[0]),
+        });
+      });
+      await page.goto("/");
 
-    await page.getByLabel("Логин").fill("root@example.com");
-    await page.getByLabel("Пароль").fill("test-password");
-    await page.getByRole("button", { name: "Войти" }).click();
+      await page.getByLabel("Логин").fill("root@example.com");
+      await page.getByLabel("Пароль").fill("test-password");
+      await page.getByRole("button", { name: "Войти" }).click();
 
-    await page.getByRole("button", { name: "Рассылки" }).click();
-    await expect(page.getByRole("heading", { name: "Кампании и аудитория" })).toBeVisible();
+      await page.getByRole("button", { name: "Рассылки" }).click();
+      await expect(page.getByRole("heading", { name: "Кампании и аудитория" })).toBeVisible();
+      await requested;
 
-    await page.getByRole("button", { name: "Новый черновик" }).click();
+      await page.getByRole("button", { name: "Новый черновик" }).click();
 
-    const nameInput = page.getByLabel("Внутреннее название");
-    const titleInput = page.getByLabel("Заголовок");
+      const nameInput = page.getByLabel("Внутреннее название");
+      const titleInput = page.getByLabel("Заголовок");
 
-    await nameInput.fill("Весенняя акция");
-    await titleInput.fill("Специальное предложение");
+      await nameInput.fill("Весенняя акция");
+      await titleInput.fill("Специальное предложение");
 
-    await expect(nameInput).toHaveValue("Весенняя акция");
-    await expect(titleInput).toHaveValue("Специальное предложение");
+      await expect(nameInput).toHaveValue("Весенняя акция");
+      await expect(titleInput).toHaveValue("Специальное предложение");
 
-    await page.waitForTimeout(700);
+      const responseReceived = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return url.pathname === (pendingRequest === "list"
+          ? "/api/v1/admin/broadcasts"
+          : "/api/v1/admin/broadcasts/1");
+      });
+      releaseResponse();
+      const response = await responseReceived;
+      await response.finished();
+      // Let React commit the released response before checking the edited form.
+      await page.evaluate(() => new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }));
 
-    await expect(nameInput).toHaveValue("Весенняя акция");
-    await expect(titleInput).toHaveValue("Специальное предложение");
-  });
+      await expect(nameInput).toHaveValue("Весенняя акция");
+      await expect(titleInput).toHaveValue("Специальное предложение");
+    });
+  }
 });
