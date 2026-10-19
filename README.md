@@ -19,8 +19,8 @@ RemnaStore состоит из нескольких сервисов:
 
 ```bash
 mkdir -p /opt/remnastore && cd /opt/remnastore
-curl -fsSL -o compose.yml https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/compose.yml
-curl -fsSL -o .env.example https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/.env.example
+curl -fsSL -o compose.yml https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/compose.yml
+curl -fsSL -o .env.example https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/env.example
 cp .env.example .env
 nano .env
 docker compose pull
@@ -48,13 +48,22 @@ docker compose logs -f
 
 ```bash
 cd /opt/remnastore
-curl -fsSL -o compose.yml https://raw.githubusercontent.com/MasterYodaOfficial/remnastore/main/deploy/compose.yml
+curl -fsSL -o compose.yml https://github.com/MasterYodaOfficial/remnastore/releases/latest/download/compose.yml
 docker compose pull
 docker compose up -d
 docker compose logs -f --tail=100
 ```
 
 Если в новой версии появились дополнительные переменные, скачайте свежий `.env.example` и перенесите недостающие ключи в свой `.env`.
+
+В `.env` параметр `REMNASTORE_VERSION=latest` выбирает последний выпуск для всех
+сервисов. Для фиксации задайте `REMNASTORE_VERSION=1.0.0` и скачайте Compose из
+вложений именно `v1.0.0`. Старые `API_IMAGE_TAG`, `BOT_IMAGE_TAG`, `WEB_IMAGE_TAG`
+и `ADMIN_IMAGE_TAG` имеют приоритет: удалите или закомментируйте их для общей версии.
+Перед обновлением сохраните БД; подробности — в [инструкции](docs/deploy-vds.md).
+
+Номер выпуска и русское описание готовятся в PR. Порядок публикации:
+[releases/README.md](releases/README.md).
 
 ## Перенос старой SQLite
 

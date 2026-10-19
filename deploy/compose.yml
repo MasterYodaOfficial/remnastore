@@ -7,10 +7,10 @@ x-default-logging: &default-logging
     max-file: "5"
 
 x-images:
-  api: &api-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${API_IMAGE_TAG:-api-latest}
-  bot: &bot-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${BOT_IMAGE_TAG:-bot-latest}
-  web: &web-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${WEB_IMAGE_TAG:-web-latest}
-  admin: &admin-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${ADMIN_IMAGE_TAG:-admin-latest}
+  api: &api-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${API_IMAGE_TAG:-api-${REMNASTORE_VERSION:-latest}}
+  bot: &bot-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${BOT_IMAGE_TAG:-bot-${REMNASTORE_VERSION:-latest}}
+  web: &web-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${WEB_IMAGE_TAG:-web-${REMNASTORE_VERSION:-latest}}
+  admin: &admin-image ${DOCKERHUB_REPOSITORY:-masteryodaofficial/remnastorepy}:${ADMIN_IMAGE_TAG:-admin-${REMNASTORE_VERSION:-latest}}
 
 services:
   api:
