@@ -27,7 +27,6 @@ class SubscriptionPlan:
     features: tuple[str, ...]
     device_limit: int | None = None
     popular: bool = False
-    extra_device_price_rub: int | None = None
 
 
 def _plan_error(key: str) -> str:
@@ -100,7 +99,6 @@ def _to_plan(record: SubscriptionPlanRecord) -> SubscriptionPlan:
         features=tuple(record.features),
         device_limit=record.device_limit,
         popular=record.popular,
-        extra_device_price_rub=record.extra_device_price_rub,
     )
 
 
@@ -135,11 +133,8 @@ async def create_subscription_plan(
     features: Sequence[str],
     device_limit: int | None,
     popular: bool,
-    extra_device_price_rub: int | None = None,
 ) -> SubscriptionPlan:
     normalized_code = _validate_plan_code(code)
-    if extra_device_price_rub is not None and extra_device_price_rub <= 0:
-        raise SubscriptionPlanError("extra device price must be positive", code="admin_plan_validation_failed")
     normalized_name = _validate_plan_name(name)
     normalized_features = _validate_plan_features(features)
     if price_rub <= 0:
@@ -172,7 +167,6 @@ async def create_subscription_plan(
         features=normalized_features,
         device_limit=device_limit,
         popular=popular,
-        extra_device_price_rub=extra_device_price_rub,
     )
     sort_order = await session.scalar(
         select(func.max(SubscriptionPlanRecord.sort_order))
@@ -186,7 +180,6 @@ async def create_subscription_plan(
         features=list(new_plan.features),
         device_limit=new_plan.device_limit,
         popular=new_plan.popular,
-        extra_device_price_rub=new_plan.extra_device_price_rub,
         sort_order=0 if sort_order is None else sort_order + 1,
     )
     try:
@@ -211,10 +204,7 @@ async def update_subscription_plan(
     features: Sequence[str],
     device_limit: int | None,
     popular: bool,
-    extra_device_price_rub: int | None = None,
 ) -> SubscriptionPlan:
-    if extra_device_price_rub is not None and extra_device_price_rub <= 0:
-        raise SubscriptionPlanError("extra device price must be positive", code="admin_plan_validation_failed")
     normalized_name = _validate_plan_name(name)
     normalized_features = _validate_plan_features(features)
     if price_rub <= 0:
@@ -252,7 +242,6 @@ async def update_subscription_plan(
     record.features = list(normalized_features)
     record.device_limit = device_limit
     record.popular = popular
-    record.extra_device_price_rub = extra_device_price_rub
     await session.flush()
     return _to_plan(record)
 

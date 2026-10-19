@@ -60,7 +60,6 @@ async def list_subscription_plans(
             duration_days=plan.duration_days,
             features=list(plan.features),
             popular=plan.popular,
-            extra_device_price_rub=plan.extra_device_price_rub,
         )
         for plan in plans
     ]

@@ -34,7 +34,6 @@ class SubscriptionPlanRecord(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     price_rub: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     price_stars: Mapped[int | None] = mapped_column(BigInteger())
-    extra_device_price_rub: Mapped[int | None] = mapped_column(BigInteger())
     duration_days: Mapped[int] = mapped_column(Integer(), nullable=False)
     features: Mapped[list[str]] = mapped_column(JSON(), nullable=False)
     device_limit: Mapped[int | None] = mapped_column(Integer())

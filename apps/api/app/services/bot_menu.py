@@ -101,7 +101,6 @@ async def get_bot_plans(session: AsyncSession) -> BotPlanListResponse:
                 duration_days=plan.duration_days,
                 features=list(plan.features),
                 popular=plan.popular,
-            extra_device_price_rub=plan.extra_device_price_rub,
             )
             for plan in await get_subscription_plans(session)
         ]

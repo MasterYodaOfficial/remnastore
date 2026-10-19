@@ -31,7 +31,6 @@ async def create_admin_subscription_plan(
     features: list[str],
     device_limit: int | None,
     popular: bool,
-    extra_device_price_rub: int | None = None,
 ) -> SubscriptionPlan:
     plan = await create_subscription_plan(
         session,
@@ -43,7 +42,6 @@ async def create_admin_subscription_plan(
         features=features,
         device_limit=device_limit,
         popular=popular,
-        extra_device_price_rub=extra_device_price_rub,
     )
     await session.commit()
     return plan
@@ -60,7 +58,6 @@ async def update_admin_subscription_plan(
     features: list[str],
     device_limit: int | None,
     popular: bool,
-    extra_device_price_rub: int | None = None,
 ) -> SubscriptionPlan:
     plan = await update_subscription_plan(
         session,
@@ -72,7 +69,6 @@ async def update_admin_subscription_plan(
         features=features,
         device_limit=device_limit,
         popular=popular,
-        extra_device_price_rub=extra_device_price_rub,
     )
     await session.commit()
     return plan
