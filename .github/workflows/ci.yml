@@ -36,9 +36,24 @@ jobs:
 
   python-quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: remnastore_test
+          POSTGRES_USER: remnastore_test
+          POSTGRES_PASSWORD: local-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U remnastore_test -d remnastore_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       # API tests replace sessions per suite, but imports still need a parseable URL in CI.
       DATABASE_URL: sqlite+aiosqlite:///./ci-python-quality.sqlite3
+      TEST_POSTGRES_URL: postgresql+asyncpg://remnastore_test:local-ci-only@127.0.0.1:5432/remnastore_test
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
     steps:
       - name: Checkout repository
@@ -60,6 +75,9 @@ jobs:
 
       - name: Run ruff format check
         run: uv run --group dev ruff format --check apps/api apps/bot common scripts
+
+      - name: Run PostgreSQL subscription grant regression
+        run: PYTHONPATH=apps/api uv run --no-sync python -m unittest discover -s apps/api/tests -p 'test_subscription_grant_postgres.py'
 
       - name: Run Python tests
         run: ./scripts/test.sh all

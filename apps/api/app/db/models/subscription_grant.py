@@ -44,9 +44,11 @@ class SubscriptionGrant(Base):
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
         # PostgreSQL NOW() is the transaction start, which can precede the
         # calculated purchase window. Use the actual insert time for new grants.
-        default=lambda: datetime.now(UTC),
+        # This existing column stores UTC without timezone information.
+        default=lambda: datetime.now(UTC).replace(tzinfo=None),
         server_default=func.now(),
         nullable=False,
     )
