@@ -2,6 +2,7 @@ type PublicRuntimeConfigKey =
   | 'VITE_API_BASE_URL'
   | 'VITE_SUPABASE_URL'
   | 'VITE_SUPABASE_ANON_KEY'
+  | 'VITE_YANDEX_AUTH_ENABLED'
   | 'VITE_WEB_BRAND_NAME'
   | 'VITE_BROWSER_BRAND_NAME'
   | 'VITE_TELEGRAM_BOT_URL'
@@ -53,6 +54,10 @@ export const supabaseAnonKey = requireConfigValue(
   'VITE_SUPABASE_ANON_KEY',
   import.meta.env.VITE_SUPABASE_ANON_KEY
 )
+
+export const yandexAuthEnabled = readConfigValue(
+  'VITE_YANDEX_AUTH_ENABLED', import.meta.env.VITE_YANDEX_AUTH_ENABLED
+) === 'true'
 
 export const webBrandName =
   readConfigValue('VITE_WEB_BRAND_NAME', import.meta.env.VITE_WEB_BRAND_NAME) ??

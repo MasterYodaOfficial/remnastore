@@ -666,6 +666,7 @@ Frontend использует такие переменные:
 - `VITE_API_BASE_URL` — base URL backend API
 - `VITE_SUPABASE_URL` — URL проекта Supabase
 - `VITE_SUPABASE_ANON_KEY` — публичный anon key Supabase
+- `VITE_YANDEX_AUTH_ENABLED` — показывает «Войти с Яндекс ID» только при значении `true`; по умолчанию выключено
 - `VITE_WEB_BRAND_NAME` — runtime-бренд внутри интерфейса, если конкретный UI-элемент читает его
 - `VITE_BROWSER_BRAND_NAME` — бренд для `document.title` и названия вкладки браузера
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота для browser login entrypoint
@@ -680,6 +681,11 @@ Frontend использует такие переменные:
 ### Browser auth
 
 - `Google` через `Supabase Auth`
+- `Яндекс ID` через Supabase custom provider `custom:yandex`; перед включением
+  кнопки требуется настроить провайдер и backend-адаптер профиля.
+  Client Secret хранится только на сервере Auth, во frontend не передаётся.
+  Первый вход может потребовать подтверждения email письмом Supabase.
+  Подробности: [настройка Яндекс ID](../../docs/yandex-id.md).
 - можно использовать email/password и password reset
 - нельзя использовать `service_role` или `sb_secret_*` на фронте
 - redirect URL должны быть явно перечислены без лишних wildcard
