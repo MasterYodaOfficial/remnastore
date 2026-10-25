@@ -79,6 +79,14 @@ class ReleaseTests(unittest.TestCase):
         (self.root / "deploy/.env.example").write_text(
             "REMNASTORE_VERSION=latest\n", encoding="utf-8"
         )
+        (self.root / "docs").mkdir()
+        (self.root / "docs/yandex-id.md").write_text(
+            "# Настройка Яндекс ID\n", encoding="utf-8"
+        )
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/configure_yandex_auth.py").write_bytes(
+            b"# Configure the Yandex provider manually.\n"
+        )
         self.artifacts = self.root / "images"
         self.artifacts.mkdir()
         for component in tool.COMPONENTS:
@@ -155,8 +163,21 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.github.events, ["draft", "published"])
         self.assertEqual(
             set(self.github.uploads),
-            {"compose.yml", "env.example", "VERSION", "images.json"},
+            {
+                "compose.yml",
+                "env.example",
+                "VERSION",
+                "images.json",
+                "yandex-id.md",
+                "configure_yandex_auth.py",
+            },
         )
+        for name, path in {
+            "env.example": "deploy/.env.example",
+            "yandex-id.md": "docs/yandex-id.md",
+            "configure_yandex_auth.py": "scripts/configure_yandex_auth.py",
+        }.items():
+            self.assertEqual(self.github.uploads[name], (self.root / path).read_bytes())
         self.assertEqual(json.loads(self.github.uploads["images.json"])["images"], NEW)
         first_promotion = next(
             i for i, call in enumerate(self.calls) if "create" in call
