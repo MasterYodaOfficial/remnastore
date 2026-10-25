@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     database_url: str = ""
     redis_url: str = ""
+    yandex_oauth_client_id: str = ""
 
     remnawave_api_url: str = ""
     remnawave_api_token: str = ""

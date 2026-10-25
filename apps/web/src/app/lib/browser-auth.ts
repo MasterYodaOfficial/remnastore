@@ -12,6 +12,16 @@ type ResolvePendingSupabaseSessionOptions<T extends SessionLike> = {
 };
 
 const DEFAULT_OAUTH_SESSION_WAIT_MS = 4000;
+
+export function readOAuthCallbackError(href: string): 'verifyEmail' | 'cancelled' | 'failed' | null {
+  const url = new URL(href);
+  for (const params of [url.searchParams, new URLSearchParams(url.hash.slice(1))]) {
+    if (params.get('error_code') === 'provider_email_needs_verification') return 'verifyEmail';
+    if (params.get('error') === 'access_denied') return 'cancelled';
+    if (params.has('error') || params.has('error_code')) return 'failed';
+  }
+  return null;
+}
 const DEFAULT_OAUTH_SESSION_POLL_MS = 100;
 
 const delay = (ms: number) =>

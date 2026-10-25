@@ -49,6 +49,7 @@ import { buildSupportMailtoUrl } from './lib/support';
 import { normalizeReferralMetric, resolveReferralAmount } from './lib/referral-metrics';
 import {
   hasPendingSupabaseOAuthCallback,
+  readOAuthCallbackError,
   resolvePendingSupabaseSession,
 } from './lib/browser-auth';
 import {
@@ -1218,7 +1219,23 @@ function clearStoredTelegramAuth() {
   window.localStorage.removeItem(TELEGRAM_AUTH_STORAGE_KEY);
 }
 
+const initialOAuthError = typeof window === 'undefined' ? null : readOAuthCallbackError(window.location.href);
+
 export default function App() {
+  useEffect(() => {
+    if (!initialOAuthError) return;
+    const message = t(`web.login.toasts.oauth.${initialOAuthError}`);
+    if (initialOAuthError === 'verifyEmail') toast.info(message);
+    else toast.error(message);
+    const url = new URL(window.location.href);
+    const hash = new URLSearchParams(url.hash.slice(1));
+    for (const key of ['error', 'error_code', 'error_description']) {
+      url.searchParams.delete(key);
+      hash.delete(key);
+    }
+    if (url.hash.includes('error')) url.hash = hash.toString();
+    window.history.replaceState(window.history.state, '', url);
+  }, []);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isTelegramWebApp, setIsTelegramWebApp] = useState(false);

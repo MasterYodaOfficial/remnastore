@@ -86,7 +86,8 @@ jobs:
         run: ./scripts/coverage.sh api-critical --fail-under 70
 
   web-quality:
-    runs-on: ubuntu-latest
+    # Playwright 1.56.1 supports Ubuntu 24.04, not newer ubuntu-latest images.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/web
@@ -133,7 +134,8 @@ jobs:
         run: npm run build
 
   admin-quality:
-    runs-on: ubuntu-latest
+    # Keep browser dependencies on an OS supported by the pinned Playwright.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/admin

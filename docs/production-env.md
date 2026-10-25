@@ -61,6 +61,21 @@ BOT_WEBHOOK_PATH=/bot/webhook
 - `SUPABASE_URL = VITE_SUPABASE_URL`
 - `SUPABASE_ANON_KEY = VITE_SUPABASE_ANON_KEY`
 
+### Яндекс ID (опционально)
+
+- `YANDEX_OAUTH_CLIENT_ID` — Client ID приложения Яндекс для backend-адаптера
+  профиля. Без него адаптер выключен и возвращает 503.
+- `VITE_YANDEX_AUTH_ENABLED` — показывает кнопку Яндекс ID только при `true`;
+  по умолчанию `false`. В Docker передаётся в runtime-конфигурацию frontend.
+- Client Secret настраивается только в Supabase Auth, в frontend не передаётся.
+  Callback и провайдер `custom:yandex` настраиваются отдельно по
+  [инструкции Яндекс ID](yandex-id.md).
+
+Для локального Vite публичные настройки задаются в `apps/web/.env` или
+окружении процесса; корневой `.env` сам по себе не включает кнопку в Vite.
+Изменения production-конфигурации выполняются только по отдельной команде
+на деплой.
+
 ### Remnawave
 
 - `REMNAWAVE_API_URL`
