@@ -273,6 +273,7 @@ const APP_THEME_TOKENS = {
 
 interface BackendAccount {
   id: string;
+  auth_providers?: string[];
   telegram_id?: number | null;
   email?: string | null;
   display_name?: string | null;
@@ -392,6 +393,7 @@ interface BackendPaymentListItem {
   plan_code?: string | null;
   description?: string | null;
   confirmation_url?: string | null;
+  sbp_confirmation_url?: string | null;
   expires_at?: string | null;
   finalized_at?: string | null;
   created_at: string;
@@ -518,6 +520,7 @@ interface BackendTelegramReferralResult {
 
 interface User {
   id: string;
+  authProviders?: string[];
   name: string;
   email: string;
   telegram_id?: number | null;
@@ -655,6 +658,7 @@ function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User
 
   return {
     id: account.id,
+    authProviders: account.auth_providers ?? [],
     name,
     email: account.email || '',
     telegram_id: account.telegram_id ?? null,
@@ -834,6 +838,7 @@ function mapBackendPaymentItemToView(
     currency: payment.currency,
     providerPaymentId: payment.provider_payment_id,
     confirmationUrl: payment.confirmation_url ?? null,
+    sbpConfirmationUrl: payment.sbp_confirmation_url ?? null,
     status: payment.status as PendingPaymentView['status'],
     expiresAt: payment.expires_at ?? null,
     createdAt: payment.created_at,

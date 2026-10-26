@@ -22,6 +22,8 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.models import (
     Account,
+    AuthAccount,
+    AuthProvider,
     AccountEventLog,
     AccountStatus,
     LedgerEntry,
@@ -519,6 +521,38 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             [item.event_type for item in event_logs], ["subscription.trial.activated"]
         )
         self.assertEqual(event_logs[0].source, "bot")
+
+    async def test_bootstrap_lists_only_current_accounts_auth_providers(self):
+        account = await self._create_account(email=None)
+        other = await self._create_account(email="other@example.com")
+        self._current_account_id = account.id
+        async with self._session_factory() as session:
+            session.add_all(
+                [
+                    AuthAccount(
+                        account_id=account.id,
+                        provider=AuthProvider.VK,
+                        provider_uid="vk-user",
+                    ),
+                    AuthAccount(
+                        account_id=account.id,
+                        provider=AuthProvider.SUPABASE,
+                        provider_uid="supabase-user",
+                    ),
+                    AuthAccount(
+                        account_id=other.id,
+                        provider=AuthProvider.YANDEX,
+                        provider_uid="other-yandex-user",
+                    ),
+                ]
+            )
+            await session.commit()
+        response = await self.client.get("/api/v1/bootstrap/me")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertCountEqual(
+            response.json()["account"]["auth_providers"], ["vk", "supabase"]
+        )
+        self.assertNotIn("provider_uid", response.text)
 
     async def test_bootstrap_me_uses_local_snapshot_without_remnawave_call(
         self,

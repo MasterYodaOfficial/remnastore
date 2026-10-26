@@ -55,6 +55,7 @@ class PaymentIntentResponse(BaseModel):
     provider_payment_id: str
     external_reference: str | None = None
     confirmation_url: str | None = None
+    sbp_confirmation_url: str | None = None
     expires_at: datetime | None = None
     raw_payload: dict | None = None
 
@@ -67,6 +68,7 @@ class PaymentStatusResponse(BaseModel):
     currency: str
     provider_payment_id: str
     confirmation_url: str | None = None
+    sbp_confirmation_url: str | None = None
     expires_at: datetime | None = None
     finalized_at: datetime | None = None
 
@@ -84,6 +86,7 @@ class PaymentListItemResponse(BaseModel):
     plan_code: str | None = None
     description: str | None = None
     confirmation_url: str | None = None
+    sbp_confirmation_url: str | None = None
     expires_at: datetime | None = None
     finalized_at: datetime | None = None
     created_at: datetime

@@ -110,6 +110,9 @@ class Settings(BaseSettings):
         validation_alias="MIN_WITHDRAWAL_AMOUNT_RUB",
     )
     yookassa_shop_id: str = Field(default="", validation_alias="YOOKASSA_SHOP_ID")
+    yookassa_widget_enabled: bool = Field(
+        default=False, validation_alias="YOOKASSA_WIDGET_ENABLED"
+    )
     yookassa_secret_key: str = Field(default="", validation_alias="YOOKASSA_SECRET_KEY")
     yookassa_api_url: str = Field(
         default="https://api.yookassa.ru/v3",

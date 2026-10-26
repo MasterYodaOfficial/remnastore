@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.db.models import AccountStatus, LoginSource
+from app.db.models import AccountStatus, AuthProvider, LoginSource
 
 
 class TelegramUpsertRequest(BaseModel):
@@ -23,6 +23,7 @@ class AccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    auth_providers: list[AuthProvider] = Field(default_factory=list)
     telegram_id: Optional[int] = None
     email: Optional[str] = None
     display_name: Optional[str] = None

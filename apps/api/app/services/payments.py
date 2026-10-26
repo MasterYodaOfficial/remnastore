@@ -43,6 +43,12 @@ from app.domain.payments import (
     PaymentWebhookEvent,
 )
 from app.services.account_events import append_account_event
+from app.services.payment_checkout import (
+    TOKEN_METADATA_KEY,
+    checkout_base_url,
+    create_checkout_url,
+    sbp_checkout_url,
+)
 from app.services.i18n import translate
 from app.services.ledger import apply_credit_in_transaction, clear_account_cache
 from app.services.notifications import (
@@ -262,6 +268,8 @@ class YooKassaGateway:
         idempotency_key: str,
     ) -> PaymentIntentSnapshot:
         self._configure_sdk()
+        if settings.yookassa_widget_enabled:
+            checkout_base_url()
         if command.currency != "RUB":
             raise PaymentGatewayError(
                 f"YooKassa gateway expects RUB currency, got {command.currency!r}"
@@ -274,13 +282,15 @@ class YooKassaGateway:
             },
             "capture": True,
             "confirmation": {
-                "type": "redirect",
+                "type": "embedded" if settings.yookassa_widget_enabled else "redirect",
                 "return_url": self._resolve_return_url(command),
             },
             "metadata": self._build_metadata(command),
         }
         if command.description:
             params["description"] = command.description
+        if settings.yookassa_widget_enabled:
+            params["confirmation"] = {"type": "embedded"}
 
         try:
             response = YooKassaPayment.create(params, idempotency_key)
@@ -291,7 +301,7 @@ class YooKassaGateway:
         except requests.RequestException as exc:
             raise PaymentGatewayError(f"YooKassa transport error: {exc}") from exc
 
-        return PaymentIntentSnapshot(
+        snapshot = PaymentIntentSnapshot(
             provider=self.provider,
             flow_type=command.flow_type,
             account_id=command.account_id,
@@ -308,6 +318,15 @@ class YooKassaGateway:
                 response.json(), field_name="yookassa payment response"
             ),
         )
+        if settings.yookassa_widget_enabled:
+            confirmation = getattr(response, "confirmation", None)
+            if not getattr(confirmation, "confirmation_token", None):
+                raise PaymentGatewayError("YooKassa did not return a widget token")
+            snapshot.confirmation_url = create_checkout_url(
+                command.account_id, response.id
+            )
+            snapshot.sbp_confirmation_url = sbp_checkout_url(snapshot.confirmation_url)
+        return snapshot
 
     def _fetch_payment_sync(self, provider_payment_id: str) -> object:
         self._configure_sdk()
@@ -793,6 +812,7 @@ def _payment_to_snapshot(payment: Payment) -> PaymentIntentSnapshot:
         provider_payment_id=payment.provider_payment_id,
         external_reference=payment.external_reference,
         confirmation_url=payment.confirmation_url,
+        sbp_confirmation_url=sbp_checkout_url(payment.confirmation_url),
         expires_at=payment.expires_at,
         raw_payload=payment.raw_payload,
     )
@@ -1005,6 +1025,13 @@ def _apply_payment_intent_snapshot(
     )
     payment.raw_payload = snapshot.raw_payload
     payment.request_metadata = dict(command.metadata)
+    confirmation = (snapshot.raw_payload or {}).get("confirmation") or {}
+    if confirmation.get("type") == "embedded" and confirmation.get(
+        "confirmation_token"
+    ):
+        payment.request_metadata[TOKEN_METADATA_KEY] = confirmation[
+            "confirmation_token"
+        ]
     payment.finalized_at = (
         _utcnow()
         if _should_finalize_payment(
