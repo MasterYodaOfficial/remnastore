@@ -1,5 +1,9 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { supabase } from '../../utils/supabase/client';
+import { getPasswordRecoverySession, passwordRecoveryStartup, signOutPasswordRecovery, supabase } from '../../utils/supabase/client';
+import {
+  forgetPasswordRecovery, hasPasswordRecoveryIntent, isPasswordRecoverySession,
+  rememberPasswordRecovery, type RecoverySession,
+} from './lib/password-recovery';
 import {
   browserBrandName as BROWSER_BRAND_NAME,
   apiBaseUrl as BACKEND_API,
@@ -96,7 +100,6 @@ import {
 } from './lib/api-errors';
 const BROWSER_TOKEN_STORAGE_KEY = 'remnastore.browser_access_token';
 const TELEGRAM_AUTH_STORAGE_KEY = 'remnastore.telegram_auth';
-const PASSWORD_RECOVERY_STORAGE_KEY = 'remnastore.password_recovery_active';
 const THEME_STORAGE_KEY = 'remnastore.theme';
 type AuthView = 'default' | 'recovery' | 'recovery-expired';
 type AppTab =
@@ -270,6 +273,7 @@ const APP_THEME_TOKENS = {
 
 interface BackendAccount {
   id: string;
+  auth_providers?: string[];
   telegram_id?: number | null;
   email?: string | null;
   display_name?: string | null;
@@ -389,6 +393,7 @@ interface BackendPaymentListItem {
   plan_code?: string | null;
   description?: string | null;
   confirmation_url?: string | null;
+  sbp_confirmation_url?: string | null;
   expires_at?: string | null;
   finalized_at?: string | null;
   created_at: string;
@@ -515,6 +520,7 @@ interface BackendTelegramReferralResult {
 
 interface User {
   id: string;
+  authProviders?: string[];
   name: string;
   email: string;
   telegram_id?: number | null;
@@ -652,6 +658,7 @@ function mapBackendAccountToUser(account: BackendAccount, avatar?: string): User
 
   return {
     id: account.id,
+    authProviders: account.auth_providers ?? [],
     name,
     email: account.email || '',
     telegram_id: account.telegram_id ?? null,
@@ -831,6 +838,7 @@ function mapBackendPaymentItemToView(
     currency: payment.currency,
     providerPaymentId: payment.provider_payment_id,
     confirmationUrl: payment.confirmation_url ?? null,
+    sbpConfirmationUrl: payment.sbp_confirmation_url ?? null,
     status: payment.status as PendingPaymentView['status'],
     expiresAt: payment.expires_at ?? null,
     createdAt: payment.created_at,
@@ -1219,7 +1227,8 @@ function clearStoredTelegramAuth() {
   window.localStorage.removeItem(TELEGRAM_AUTH_STORAGE_KEY);
 }
 
-const initialOAuthError = typeof window === 'undefined' ? null : readOAuthCallbackError(window.location.href);
+const initialRecoveryIntent = passwordRecoveryStartup.intent || hasPasswordRecoveryIntent();
+const initialOAuthError = initialRecoveryIntent || typeof window === 'undefined' ? null : readOAuthCallbackError(window.location.href);
 
 export default function App() {
   useEffect(() => {
@@ -1240,7 +1249,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isTelegramWebApp, setIsTelegramWebApp] = useState(false);
   const [hasTelegramContext, setHasTelegramContext] = useState(false);
-  const [authView, setAuthView] = useState<AuthView>('default');
+  const [authView, setAuthView] = useState<AuthView>(initialRecoveryIntent ? 'recovery' : 'default');
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
@@ -1330,7 +1339,8 @@ export default function App() {
   const attemptedLedgerEntriesTokenRef = useRef<string | null>(null);
   const lastPrimaryTabRef = useRef<PrimaryAppTab>('home');
   const manualLogoutRef = useRef(false);
-  const authViewRef = useRef<AuthView>('default');
+  const authViewRef = useRef<AuthView>(initialRecoveryIntent ? 'recovery' : 'default');
+  const browserAuthGenerationRef = useRef(0);
   const promoLaunchAppliedRef = useRef(false);
   const promoLaunchQuoteRequestedRef = useRef(false);
 
@@ -1889,7 +1899,11 @@ export default function App() {
 
   const clearAuthActionParam = () => {
     const url = new URL(window.location.href);
-    url.searchParams.delete('auth_action');
+    for (const key of ['auth_action', 'code', 'type', 'error', 'error_code', 'error_description', 'token_hash']) {
+      url.searchParams.delete(key);
+    }
+    const hash = new URLSearchParams(url.hash.slice(1));
+    if (hash.has('type') || hash.has('error') || hash.has('access_token')) url.hash = '';
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   };
 
@@ -1989,12 +2003,27 @@ export default function App() {
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   };
 
-  const markPasswordRecoveryActive = () => {
-    window.sessionStorage.setItem(PASSWORD_RECOVERY_STORAGE_KEY, '1');
+  const clearPasswordRecoveryActive = () => {
+    forgetPasswordRecovery();
   };
 
-  const clearPasswordRecoveryActive = () => {
-    window.sessionStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY);
+  const enterPasswordRecovery = (session: RecoverySession) => {
+    rememberPasswordRecovery(session);
+    setAuthViewMode('recovery');
+    clearBrowserAuthState();
+    setIsLoading(false);
+  };
+
+  const expirePasswordRecovery = () => {
+    forgetPasswordRecovery();
+    setAuthViewMode('recovery-expired');
+    clearBrowserAuthState();
+    // Keep the screen intent over reload, without keeping expired codes/tokens.
+    clearAuthActionParam();
+    const url = new URL(window.location.href);
+    url.searchParams.set('auth_action', 'reset-password');
+    window.history.replaceState(window.history.state, '', url);
+    setIsLoading(false);
   };
 
   // Check if running in Telegram WebApp
@@ -2007,6 +2036,11 @@ export default function App() {
     }
 
     const initApp = async () => {
+      if (initialRecoveryIntent || hasPasswordRecoveryIntent()) {
+        setIsTelegramWebApp(false);
+        await checkSupabaseAuth();
+        return;
+      }
       const shouldInitializeTelegram =
         typeof window !== 'undefined' && hasTelegramLaunchParams();
 
@@ -2400,6 +2434,20 @@ export default function App() {
   };
 
   const checkSupabaseAuth = async () => {
+    if (authViewRef.current !== 'default' || initialRecoveryIntent || hasPasswordRecoveryIntent()) {
+      setAuthViewMode('recovery');
+      clearBrowserAuthState();
+      const generation = browserAuthGenerationRef.current;
+      try {
+        const session = await getPasswordRecoverySession();
+        if (generation !== browserAuthGenerationRef.current) return false;
+        if (session) enterPasswordRecovery(session);
+        else expirePasswordRecovery();
+      } catch {
+        if (generation === browserAuthGenerationRef.current) expirePasswordRecovery();
+      }
+      return false;
+    }
     let restored = false;
     const locationHref = window.location.href;
     const isPendingOAuthCallback = hasPendingSupabaseOAuthCallback(locationHref);
@@ -2438,27 +2486,21 @@ export default function App() {
   // Listen for auth changes
   useEffect(() => {
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'PASSWORD_RECOVERY') {
-          setAuthViewMode('recovery');
-          clearBrowserAuthState();
-          markPasswordRecoveryActive();
-          setIsLoading(false);
+      (event, session) => {
+        if (session && (event === 'PASSWORD_RECOVERY' || isPasswordRecoverySession(session))) {
+          enterPasswordRecovery(session);
           return;
         }
 
-        if (authViewRef.current === 'recovery') {
+        if (authViewRef.current !== 'default') {
           if (event === 'SIGNED_OUT') {
-            if (manualLogoutRef.current) {
-              manualLogoutRef.current = false;
-            }
-            clearBrowserAuthState();
+            expirePasswordRecovery();
           }
           return;
         }
 
-        if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token) {
-          await syncBrowserAuth(
+        if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.access_token) {
+          void syncBrowserAuth(
             session.access_token,
             getSupabaseAvatarUrl(session.user as SupabaseUserLike)
           );
@@ -2484,6 +2526,7 @@ export default function App() {
   }, []);
 
   const clearBrowserAuthState = () => {
+    browserAuthGenerationRef.current += 1;
     setIsAuthenticated(false);
     setUser(null);
     setAccessToken(null);
@@ -2534,9 +2577,10 @@ export default function App() {
   };
 
   const syncBrowserAuth = async (token: string, browserAvatar?: string) => {
-    if (!token) {
+    if (!token || authViewRef.current !== 'default' || manualLogoutRef.current) {
       return false;
     }
+    const generation = browserAuthGenerationRef.current;
 
     setAccessToken(token);
     currentBrowserTokenRef.current = token;
@@ -2558,6 +2602,7 @@ export default function App() {
 
     inFlightBrowserTokenRef.current = token;
     const loaded = await loadUserData(token, browserAvatar);
+    if (generation !== browserAuthGenerationRef.current || authViewRef.current !== 'default') return false;
     if (loaded) {
       lastLoadedBrowserTokenRef.current = token;
       setIsAuthenticated(true);
@@ -2570,8 +2615,11 @@ export default function App() {
   };
 
   const loadUserData = async (token: string, browserAvatar?: string) => {
+    const generation = browserAuthGenerationRef.current;
+    if (authViewRef.current !== 'default') return false;
     try {
       const bootstrap = await loadBootstrapSnapshot(token);
+      if (generation !== browserAuthGenerationRef.current || authViewRef.current !== 'default') return false;
       const accountData = bootstrap.account;
       const subscriptionData = bootstrap.subscription;
       const trialUi = bootstrap.trial_ui;
@@ -4415,10 +4463,12 @@ export default function App() {
   };
 
   const refreshUserData = async () => {
-    if (!accessToken) return false;
+    if (!accessToken || authViewRef.current !== 'default') return false;
+    const generation = browserAuthGenerationRef.current;
     
     try {
       const bootstrap = await loadBootstrapSnapshot(accessToken);
+      if (generation !== browserAuthGenerationRef.current || authViewRef.current !== 'default') return false;
       const accountData = bootstrap.account;
       const subscriptionData = bootstrap.subscription;
       const trialUi = bootstrap.trial_ui;
@@ -4454,6 +4504,7 @@ export default function App() {
   }, [accessToken, isTelegramWebApp]);
 
   const handlePasswordRecoveryComplete = async () => {
+    clearBrowserAuthState();
     setAuthViewMode('default');
     clearPasswordRecoveryActive();
     clearAuthActionParam();
@@ -4481,6 +4532,7 @@ export default function App() {
   };
 
   const handlePasswordRecoveryCancel = async () => {
+    setIsLoading(true);
     setAuthViewMode('default');
     clearPasswordRecoveryActive();
     clearAuthActionParam();
@@ -4488,18 +4540,16 @@ export default function App() {
     manualLogoutRef.current = true;
 
     try {
-      await supabase.auth.signOut();
+      await signOutPasswordRecovery();
     } catch (err) {
       console.error('Password recovery cancel error:', err);
       manualLogoutRef.current = false;
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleAuthViewReset = () => {
-    clearPasswordRecoveryActive();
-    clearAuthActionParam();
-    setAuthViewMode('default');
-  };
+  const handleAuthViewReset = handlePasswordRecoveryCancel;
 
   const getSubscriptionData = () => {
     if (!subscription) {
@@ -4523,7 +4573,7 @@ export default function App() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || authView !== 'default') {
     return (
       <>
         <Toaster position="top-center" />
@@ -4531,6 +4581,7 @@ export default function App() {
           view={authView}
           onRecoveryComplete={handlePasswordRecoveryComplete}
           onRecoveryCancel={handlePasswordRecoveryCancel}
+          onRecoveryExpired={expirePasswordRecovery}
           onAuthViewReset={handleAuthViewReset}
         />
       </>

@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.normalization import normalize_optional_email
 from app.db.models import Account, AccountStatus, AuthAccount, AuthProvider, LoginSource
 from app.integrations.supabase.models import SupabaseIdentity, SupabaseUser
 from app.services.cache import get_cache
@@ -209,6 +210,7 @@ async def _upsert_supabase_account_once(
     supabase_user: SupabaseUser,
 ) -> Account:
     now = datetime.utcnow()
+    email = normalize_optional_email(supabase_user.email)
     identity_links = _build_supabase_identity_links(supabase_user)
 
     resolved_account: Account | None = None
@@ -233,14 +235,8 @@ async def _upsert_supabase_account_once(
             )
 
     # ЭТАП 2: Поиск по email (НОВОЕ)
-    if (
-        resolved_account is None
-        and supabase_user.email
-        and supabase_user.email_confirmed_at
-    ):
-        result = await session.execute(
-            select(Account).where(Account.email == supabase_user.email)
-        )
+    if resolved_account is None and email and supabase_user.email_confirmed_at:
+        result = await session.execute(select(Account).where(Account.email == email))
         email_account = result.scalar_one_or_none()
         if email_account is not None:
             resolved_account = email_account
@@ -251,7 +247,7 @@ async def _upsert_supabase_account_once(
     # ЭТАП 3: Создание нового аккаунта
     if resolved_account is None:
         resolved_account = Account(
-            email=supabase_user.email,
+            email=email,
             display_name=display_name,
             locale=locale,
             status=AccountStatus.ACTIVE,
@@ -262,7 +258,9 @@ async def _upsert_supabase_account_once(
         session.add(resolved_account)
         await session.flush()
     else:
-        resolved_account.email = supabase_user.email or resolved_account.email
+        resolved_account.email = email or normalize_optional_email(
+            resolved_account.email
+        )
         resolved_account.display_name = display_name or resolved_account.display_name
         resolved_account.locale = locale or resolved_account.locale
         resolved_account.last_login_source = LoginSource.BROWSER_OAUTH
@@ -288,13 +286,13 @@ async def _upsert_supabase_account_once(
                     account_id=resolved_account.id,
                     provider=provider,
                     provider_uid=provider_uid,
-                    email=supabase_user.email,
+                    email=email,
                     display_name=link_display_name,
                 )
             )
             continue
 
-        auth_account.email = supabase_user.email or auth_account.email
+        auth_account.email = email or normalize_optional_email(auth_account.email)
         auth_account.display_name = link_display_name or auth_account.display_name
 
     await session.commit()

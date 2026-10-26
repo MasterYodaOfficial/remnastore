@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.errors import api_error, api_error_from_exception
@@ -36,8 +37,23 @@ from app.services.promos import (
     PromoValidationError,
 )
 from app.services.i18n import translate
+from app.services.payment_checkout import read_checkout, sbp_checkout_url
 
 router = APIRouter()
+
+
+class CheckoutRequest(BaseModel):
+    ticket: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/yookassa/checkout")
+async def get_checkout(
+    payload: CheckoutRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    return await read_checkout(session, payload.ticket)
 
 
 @router.get("/plans", response_model=list[SubscriptionPlanResponse])
@@ -83,7 +99,11 @@ async def list_payments(
     )
     return PaymentListResponse(
         items=[
-            PaymentListItemResponse.model_validate(item, from_attributes=True)
+            PaymentListItemResponse.model_validate(
+                item, from_attributes=True
+            ).model_copy(
+                update={"sbp_confirmation_url": sbp_checkout_url(item.confirmation_url)}
+            )
             for item in payments
         ],
         total=total,
@@ -117,6 +137,7 @@ async def get_payment_status(
         currency=payment.currency,
         provider_payment_id=payment.provider_payment_id,
         confirmation_url=payment.confirmation_url,
+        sbp_confirmation_url=sbp_checkout_url(payment.confirmation_url),
         expires_at=payment.expires_at,
         finalized_at=payment.finalized_at,
     )

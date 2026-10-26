@@ -6612,7 +6612,7 @@ export default function App() {
                       selectedAccount.auth_accounts.map((identity) => (
                         <article key={`${identity.provider}:${identity.provider_uid}`} className="activity-item">
                           <div>
-                            <strong>{identity.provider}</strong>
+                            <strong>{({ yandex: "Яндекс ID", vk: "VK ID", google: "Google", supabase: "Вход через браузер" } as Record<string, string>)[identity.provider] ?? identity.provider}</strong>
                             <span>{identity.email || identity.display_name || identity.provider_uid}</span>
                           </div>
                           <span>{formatDate(identity.linked_at)}</span>

@@ -52,6 +52,7 @@ class PaymentIntentSnapshot:
     provider_payment_id: str
     external_reference: str | None = None
     confirmation_url: str | None = None
+    sbp_confirmation_url: str | None = None
     expires_at: datetime | None = None
     raw_payload: dict | None = None
 

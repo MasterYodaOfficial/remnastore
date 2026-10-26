@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -16,6 +17,8 @@ from plan_fixtures import PLAN_1M, seed_subscription_plans
 
 from app.api.dependencies import get_current_account
 from app.core.config import settings
+from app.core.security import TokenError, decode_access_token
+from app.services.payment_checkout import create_checkout_url, sbp_checkout_url
 from app.db.base import Base
 from app.db.models import (
     Account,
@@ -576,6 +579,145 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
+
+    async def test_widget_links_share_one_payment_and_checkout_access_is_scoped(self):
+        account = await self._create_account(balance=0, email=None)
+        other = await self._create_account(email="other-checkout@example.com")
+        self._current_account_id = account.id
+        gateway = YooKassaGateway(shop_id="test-shop", secret_key="test-secret")
+        raw = {
+            "id": "widget-one",
+            "status": "pending",
+            "amount": {"value": "500.00", "currency": "RUB"},
+            "confirmation": {"type": "embedded", "confirmation_token": "ct-test-only"},
+        }
+        sdk_response = SimpleNamespace(
+            id="widget-one",
+            status="pending",
+            amount=SimpleNamespace(value="500.00", currency="RUB"),
+            confirmation=SimpleNamespace(confirmation_token="ct-test-only"),
+            expires_at=None,
+            json=lambda: raw,
+        )
+        with (
+            patch.object(settings, "yookassa_widget_enabled", True),
+            patch.object(settings, "webapp_url", "https://app.example.com"),
+            patch.object(
+                self._payments_service, "get_yookassa_gateway", return_value=gateway
+            ),
+            patch(
+                "app.services.payments.YooKassaPayment.create",
+                return_value=sdk_response,
+            ) as create,
+        ):
+            payload = {"amount_rub": 500, "idempotency_key": "one-widget-payment"}
+            first = await self.client.post(
+                "/api/v1/payments/yookassa/topup", json=payload
+            )
+            self.assertEqual(first.status_code, 200, first.text)
+            repeated = await self.client.post(
+                "/api/v1/payments/yookassa/topup", json=payload
+            )
+            self.assertEqual(repeated.status_code, 200, repeated.text)
+            create.assert_called_once()
+            self.assertEqual(
+                create.call_args.args[0]["confirmation"], {"type": "embedded"}
+            )
+            self.assertTrue(create.call_args.args[0]["capture"])
+            general = first.json()["confirmation_url"]
+            sbp = first.json()["sbp_confirmation_url"]
+            self.assertEqual(repeated.json()["sbp_confirmation_url"], sbp)
+            self.assertEqual(urlsplit(general).fragment, urlsplit(sbp).fragment)
+            self.assertEqual(parse_qs(urlsplit(sbp).query)["mode"], ["sbp"])
+            ticket = parse_qs(urlsplit(general).fragment)["checkout_token"][0]
+            with self.assertRaises(TokenError):
+                decode_access_token(ticket, secret=settings.jwt_secret)
+            checkout = await self.client.post(
+                "/api/v1/payments/yookassa/checkout", json={"ticket": ticket}
+            )
+            self.assertEqual(checkout.status_code, 200, checkout.text)
+            self.assertEqual(checkout.headers["cache-control"], "no-store")
+            self.assertEqual(checkout.json()["confirmation_token"], "ct-test-only")
+            self.assertEqual(checkout.json()["amount"], 500)
+            self.assertNotIn("account_id", checkout.json())
+            async with self._session_factory() as session:
+                persisted = await session.scalar(
+                    select(Payment).where(Payment.provider_payment_id == "widget-one")
+                )
+                persisted.raw_payload = {"status": "pending"}
+                await session.commit()
+            with patch.object(settings, "yookassa_widget_enabled", False):
+                still_available = await self.client.post(
+                    "/api/v1/payments/yookassa/checkout", json={"ticket": ticket}
+                )
+                self.assertEqual(
+                    still_available.json()["confirmation_token"], "ct-test-only"
+                )
+            listings = await self.client.get(
+                "/api/v1/payments", params={"active_only": True}
+            )
+            self.assertEqual(listings.json()["items"][0]["sbp_confirmation_url"], sbp)
+            self.assertIsNone(sbp_checkout_url("https://yookassa.ru/confirm?id=abc"))
+            bad = await self.client.post(
+                "/api/v1/payments/yookassa/checkout", json={"ticket": ticket + "bad"}
+            )
+            self.assertEqual(bad.status_code, 401)
+            wrong_owner = parse_qs(
+                urlsplit(create_checkout_url(other.id, "widget-one")).fragment
+            )["checkout_token"][0]
+            denied = await self.client.post(
+                "/api/v1/payments/yookassa/checkout", json={"ticket": wrong_owner}
+            )
+            self.assertEqual(denied.status_code, 404)
+            for state in (
+                PaymentStatus.SUCCEEDED,
+                PaymentStatus.CANCELLED,
+                PaymentStatus.EXPIRED,
+            ):
+                async with self._session_factory() as session:
+                    payment = await session.scalar(
+                        select(Payment).where(
+                            Payment.provider_payment_id == "widget-one"
+                        )
+                    )
+                    payment.status = state
+                    await session.commit()
+                closed = await self.client.post(
+                    "/api/v1/payments/yookassa/checkout", json={"ticket": ticket}
+                )
+                self.assertEqual(closed.json()["status"], state.value)
+                self.assertIsNone(closed.json()["confirmation_token"])
+            async with self._session_factory() as session:
+                payment = await session.scalar(
+                    select(Payment).where(Payment.provider_payment_id == "widget-one")
+                )
+                payment.status = PaymentStatus.PENDING
+                payment.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+                await session.commit()
+            timed_out = await self.client.post(
+                "/api/v1/payments/yookassa/checkout", json={"ticket": ticket}
+            )
+            self.assertEqual(timed_out.json()["status"], "expired")
+            self.assertIsNone(timed_out.json()["confirmation_token"])
+            async with self._session_factory() as session:
+                owner = await session.get(Account, account.id)
+                owner.status = AccountStatus.BLOCKED
+                await session.commit()
+            blocked = await self.client.post(
+                "/api/v1/payments/yookassa/checkout", json={"ticket": ticket}
+            )
+            self.assertEqual(blocked.status_code, 403)
+            with patch("app.core.security.time.time", return_value=1):
+                expired_ticket = parse_qs(
+                    urlsplit(create_checkout_url(account.id, "widget-one")).fragment
+                )["checkout_token"][0]
+            expired = await self.client.post(
+                "/api/v1/payments/yookassa/checkout", json={"ticket": expired_ticket}
+            )
+            self.assertEqual(expired.status_code, 401)
+            stored = await self._get_account(account.id)
+            self.assertEqual(stored.balance, 0)
+            create.assert_called_once()
 
     async def test_create_yookassa_topup_endpoint_persists_pending_payment(
         self,
