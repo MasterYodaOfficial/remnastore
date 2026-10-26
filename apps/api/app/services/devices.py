@@ -47,10 +47,18 @@ PENDING_STATUSES = (
 
 
 class DeviceServiceError(Exception):
-    def __init__(self, detail: str, code: str, status_code: int = 409):
+    def __init__(
+        self,
+        detail: str,
+        code: str,
+        status_code: int = 409,
+        *,
+        panel_limit: int | None = None,
+    ):
         super().__init__(detail)
         self.code = code
         self.status_code = status_code
+        self.panel_limit = panel_limit
 
 
 def now_utc() -> datetime:
@@ -154,10 +162,15 @@ async def prepare_device_checkout(session: AsyncSession, account_id: UUID) -> Ac
 
 
 async def get_device_settings(
-    session: AsyncSession, account: Account, *, gateway_factory=None
+    session: AsyncSession,
+    account: Account,
+    *,
+    gateway_factory=None,
+    refresh_remote: bool = False,
+    source: str = "api",
 ) -> AccountDeviceSettings:
     device_settings = await session.get(AccountDeviceSettings, account.id)
-    if device_settings is not None:
+    if device_settings is not None and not refresh_remote:
         return device_settings
     gateway = _gateway(gateway_factory)
     try:
@@ -170,19 +183,41 @@ async def get_device_settings(
             "devices_unavailable",
             502,
         ) from exc
-    base_limit = (
-        remote.hwid_device_limit
-        if remote and remote.hwid_device_limit is not None
-        else (
-            settings.trial_device_limit
-            if account.subscription_is_trial
-            else settings.default_subscription_device_limit
+    if remote is None:
+        raise DeviceServiceError(
+            "Не удалось найти подписку в панели. Обновите данные или обратитесь в поддержку.",
+            "devices_unavailable",
+            502,
         )
-    )
+    try:
+        limit = (
+            remote.hwid_device_limit
+            if remote.hwid_device_limit is not None
+            else await gateway.resolve_hwid_device_limit(remote)
+        )
+    except RemnawaveRequestError as exc:
+        raise DeviceServiceError(
+            "Не удалось обновить лимит устройств. Попробуйте ещё раз.",
+            "devices_unavailable",
+            502,
+        ) from exc
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+        raise DeviceServiceError(
+            "Панель вернула некорректный лимит устройств.", "devices_unavailable", 502
+        )
+    if device_settings is not None:
+        await apply_remote_device_limit(
+            session,
+            account=account,
+            device_settings=device_settings,
+            limit=limit,
+            source=source,
+        )
+        return device_settings
     # Existing limits, including manual overrides and unlimited access, remain intact.
     device_settings = AccountDeviceSettings(
         account_id=account.id,
-        base_limit=base_limit,
+        base_limit=limit,
         extra_count=0,
         renewal_extra_count=0,
         revision=0,
@@ -190,6 +225,94 @@ async def get_device_settings(
     session.add(device_settings)
     await session.flush()
     return device_settings
+
+
+async def device_limit_sync_pending(session: AsyncSession, account_id: UUID) -> bool:
+    purchase = await session.scalar(
+        select(DevicePurchase.id)
+        .where(
+            DevicePurchase.account_id == account_id,
+            DevicePurchase.applied_at.is_(None),
+            DevicePurchase.refunded_at.is_(None),
+        )
+        .limit(1)
+    )
+    grant = await session.scalar(
+        select(SubscriptionGrant.id)
+        .where(
+            SubscriptionGrant.account_id == account_id,
+            SubscriptionGrant.applied_at.is_(None),
+        )
+        .limit(1)
+    )
+    return purchase is not None or grant is not None
+
+
+async def apply_remote_device_limit(
+    session: AsyncSession,
+    *,
+    account: Account,
+    device_settings: AccountDeviceSettings,
+    limit: int,
+    source: str,
+) -> None:
+    # The panel stores a TOTAL, not a base quota. Never add paid seats twice.
+    base = 0 if limit == 0 else limit - device_settings.extra_count
+    if limit and base <= 0:
+        raise DeviceServiceError(
+            "Лимит в панели не вмещает базовую квоту и оплаченные дополнительные устройства. Обратитесь в поддержку.",
+            "devices_limit_conflict",
+            panel_limit=limit,
+        )
+    if base == device_settings.base_limit:
+        return
+    previous = device_settings.base_limit
+    device_settings.base_limit = base
+    device_settings.revision += 1
+    await append_account_event(
+        session,
+        account_id=account.id,
+        event_type="devices.limit_synced",
+        source=source,
+        payload={
+            "old_base_limit": previous,
+            "base_limit": base,
+            "extra_count": device_settings.extra_count,
+            "panel_limit": limit,
+            "limit_source": "remnawave",
+            "revision": device_settings.revision,
+        },
+    )
+
+
+async def sync_existing_device_limit(
+    session: AsyncSession,
+    *,
+    account: Account,
+    source: str,
+    gateway_factory=None,
+) -> None:
+    """Use fresh panel data; an old webhook body cannot revert a newer limit."""
+    existing = await session.get(AccountDeviceSettings, account.id)
+    if existing is None or await device_limit_sync_pending(session, account.id):
+        return
+    try:
+        await get_device_settings(
+            session,
+            account,
+            gateway_factory=gateway_factory,
+            refresh_remote=True,
+            source=source,
+        )
+    except DeviceServiceError as exc:
+        await append_account_event(
+            session,
+            account_id=account.id,
+            event_type="devices.limit_sync_failed",
+            source=source,
+            outcome="failure",
+            payload={"error_code": exc.code, "panel_limit": exc.panel_limit},
+        )
 
 
 async def snapshot_device_pricing(
@@ -366,6 +489,15 @@ async def build_renewal_device_quote(
 ) -> dict:
     _check_account(account)
     device_settings = await session.get(AccountDeviceSettings, account.id)
+    if device_settings is not None:
+        await ensure_no_pending_device_purchase(session, account.id)
+        if await device_limit_sync_pending(session, account.id):
+            raise DeviceServiceError(
+                "Дождитесь завершения обновления подписки.", "devices_sync_pending"
+            )
+        device_settings = await get_device_settings(
+            session, account, refresh_remote=True
+        )
     current = device_settings.extra_count if device_settings and _active(account) else 0
     wanted = (
         extra_devices
@@ -387,6 +519,9 @@ async def build_renewal_device_quote(
         if device_settings and not account.subscription_is_trial
         else resolve_plan_device_limit(plan)
     )
+    if base_limit == 0 and extra_devices is None:
+        # An unlimited manual override must not force another paid seat renewal.
+        wanted = 0
     if wanted and (
         base_limit == 0 or getattr(plan, "extra_device_price_rub", None) is None
     ):
@@ -572,31 +707,43 @@ async def get_devices_state(
     session: AsyncSession, *, account: Account, gateway_factory=None
 ) -> dict:
     account = await _lock_account(session, account.id)
-    device_settings = await get_device_settings(
-        session, account, gateway_factory=gateway_factory
-    )
-    gateway = _gateway(gateway_factory)
+    pending = await device_limit_sync_pending(session, account.id)
+    device_settings = await session.get(AccountDeviceSettings, account.id)
+    sync_status = "pending" if pending else "synced"
+    panel_limit = None
+    gateway = None
     try:
+        device_settings = await get_device_settings(
+            session,
+            account,
+            gateway_factory=gateway_factory,
+            refresh_remote=not pending,
+            source="web",
+        )
+        if not pending:
+            panel_limit = (
+                0
+                if device_settings.base_limit == 0
+                else device_settings.base_limit + device_settings.extra_count
+            )
+    except DeviceServiceError as exc:
+        if device_settings is None:
+            raise
+        sync_status = (
+            "conflict" if exc.code == "devices_limit_conflict" else "unavailable"
+        )
+        panel_limit = exc.panel_limit
+    try:
+        gateway = _gateway(gateway_factory)
         devices = (
             await gateway.get_hwid_devices(account.remnawave_user_uuid or account.id)
             if account.remnawave_user_uuid
             else []
         )
-    except RemnawaveRequestError as exc:
-        raise DeviceServiceError(
-            "Не удалось получить устройства. Попробуйте ещё раз.",
-            "devices_unavailable",
-            502,
-        ) from exc
-    pending = await session.scalar(
-        select(DevicePurchase.id)
-        .where(
-            DevicePurchase.account_id == account.id,
-            DevicePurchase.applied_at.is_(None),
-            DevicePurchase.refunded_at.is_(None),
-        )
-        .limit(1)
-    )
+    except (RemnawaveRequestError, DeviceServiceError):
+        devices = None
+        if sync_status == "synced":
+            sync_status = "unavailable"
     active = _active(account)
     extra = device_settings.extra_count if active else 0
     available = False
@@ -616,8 +763,12 @@ async def get_devices_state(
         else device_settings.base_limit + extra,
         "devices": devices,
         "expires_at": account.subscription_expires_at,
-        "can_purchase": available and not pending and extra < MAX_EXTRA_DEVICES,
+        "can_purchase": available
+        and sync_status == "synced"
+        and extra < MAX_EXTRA_DEVICES,
         "sync_pending": bool(pending),
+        "limit_sync_status": sync_status,
+        "panel_limit": panel_limit,
         "is_active": active,
     }
 
@@ -629,7 +780,7 @@ async def change_renewal_extra_count(
     await ensure_no_pending_device_purchase(session, account.id)
     await ensure_no_pending_plan_purchase(session, account.id)
     device_settings = await get_device_settings(
-        session, account, gateway_factory=gateway_factory
+        session, account, gateway_factory=gateway_factory, refresh_remote=True
     )
     if not 0 <= extra_count <= device_settings.extra_count:
         raise DeviceServiceError(
@@ -692,7 +843,7 @@ async def quote_device_purchase(
     await ensure_no_pending_device_purchase(session, account.id)
     await ensure_no_pending_plan_purchase(session, account.id)
     device_settings = await get_device_settings(
-        session, account, gateway_factory=gateway_factory
+        session, account, gateway_factory=gateway_factory, refresh_remote=True
     )
     if (
         device_settings.base_limit == 0
@@ -768,7 +919,7 @@ async def purchase_extra_devices(
     await ensure_no_pending_device_purchase(session, account.id)
     await ensure_no_pending_plan_purchase(session, account.id)
     device_settings = await get_device_settings(
-        session, account, gateway_factory=gateway_factory
+        session, account, gateway_factory=gateway_factory, refresh_remote=True
     )
     if (
         not _active(account)

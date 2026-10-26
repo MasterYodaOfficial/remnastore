@@ -17,6 +17,7 @@ from app.integrations.remnawave.models import (
 )
 from app.services.account_events import append_account_event
 from app.services.ledger import clear_account_cache
+from app.services.devices import sync_existing_device_limit
 from app.services.notifications import (
     notify_subscription_expired,
     notify_subscription_expiring,
@@ -246,6 +247,7 @@ async def process_remnawave_webhook(
         clear_remote_subscription_snapshot(account)
     else:
         _apply_user_webhook_snapshot(account, user=user)
+        await sync_existing_device_limit(session, account=account, source="webhook")
         if envelope.event == USER_FIRST_CONNECTED_EVENT:
             await append_account_event(
                 session,

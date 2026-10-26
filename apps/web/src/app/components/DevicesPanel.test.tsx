@@ -45,3 +45,38 @@ it('shows the common expiry, total charge and downgrade refund before renewal', 
   fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '0' } });
   expect(onCountChange).toHaveBeenCalledWith(0);
 });
+
+it('keeps the confirmed limit during an outage without claiming the device list is empty', async () => {
+  let offline = true;
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+    base_limit: offline ? 3 : 5, extra_count: 1, renewal_extra_count: 1,
+    limit: offline ? 4 : 6, devices: offline ? null : [{ hwid: 'phone', device_model: 'iPhone' }],
+    expires_at: '2027-01-01T00:00:00Z', can_purchase: !offline, sync_pending: false, is_active: true,
+    limit_sync_status: offline ? 'unavailable' : 'synced', panel_limit: offline ? null : 6,
+  })));
+  render(<DevicesPanel apiBase="https://api.test" accessToken="token" balance={100} onChanged={vi.fn().mockResolvedValue(undefined)} onConnect={vi.fn()} onTopUp={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /Устройства/ }));
+  expect(await screen.findByText(/последний подтверждённый лимит/)).toBeVisible();
+  expect(screen.getByText('Лимит устройств: 4')).toBeVisible();
+  expect(screen.queryByText(/Устройств пока нет/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Рассчитать стоимость' })).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox')).toBeDisabled();
+  offline = false;
+  fireEvent.click(screen.getByRole('button', { name: 'Обновить' }));
+  expect(await screen.findByText('Добавлено 1 из 6')).toBeVisible();
+  expect(screen.queryByText(/последний подтверждённый лимит/)).not.toBeInTheDocument();
+});
+
+it('explains a panel limit conflict and prevents another purchase', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+    base_limit: 3, extra_count: 2, renewal_extra_count: 2, limit: 5,
+    devices: [], expires_at: '2027-01-01T00:00:00Z', can_purchase: false,
+    sync_pending: false, is_active: true, limit_sync_status: 'conflict', panel_limit: 1,
+  })));
+  render(<DevicesPanel apiBase="https://api.test" accessToken="token" balance={100} onChanged={vi.fn().mockResolvedValue(undefined)} onConnect={vi.fn()} onTopUp={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /Устройства/ }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('В панели установлен лимит 1');
+  expect(screen.getByRole('alert')).toHaveTextContent('Оплаченные права сохранены');
+  expect(screen.queryByRole('button', { name: 'Рассчитать стоимость' })).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox')).toBeDisabled();
+});

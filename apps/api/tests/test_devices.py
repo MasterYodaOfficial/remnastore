@@ -19,6 +19,7 @@ from app.db.base import Base
 from app.db.models import (
     Account,
     AccountDeviceSettings,
+    AccountEventLog,
     DevicePrepayment,
     DevicePurchase,
     LedgerEntry,
@@ -30,6 +31,7 @@ from app.integrations.remnawave import RemnawaveRequestError, RemnawaveUser
 from app.integrations.remnawave.client import RemnawaveGateway
 from app.main import create_app
 from app.services.devices import reconcile_device_purchases
+from app.services.remnawave_webhooks import process_remnawave_webhook
 from test_payments import FakeYooKassaGateway
 from app.domain.payments import (
     PaymentWebhookEvent,
@@ -45,11 +47,24 @@ class FakeDeviceGateway:
         self.devices = [{"hwid": "phone", "platform": "iOS", "device_model": "iPhone"}]
         self.limit_calls = []
         self.fail_updates = False
+        self.fail_reads = False
+        self.fallback_limit = 7
 
     async def get_user_by_uuid(self, user_uuid):
+        if self.fail_reads:
+            raise RemnawaveRequestError("offline")
         return self.user if user_uuid == self.user.uuid else None
 
+    async def resolve_hwid_device_limit(self, user):
+        return (
+            self.fallback_limit
+            if user.hwid_device_limit is None
+            else user.hwid_device_limit
+        )
+
     async def get_hwid_devices(self, user_uuid):
+        if self.fail_reads:
+            raise RemnawaveRequestError("offline")
         return list(self.devices) if user_uuid == self.user.uuid else []
 
     async def delete_hwid_device(self, user_uuid, hwid):
@@ -237,6 +252,240 @@ class DeviceEndpointsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 204)
         self.assertEqual(self.gateway.devices, [])
+
+    async def test_manual_panel_change_is_reconciled_without_double_counting_paid_devices(
+        self,
+    ):
+        await self._purchase(await self._quote(2))
+        self.gateway.user.hwid_device_limit = 8
+        response = await self.client.get("/api/v1/devices")
+        body = response.json()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            (body["limit"], body["base_limit"], body["extra_count"]), (8, 6, 2)
+        )
+        self.assertEqual(body["limit_sync_status"], "synced")
+        self.assertEqual(body["renewal_extra_count"], 2)
+        async with self.sessions() as session:
+            events = list(
+                await session.scalars(
+                    select(AccountEventLog).where(
+                        AccountEventLog.event_type == "devices.limit_synced"
+                    )
+                )
+            )
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].payload["old_base_limit"], 3)
+            self.assertEqual(events[0].payload["panel_limit"], 8)
+            balance = (await session.get(Account, self.account_id)).balance
+            self.assertEqual(balance, 1730)
+        await self.client.get("/api/v1/devices")
+        async with self.sessions() as session:
+            self.assertEqual(
+                len(
+                    list(
+                        await session.scalars(
+                            select(AccountEventLog).where(
+                                AccountEventLog.event_type == "devices.limit_synced"
+                            )
+                        )
+                    )
+                ),
+                1,
+            )
+        self.assertEqual(self.gateway.limit_calls, [5])
+
+    async def test_null_and_zero_have_different_meanings_after_settings_exist(self):
+        await self.client.get("/api/v1/devices")
+        self.gateway.user.hwid_device_limit = None
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["limit"], 7)
+        self.gateway.user.hwid_device_limit = 0
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["limit"], 0)
+        self.assertFalse(response.json()["can_purchase"])
+        self.gateway.user.hwid_device_limit = 4
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["limit"], 4)
+
+    async def test_limit_below_paid_quota_reports_conflict_without_changing_entitlements(
+        self,
+    ):
+        await self._purchase(await self._quote(2))
+        self.gateway.user.hwid_device_limit = 1
+        response = await self.client.get("/api/v1/devices")
+        body = response.json()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(body["limit_sync_status"], "conflict")
+        self.assertEqual(body["panel_limit"], 1)
+        self.assertEqual(
+            (body["base_limit"], body["extra_count"], body["limit"]), (3, 2, 5)
+        )
+        self.assertFalse(body["can_purchase"])
+        for path, payload in (
+            ("/quote", {"quantity": 1}),
+            ("/plans/plan_1m/quote", {}),
+        ):
+            response = await self.client.post("/api/v1/devices" + path, json=payload)
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["error_code"], "devices_limit_conflict")
+        async with self.sessions() as session:
+            self.assertEqual(
+                (await session.get(Account, self.account_id)).balance, 1730
+            )
+            lots = list(await session.scalars(select(DevicePrepayment)))
+            self.assertEqual(sum(lot.active_quantity for lot in lots), 2)
+            self.assertEqual(sum(lot.credited_rub for lot in lots), 0)
+        self.assertEqual(self.gateway.limit_calls, [5])
+        self.gateway.user.hwid_device_limit = 6
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["limit_sync_status"], "synced")
+        self.assertEqual(
+            (response.json()["base_limit"], response.json()["extra_count"]), (4, 2)
+        )
+
+    async def test_webhook_fetches_current_limit_instead_of_replaying_stale_payload(
+        self,
+    ):
+        await self._purchase()
+        self.gateway.user.hwid_device_limit = 9
+        raw = json.dumps(
+            {
+                "event": "user.modified",
+                "data": {"uuid": str(self.account_id), "hwidDeviceLimit": 3},
+            }
+        ).encode()
+        async with self.sessions() as session:
+            await process_remnawave_webhook(session, raw_body=raw)
+            await process_remnawave_webhook(session, raw_body=raw)
+            device_settings = await session.get(AccountDeviceSettings, self.account_id)
+            self.assertEqual(
+                (device_settings.base_limit, device_settings.extra_count), (8, 1)
+            )
+            events = list(
+                await session.scalars(
+                    select(AccountEventLog).where(
+                        AccountEventLog.event_type == "devices.limit_synced"
+                    )
+                )
+            )
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].source, "webhook")
+
+    async def test_unavailable_panel_does_not_apply_webhook_limit_or_lose_paid_devices(
+        self,
+    ):
+        await self._purchase()
+        self.gateway.fail_reads = True
+        raw = json.dumps(
+            {
+                "event": "user.modified",
+                "data": {"uuid": str(self.account_id), "hwidDeviceLimit": 100},
+            }
+        ).encode()
+        async with self.sessions() as session:
+            await process_remnawave_webhook(session, raw_body=raw)
+            device_settings = await session.get(AccountDeviceSettings, self.account_id)
+            self.assertEqual(
+                (device_settings.base_limit, device_settings.extra_count), (3, 1)
+            )
+            event = await session.scalar(
+                select(AccountEventLog).where(
+                    AccountEventLog.event_type == "devices.limit_sync_failed"
+                )
+            )
+            self.assertIsNotNone(event)
+            self.assertEqual(event.payload["error_code"], "devices_unavailable")
+
+    async def test_explicit_subscription_sync_also_refreshes_device_limit(self):
+        from app.services.subscriptions import sync_current_subscription
+
+        await self._purchase()
+        self.gateway.user.hwid_device_limit = 6
+        async with self.sessions() as session:
+            account = await session.get(Account, self.account_id)
+            await sync_current_subscription(session, account=account)
+            device_settings = await session.get(AccountDeviceSettings, self.account_id)
+            self.assertEqual(
+                (device_settings.base_limit, device_settings.extra_count), (5, 1)
+            )
+
+    async def test_outage_preserves_confirmed_limit_and_recovers_on_retry(self):
+        await self._purchase()
+        self.gateway.fail_reads = True
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["limit"], 4)
+        self.assertEqual(response.json()["limit_sync_status"], "unavailable")
+        self.assertIsNone(response.json()["devices"])
+        self.assertFalse(response.json()["can_purchase"])
+        self.gateway.fail_reads = False
+        self.gateway.user.hwid_device_limit = 6
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["limit"], 6)
+        self.assertEqual(response.json()["limit_sync_status"], "synced")
+
+    async def test_unlimited_override_keeps_paid_records_and_does_not_force_addon_renewal(
+        self,
+    ):
+        await self._purchase()
+        self.gateway.user.hwid_device_limit = 0
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["limit"], 0)
+        self.assertEqual(response.json()["extra_count"], 1)
+        quote = await self.client.post("/api/v1/devices/plans/plan_1m/quote", json={})
+        self.assertEqual(quote.status_code, 200, quote.text)
+        self.assertEqual(quote.json()["extra_devices"], 0)
+        self.assertEqual(quote.json()["extra_amount_rub"], 0)
+        async with self.sessions() as session:
+            self.assertEqual(
+                (await session.get(Account, self.account_id)).balance, 1865
+            )
+            lots = list(await session.scalars(select(DevicePrepayment)))
+            self.assertEqual(len(lots), 1)
+            self.assertEqual(lots[0].active_quantity, 1)
+            self.assertEqual(lots[0].credited_rub, 0)
+
+    async def test_manual_change_invalidates_purchase_quote_before_debit(self):
+        quote = await self._quote()
+        self.gateway.user.hwid_device_limit = 6
+        response = await self.client.post(
+            "/api/v1/devices/purchase",
+            json={
+                "quote_token": quote["quote_token"],
+                "idempotency_key": "stale-panel-limit",
+            },
+        )
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["error_code"], "devices_quote_changed")
+        async with self.sessions() as session:
+            self.assertEqual(
+                (await session.get(Account, self.account_id)).balance, 2000
+            )
+            self.assertIsNone(await session.scalar(select(DevicePurchase)))
+
+    async def test_pending_purchase_is_not_mistaken_for_manual_limit_increase(self):
+        self.gateway.fail_updates = True
+        await self._purchase()
+        # The remote update may have succeeded just before the API lost its response.
+        self.gateway.user.hwid_device_limit = 4
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(response.json()["base_limit"], 3)
+        self.assertEqual(response.json()["limit_sync_status"], "pending")
+        self.gateway.fail_updates = False
+        async with self.sessions() as session:
+            await reconcile_device_purchases(
+                session, gateway_factory=lambda: self.gateway
+            )
+        response = await self.client.get("/api/v1/devices")
+        self.assertEqual(
+            (
+                response.json()["base_limit"],
+                response.json()["extra_count"],
+                response.json()["limit"],
+            ),
+            (3, 1, 4),
+        )
 
     async def test_reset_keeps_paid_quota(self):
         await self._purchase()
