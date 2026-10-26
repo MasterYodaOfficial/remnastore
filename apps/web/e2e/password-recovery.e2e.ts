@@ -130,3 +130,18 @@ test('a late bootstrap cannot reopen the cabinet after PASSWORD_RECOVERY', async
   await expect(page.getByRole('heading', { name: 'Новый пароль', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Настройки', exact: true })).toHaveCount(0);
 });
+
+test('cancelling recovery also clears local credentials when Supabase sign-out fails', async ({ page }) => {
+  const { stats } = await setup(page);
+  await page.route('https://example.supabase.co/auth/v1/logout?**', route => route.fulfill({
+    status: 503, json: { msg: 'Sign-out temporarily unavailable' },
+  }));
+  await page.goto('/?auth_action=reset-password&code=valid-code');
+  await expect(page.getByRole('heading', { name: 'Новый пароль', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Отменить', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Продолжить через Google' })).toBeVisible();
+  expect(await page.evaluate(key => window.localStorage.getItem(key), authKey)).toBeNull();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Продолжить через Google' })).toBeVisible();
+  expect(stats.bootstraps).toBe(0);
+});

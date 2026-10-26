@@ -52,3 +52,17 @@ export async function getPasswordRecoverySession() {
   }
   return result.data.user?.id === session.user.id && isPasswordRecoverySession(session) ? session : null;
 }
+
+export async function signOutPasswordRecovery() {
+  try {
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
+    if (error) throw error;
+  } finally {
+    // signOut keeps persisted credentials on transport errors. Cancellation
+    // must still leave this browser signed out, including after a reload.
+    for (const key of [storageKey, `${storageKey}-code-verifier`, `${storageKey}-user`]) {
+      storage?.removeItem(key);
+    }
+    forgetPasswordRecovery();
+  }
+}

@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { getPasswordRecoverySession, passwordRecoveryStartup, supabase } from '../../utils/supabase/client';
+import { getPasswordRecoverySession, passwordRecoveryStartup, signOutPasswordRecovery, supabase } from '../../utils/supabase/client';
 import {
   forgetPasswordRecovery, hasPasswordRecoveryIntent, isPasswordRecoverySession,
   rememberPasswordRecovery, type RecoverySession,
@@ -4532,6 +4532,7 @@ export default function App() {
   };
 
   const handlePasswordRecoveryCancel = async () => {
+    setIsLoading(true);
     setAuthViewMode('default');
     clearPasswordRecoveryActive();
     clearAuthActionParam();
@@ -4539,11 +4540,12 @@ export default function App() {
     manualLogoutRef.current = true;
 
     try {
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
-      if (error) throw error;
+      await signOutPasswordRecovery();
     } catch (err) {
       console.error('Password recovery cancel error:', err);
       manualLogoutRef.current = false;
+    } finally {
+      setIsLoading(false);
     }
   };
 
