@@ -2,12 +2,13 @@ import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../../utils/supabase/client';
+import { vkAuthEnabled, yandexAuthEnabled } from '../../../utils/runtime-config';
 import { getActiveReferralCode, buildTelegramReferralBotUrl } from '../lib/referrals';
 import { t } from '../../lib/i18n';
 import { AppLogo } from './AppLogo';
 
 type LoginFormMode = 'signin' | 'signup' | 'forgot';
-type OAuthProviderState = 'google';
+type OAuthProviderState = 'google' | 'yandex' | 'vk';
 type SupabaseOAuthProvider = Parameters<typeof supabase.auth.signInWithOAuth>[0]['provider'];
 
 interface LoginPageProps {
@@ -128,6 +129,22 @@ export function LoginPage({
       state: 'google',
       errorToastKey: 'toasts.googleStartError',
       errorLogLabel: 'Google',
+    });
+
+  const handleYandexLogin = async () =>
+    startOAuthLogin({
+      provider: 'custom:yandex',
+      state: 'yandex',
+      errorToastKey: 'toasts.yandexStartError',
+      errorLogLabel: 'Yandex',
+    });
+
+  const handleVKLogin = async () =>
+    startOAuthLogin({
+      provider: 'custom:vk',
+      state: 'vk',
+      errorToastKey: 'toasts.vkStartError',
+      errorLogLabel: 'VK',
     });
 
   const handleEmailSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -286,7 +303,7 @@ export function LoginPage({
       <div className="space-y-3">
         <button
           onClick={handleGoogleLogin}
-          disabled={isSubmitting || activeProvider === 'google'}
+          disabled={isSubmitting || activeProvider !== null}
           className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {activeProvider === 'google' ? (
@@ -313,6 +330,38 @@ export function LoginPage({
           )}
           {loginT('googleAction')}
         </button>
+
+        {yandexAuthEnabled && (
+          <button
+            type="button"
+            onClick={handleYandexLogin}
+            disabled={isSubmitting || activeProvider !== null}
+            className="flex w-full items-center justify-center gap-3 rounded-2xl bg-black px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {activeProvider === 'yandex' ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <span aria-hidden="true" className="text-xl font-bold text-red-500">Я</span>
+            )}
+            {loginT('yandexAction')}
+          </button>
+        )}
+
+        {vkAuthEnabled && (
+          <button
+            type="button"
+            onClick={handleVKLogin}
+            disabled={isSubmitting || activeProvider !== null}
+            className="flex w-full items-center justify-center gap-3 rounded-2xl bg-[var(--vk-auth-background)] px-5 py-4 text-sm font-semibold text-[var(--vk-auth-foreground)] transition hover:bg-[var(--vk-auth-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {activeProvider === 'vk' ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <span aria-hidden="true" className="text-base font-bold">VK</span>
+            )}
+            {loginT('vkAction')}
+          </button>
+        )}
 
         <a
           href={telegramBotUrl || '#'}
@@ -417,7 +466,7 @@ export function LoginPage({
 
         <button
           type="submit"
-          disabled={isSubmitting || activeProvider === 'google'}
+          disabled={isSubmitting || activeProvider !== null}
           className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-900 px-5 py-4 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isSubmitting ? (

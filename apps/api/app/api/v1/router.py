@@ -25,11 +25,15 @@ from app.api.v1.endpoints.webapp import router as webapp_router
 from app.api.v1.endpoints.webhooks import router as webhooks_router
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.linking import router as linking_router
+from app.api.v1.endpoints.yandex import router as yandex_router
+from app.api.v1.endpoints.vk import router as vk_router
 
 api_router = APIRouter()
 
 api_router.include_router(health_router, tags=["health"])
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
+api_router.include_router(yandex_router, prefix="/auth", tags=["auth"])
+api_router.include_router(vk_router, prefix="/auth", tags=["auth"])
 api_router.include_router(admin_auth_router, prefix="/admin/auth", tags=["admin-auth"])
 api_router.include_router(internal_router, prefix="/internal", tags=["internal"])
 api_router.include_router(linking_router, prefix="/accounts", tags=["linking"])

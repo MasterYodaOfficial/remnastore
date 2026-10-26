@@ -149,6 +149,68 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
                     len(base64.b64decode(link[len(prefix) :], validate=True)), 512
                 )
 
+    async def test_hwid_null_resolves_panel_fallback_and_external_squad_override(self):
+        for override, expected, global_requests in (
+            (None, 7, 1),
+            ({"enabled": True, "fallbackDeviceLimit": 5}, 5, 0),
+            ({"enabled": False, "fallbackDeviceLimit": 5}, 0, 0),
+        ):
+            requests = []
+
+            def respond(request):
+                requests.append(request)
+                if "external-squads" in request.url.path:
+                    payload = {"subscriptionSettings": {"hwidSettings": override}}
+                else:
+                    payload = {
+                        "hwidSettings": {"enabled": True, "fallbackDeviceLimit": 7}
+                    }
+                return httpx.Response(200, json={"response": payload})
+
+            gateway = self._make_gateway(squads=[])
+            user = SimpleNamespace(
+                hwid_device_limit=None, external_squad_uuid=uuid.uuid4()
+            )
+            async with httpx.AsyncClient(
+                base_url="https://panel.test/api/",
+                transport=httpx.MockTransport(respond),
+            ) as client:
+                gateway._sdk.hwid = RemnawaveSDK(client=client).hwid
+                self.assertEqual(
+                    await gateway.resolve_hwid_device_limit(user), expected
+                )
+                self.assertEqual(
+                    sum(r.url.path.endswith("subscription-settings") for r in requests),
+                    global_requests,
+                )
+                for explicit in (0, 4):
+                    user.hwid_device_limit = explicit
+                    self.assertEqual(
+                        await gateway.resolve_hwid_device_limit(user), explicit
+                    )
+                self.assertEqual(len(requests), global_requests + 1)
+
+    async def test_hwid_fallback_errors_are_not_reported_as_unlimited(self):
+        for payload, status in (
+            ({}, 200),
+            ({"hwidSettings": {"enabled": True, "fallbackDeviceLimit": -1}}, 200),
+            ({"error": "offline"}, 503),
+        ):
+            gateway = self._make_gateway(squads=[])
+            async with httpx.AsyncClient(
+                base_url="https://panel.test/api/",
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(status, json={"response": payload})
+                ),
+            ) as client:
+                gateway._sdk.hwid = RemnawaveSDK(client=client).hwid
+                with self.assertRaises(RemnawaveRequestError):
+                    await gateway.resolve_hwid_device_limit(
+                        SimpleNamespace(
+                            hwid_device_limit=None, external_squad_uuid=None
+                        )
+                    )
+
     async def test_hwid_operations_are_scoped_to_user_and_limit_patch_is_minimal(self):
         user_uuid = uuid.uuid4()
         gateway = self._make_gateway(squads=[])

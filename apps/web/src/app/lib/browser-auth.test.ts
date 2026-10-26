@@ -2,8 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   hasPendingSupabaseOAuthCallback,
+  readOAuthCallbackError,
   resolvePendingSupabaseSession,
 } from './browser-auth';
+
+describe('OAuth callback errors', () => {
+  it('handles email verification, cancellation and unknown failures without reflecting provider text', () => {
+    expect(readOAuthCallbackError('https://example.com/#error=access_denied&error_code=provider_email_needs_verification')).toBe('verifyEmail');
+    expect(readOAuthCallbackError('https://example.com/?error=access_denied')).toBe('cancelled');
+    expect(readOAuthCallbackError('https://example.com/#error=server_error&error_description=private')).toBe('failed');
+    expect(readOAuthCallbackError('https://example.com/?code=valid')).toBeNull();
+  });
+});
 
 describe('hasPendingSupabaseOAuthCallback', () => {
   it('detects a Supabase PKCE callback code in the URL', () => {

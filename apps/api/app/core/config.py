@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +51,11 @@ class Settings(BaseSettings):
 
     database_url: str = ""
     redis_url: str = ""
+    yandex_oauth_client_id: str = ""
+    vk_oauth_client_id: str = ""
+    vk_oauth_bridge_secret: SecretStr = SecretStr("")
+    vk_oauth_callback_url: str = ""
+    vk_oauth_supabase_callback_url: str = ""
 
     remnawave_api_url: str = ""
     remnawave_api_token: str = ""

@@ -282,6 +282,11 @@ def publish_release(
     assets = {
         "compose.yml": (root / "deploy/compose.yml").read_bytes(),
         "env.example": (root / "deploy/.env.example").read_bytes(),
+        "yandex-id.md": (root / "docs/yandex-id.md").read_bytes(),
+        "vk-id.md": (root / "docs/vk-id.md").read_bytes(),
+        "configure_yandex_auth.py": (
+            root / "scripts/configure_yandex_auth.py"
+        ).read_bytes(),
         "VERSION": (release.version + "\n").encode(),
         "images.json": json.dumps(
             {

@@ -131,6 +131,71 @@ class AccountServiceFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await get_account_by_id(session, "not-a-uuid"))
             self.assertIsNone(await get_account_by_id(session, None))
 
+    async def test_custom_vk_repeat_login_preserves_telegram_account(self) -> None:
+        existing = await self._create_account(
+            telegram_id=7654321, display_name="Existing"
+        )
+        await self._create_auth_account(
+            account_id=existing.id,
+            provider=AuthProvider.VK,
+            provider_uid="12345678",
+        )
+        user = SupabaseUser(
+            id="supabase-vk",
+            identities=[
+                SupabaseIdentity(
+                    provider="custom:vk", identity_data={"sub": "12345678"}
+                )
+            ],
+        )
+        for _ in range(2):
+            async with self._session_factory() as session:
+                account = await upsert_supabase_account(session, supabase_user=user)
+                self.assertEqual(account.id, existing.id)
+                self.assertEqual(account.telegram_id, 7654321)
+        async with self._session_factory() as session:
+            links = (
+                await session.execute(
+                    AuthAccount.__table__.select().where(
+                        AuthAccount.account_id == existing.id
+                    )
+                )
+            ).all()
+        self.assertEqual(len(links), 2)
+
+    async def test_custom_yandex_repeat_login_preserves_telegram_account(self) -> None:
+        existing = await self._create_account(
+            telegram_id=7654321, display_name="Existing"
+        )
+        await self._create_auth_account(
+            account_id=existing.id,
+            provider=AuthProvider.YANDEX,
+            provider_uid="yandex-123",
+        )
+        user = SupabaseUser(
+            id="supabase-yandex",
+            email="user@yandex.ru",
+            identities=[
+                SupabaseIdentity(
+                    provider="custom:yandex", identity_data={"sub": "yandex-123"}
+                )
+            ],
+        )
+        for _ in range(2):
+            async with self._session_factory() as session:
+                account = await upsert_supabase_account(session, supabase_user=user)
+                self.assertEqual(account.id, existing.id)
+                self.assertEqual(account.telegram_id, 7654321)
+        async with self._session_factory() as session:
+            links = (
+                await session.execute(
+                    AuthAccount.__table__.select().where(
+                        AuthAccount.account_id == existing.id
+                    )
+                )
+            ).all()
+        self.assertEqual(len(links), 2)
+
     def test_supabase_identity_helpers_cover_mapping_links_and_names(self) -> None:
         self.assertEqual(
             _map_supabase_identity_provider(" Google "),

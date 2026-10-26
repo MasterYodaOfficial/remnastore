@@ -53,6 +53,7 @@ class RemnawaveUser:
     lifetime_used_traffic_bytes: int = 0
     online_at: Optional[datetime] = None
     first_connected_at: Optional[datetime] = None
+    external_squad_uuid: Optional[UUID] = None
 
 
 def _sanitize_username_component(value: str | None) -> str:
@@ -146,6 +147,7 @@ def _to_user_snapshot(response: object) -> RemnawaveUser:
         email=response.email,
         tag=response.tag,
         hwid_device_limit=getattr(response, "hwid_device_limit", None),
+        external_squad_uuid=getattr(response, "external_squad_uuid", None),
         traffic_limit_bytes=getattr(response, "traffic_limit_bytes", None),
         traffic_limit_strategy=_normalize_optional_strategy(
             getattr(response, "traffic_limit_strategy", None)
@@ -233,6 +235,41 @@ def _dedupe_users_by_uuid(users: list[RemnawaveUser]) -> list[RemnawaveUser]:
 
 
 class RemnawaveGateway:
+    async def resolve_hwid_device_limit(self, user: RemnawaveUser) -> int:
+        """Resolve null from panel settings, including an external squad override."""
+        if user.hwid_device_limit is not None:
+            limit = user.hwid_device_limit
+        else:
+            try:
+                hwid = None
+                if user.external_squad_uuid:
+                    response = await self._hwid_request(
+                        "GET", f"external-squads/{user.external_squad_uuid}"
+                    )
+                    squad = _unwrap_response_envelope(response.json())
+                    if not isinstance(squad, dict):
+                        raise ValueError("Invalid external squad")
+                    subscription = squad.get("subscriptionSettings") or {}
+                    if not isinstance(subscription, dict):
+                        raise ValueError("Invalid external squad settings")
+                    hwid = subscription.get("hwidSettings")
+                if hwid is None:
+                    response = await self._hwid_request("GET", "subscription-settings")
+                    subscription = _unwrap_response_envelope(response.json())
+                    if not isinstance(subscription, dict):
+                        raise ValueError("Invalid subscription settings")
+                    hwid = subscription.get("hwidSettings")
+                if not isinstance(hwid, dict) or not isinstance(
+                    hwid.get("enabled"), bool
+                ):
+                    raise ValueError("Missing HWID settings")
+                limit = hwid.get("fallbackDeviceLimit") if hwid["enabled"] else 0
+            except ValueError as exc:
+                raise RemnawaveRequestError("Invalid HWID settings response") from exc
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise RemnawaveRequestError("Invalid HWID device limit")
+        return limit
+
     async def _hwid_request(self, method: str, path: str, **kwargs) -> httpx.Response:
         try:
             response = await self._sdk.hwid.client.request(method, path, **kwargs)

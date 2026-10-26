@@ -166,6 +166,40 @@ for (const width of [390, 1440]) {
   });
 }
 
+for (const width of [390, 1440]) {
+  test(`device limit reconciliation and panel outage at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await mockAuthenticatedMobileSession(page, { initialUnreadCount: 0 });
+    let limit = 4;
+    let offline = false;
+    await page.route('**/api/v1/devices', async (route) => route.fulfill({ json: {
+      base_limit: limit - 1, extra_count: 1, renewal_extra_count: 1, limit,
+      devices: offline ? null : [{ hwid: 'phone', device_model: 'iPhone' }],
+      expires_at: '2027-01-01T00:00:00Z', can_purchase: !offline, sync_pending: false,
+      is_active: true, limit_sync_status: offline ? 'unavailable' : 'synced',
+      panel_limit: offline ? null : limit,
+    } }));
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Настройки', exact: true }).click();
+    await page.getByRole('button', { name: /Устройства Подключения/ }).click();
+    await expect(page.getByText('Добавлено 1 из 4')).toBeVisible();
+    limit = 8;
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+    await expect(page.getByText('Добавлено 1 из 8')).toBeVisible();
+    offline = true;
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+    await expect(page.getByText(/последний подтверждённый лимит/)).toBeVisible();
+    await expect(page.getByText('Лимит устройств: 8')).toBeVisible();
+    await expect(page.getByText(/Устройств пока нет/)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Рассчитать стоимость', exact: true })).toHaveCount(0);
+    offline = false;
+    await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+    await expect(page.getByText('Добавлено 1 из 8')).toBeVisible();
+    await expect(page.getByText(/последний подтверждённый лимит/)).toHaveCount(0);
+    await page.screenshot({ path: test.info().outputPath(`devices-synced-${width}.png`) });
+  });
+}
+
 function buildReferralSummaryResponse(availableForWithdraw: number) {
   return {
     referral_code: "ALICE123",

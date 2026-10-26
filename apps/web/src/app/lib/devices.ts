@@ -13,11 +13,13 @@ export interface DevicesState {
   extra_count: number;
   renewal_extra_count: number;
   limit: number;
-  devices: RegisteredDevice[];
+  devices: RegisteredDevice[] | null;
   expires_at: string | null;
   can_purchase: boolean;
   sync_pending: boolean;
   is_active: boolean;
+  limit_sync_status?: 'synced' | 'pending' | 'unavailable' | 'conflict';
+  panel_limit?: number | null;
 }
 
 export interface DevicePurchaseQuote {
