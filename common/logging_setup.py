@@ -20,6 +20,10 @@ _SENSITIVE_FIELD_NAMES = {
     "bot_token",
     "cookie",
     "credentials",
+    "code_verifier",
+    "oauth_code",
+    "oauth_state",
+    "device_id",
     "init_data",
     "link_token",
     "password",
@@ -38,6 +42,12 @@ _SENSITIVE_FIELD_SUFFIXES = (
     "_authorization",
 )
 _INLINE_REDACTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"(?i)([?&])(code|state|code_verifier|device_id|client_secret)=([^&\s]+)"
+        ),
+        r"\1\2=[REDACTED]",
+    ),
     (
         re.compile(r"(?i)\b(authorization)\s*:\s*bearer\s+[^\s,;]+"),
         r"\1: Bearer [REDACTED]",

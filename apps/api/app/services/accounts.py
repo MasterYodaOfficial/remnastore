@@ -25,6 +25,7 @@ BASE_SUPABASE_IDENTITY_PROVIDERS = {
     "google": AuthProvider.GOOGLE,
     "yandex": AuthProvider.YANDEX,
     "custom:yandex": AuthProvider.YANDEX,
+    "custom:vk": AuthProvider.VK,
 }
 
 

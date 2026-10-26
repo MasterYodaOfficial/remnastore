@@ -76,6 +76,23 @@ BOT_WEBHOOK_PATH=/bot/webhook
 Изменения production-конфигурации выполняются только по отдельной команде
 на деплой.
 
+### VK ID (опционально)
+
+- `VK_OAUTH_CLIENT_ID` — ID веб-приложения VK ID.
+- `VK_OAUTH_BRIDGE_SECRET` — отдельный случайный секрет (32+ символов),
+  общий для API и Supabase `custom:vk`, не секрет приложения VK.
+- `VK_OAUTH_CALLBACK_URL` — HTTPS callback API `/api/v1/auth/vk/callback`;
+  именно его регистрировать в VK ID.
+- `VK_OAUTH_SUPABASE_CALLBACK_URL` — точный HTTPS callback custom-провайдера Auth.
+- `REDIS_URL` — обязателен для одноразовых кодов, Redis 6.2+; без Redis вход закрыт.
+- `VITE_VK_AUTH_ENABLED` — `false` по умолчанию; `true` показывает кнопку
+  после настройки и проверки всего потока.
+
+Секрет не передаётся frontend. Supabase по-прежнему выдаёт обычную сессию;
+API-мост адаптирует `device_id` и получение профиля VK. Настройка провайдера,
+ограничения и проверки: [VK ID](vk-id.md). Реальный вход ещё не проверен;
+production-конфигурация меняется только по отдельной команде на деплой.
+
 ### Remnawave
 
 - `REMNAWAVE_API_URL`

@@ -12,6 +12,28 @@ from common.logging_setup import (
 
 
 class LoggingConfigTests(unittest.TestCase):
+    def test_oauth_callback_query_values_are_redacted(self) -> None:
+        value = (
+            "GET /api/v1/auth/vk/callback?code=secret-code&state=secret-state"
+            "&device_id=secret-device&code_verifier=secret-verifier"
+            "&client_secret=secret-bridge&safe=yes HTTP/1.1"
+        )
+        result = redact_sensitive_text(value)
+        self.assertNotIn("secret-", result)
+        self.assertIn("&safe=yes HTTP/1.1", result)
+        self.assertEqual(result.count("[REDACTED]"), 5)
+
+    def test_oauth_structured_fields_are_redacted(self) -> None:
+        record = logging.LogRecord(
+            "test", logging.INFO, __file__, 1, "callback", (), None
+        )
+        record.metadata = {
+            key: "secret-value"
+            for key in ("code_verifier", "oauth_code", "oauth_state", "device_id")
+        }
+        SensitiveDataFilter().filter(record)
+        self.assertEqual(set(record.metadata.values()), {"[REDACTED]"})
+
     def test_resolve_log_level_accepts_lowercase_level_name(self) -> None:
         self.assertEqual(resolve_log_level("info"), "INFO")
 

@@ -83,6 +83,9 @@ class ReleaseTests(unittest.TestCase):
         (self.root / "docs/yandex-id.md").write_text(
             "# Настройка Яндекс ID\n", encoding="utf-8"
         )
+        (self.root / "docs/vk-id.md").write_text(
+            "# Настройка VK ID\n", encoding="utf-8"
+        )
         (self.root / "scripts").mkdir()
         (self.root / "scripts/configure_yandex_auth.py").write_bytes(
             b"# Configure the Yandex provider manually.\n"
@@ -169,12 +172,14 @@ class ReleaseTests(unittest.TestCase):
                 "VERSION",
                 "images.json",
                 "yandex-id.md",
+                "vk-id.md",
                 "configure_yandex_auth.py",
             },
         )
         for name, path in {
             "env.example": "deploy/.env.example",
             "yandex-id.md": "docs/yandex-id.md",
+            "vk-id.md": "docs/vk-id.md",
             "configure_yandex_auth.py": "scripts/configure_yandex_auth.py",
         }.items():
             self.assertEqual(self.github.uploads[name], (self.root / path).read_bytes())

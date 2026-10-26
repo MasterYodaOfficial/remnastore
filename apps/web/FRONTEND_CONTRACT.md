@@ -667,6 +667,7 @@ Frontend использует такие переменные:
 - `VITE_SUPABASE_URL` — URL проекта Supabase
 - `VITE_SUPABASE_ANON_KEY` — публичный anon key Supabase
 - `VITE_YANDEX_AUTH_ENABLED` — показывает «Войти с Яндекс ID» только при значении `true`; по умолчанию выключено
+- `VITE_VK_AUTH_ENABLED` — показывает «Войти с VK ID» только при `true`; по умолчанию выключено до настройки и проверки провайдера
 - `VITE_WEB_BRAND_NAME` — runtime-бренд внутри интерфейса, если конкретный UI-элемент читает его
 - `VITE_BROWSER_BRAND_NAME` — бренд для `document.title` и названия вкладки браузера
 - `VITE_TELEGRAM_BOT_URL` — ссылка на Telegram-бота для browser login entrypoint
@@ -686,6 +687,13 @@ Frontend использует такие переменные:
   Client Secret хранится только на сервере Auth, во frontend не передаётся.
   Первый вход может потребовать подтверждения email письмом Supabase.
   Подробности: [настройка Яндекс ID](../../docs/yandex-id.md).
+- `VK ID` через Supabase custom provider `custom:vk` и API OAuth-мост
+  `/api/v1/auth/vk/{authorize,callback,token,userinfo}`. Мост адаптирует VK PKCE
+  и `device_id`; Supabase остаётся источником browser-сессии. Секрет моста
+  хранится только в API/Auth, коды и профиль временно находятся в Redis.
+  Отсутствующий email разрешён; непроверенный email требует обычной проверки
+  Supabase. Кнопки провайдеров блокируются на время запуска входа, ошибки
+  допускают повторную попытку. Подробности: [VK ID](../../docs/vk-id.md).
 - можно использовать email/password и password reset
 - нельзя использовать `service_role` или `sb_secret_*` на фронте
 - redirect URL должны быть явно перечислены без лишних wildcard

@@ -13,6 +13,10 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class OAuthStateUnavailable(Exception):
+    """OAuth state must fail closed, unlike optional response caching."""
+
+
 class RedisCache:
     def __init__(self, redis_url: str) -> None:
         self._redis_url = redis_url.strip()
@@ -183,6 +187,31 @@ class RedisCache:
             await client.delete(*keys)
         except RedisError:
             logger.exception("redis delete failed")
+
+    async def set_oauth_json(self, key: str, value: dict, ttl_seconds: int) -> None:
+        client = self._client_or_none()
+        if client is None:
+            raise OAuthStateUnavailable()
+        try:
+            if not await client.set(key, json.dumps(value), ex=ttl_seconds, nx=True):
+                raise OAuthStateUnavailable()
+        except RedisError:
+            raise OAuthStateUnavailable() from None
+
+    async def get_oauth_json(self, key: str, *, consume: bool = False) -> dict | None:
+        client = self._client_or_none()
+        if client is None:
+            raise OAuthStateUnavailable()
+        try:
+            value = await client.getdel(key) if consume else await client.get(key)
+            if value is None:
+                return None
+            payload = json.loads(value)
+            if not isinstance(payload, dict):
+                raise OAuthStateUnavailable()
+            return payload
+        except (RedisError, ValueError, TypeError):
+            raise OAuthStateUnavailable() from None
 
 
 _cache = RedisCache(settings.redis_url)
