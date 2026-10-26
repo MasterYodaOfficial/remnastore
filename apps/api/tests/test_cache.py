@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 from redis.exceptions import RedisError
 
-from app.services.cache import RedisCache
+from app.services.cache import OAuthStateUnavailable, RedisCache
 
 
 class _FakeRedisClient:
@@ -13,10 +13,61 @@ class _FakeRedisClient:
         self.set = AsyncMock(return_value=True)
         self.eval = AsyncMock(return_value=1)
         self.get = AsyncMock(return_value=None)
+        self.getdel = AsyncMock(return_value=None)
         self.delete = AsyncMock(return_value=0)
 
 
 class RedisCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_oauth_state_requires_shared_redis(self) -> None:
+        cache = RedisCache("")
+        with self.assertRaises(OAuthStateUnavailable):
+            await cache.set_oauth_json("key", {"state": "value"}, 300)
+        with self.assertRaises(OAuthStateUnavailable):
+            await cache.get_oauth_json("key", consume=True)
+
+    async def test_oauth_state_has_ttl_and_atomic_consumption(self) -> None:
+        client = _FakeRedisClient()
+        cache = RedisCache("redis://localhost/0")
+        cache._client = client
+        await cache.set_oauth_json("key", {"state": "value"}, 300)
+        client.set.assert_awaited_once_with(
+            "key", '{"state": "value"}', ex=300, nx=True
+        )
+        client.get.return_value = '{"state": "value"}'
+        self.assertEqual(await cache.get_oauth_json("key"), {"state": "value"})
+        client.getdel.return_value = '{"state": "value"}'
+        self.assertEqual(
+            await cache.get_oauth_json("key", consume=True), {"state": "value"}
+        )
+        client.getdel.assert_awaited_once_with("key")
+        client.getdel.return_value = None
+        self.assertIsNone(await cache.get_oauth_json("key", consume=True))
+
+    async def test_oauth_storage_failures_do_not_fall_back_or_log_secrets(self) -> None:
+        client = _FakeRedisClient()
+        cache = RedisCache("redis://localhost/0")
+        cache._client = client
+        client.set.return_value = False
+        with self.assertRaises(OAuthStateUnavailable):
+            await cache.set_oauth_json("key", {}, 300)
+        client.set.side_effect = RedisError("private-token")
+        client.get.side_effect = RedisError("private-token")
+        client.getdel.side_effect = RedisError("private-token")
+        with patch("app.services.cache.logger") as logger:
+            for operation in (
+                cache.set_oauth_json("key", {}, 300),
+                cache.get_oauth_json("key"),
+                cache.get_oauth_json("key", consume=True),
+            ):
+                with self.assertRaises(OAuthStateUnavailable):
+                    await operation
+            self.assertFalse(logger.mock_calls)
+        client.get.side_effect = None
+        for value in ("not-json", "[]", "null", "42"):
+            client.get.return_value = value
+            with self.assertRaises(OAuthStateUnavailable):
+                await cache.get_oauth_json("key")
+
     def test_disabled_cache_does_not_create_client(self) -> None:
         cache = RedisCache("   ")
 
