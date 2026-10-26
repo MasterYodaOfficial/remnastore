@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 import unittest
 import uuid
 import json
@@ -359,6 +360,97 @@ class RemnawaveClientTests(unittest.IsolatedAsyncioTestCase):
         username = build_remnawave_username(user_uuid, telegram_id=123456789)
 
         self.assertEqual(username, "logo_vpn_tg123456789")
+
+    async def test_missing_email_is_omitted_for_create_and_update_in_both_paths(self):
+        for method in ("provision_user", "upsert_user"):
+            for email in (None, "", "   "):
+                for update in (False, True):
+                    with self.subTest(method=method, email=email, update=update):
+                        gateway = self._make_gateway(squads=[])
+                        # The test is about DTOs and wire fields, not squad configuration.
+                        gateway._resolve_active_internal_squads = AsyncMock(
+                            return_value=[]
+                        )
+                        if update:
+                            gateway.get_user_by_uuid = AsyncMock(
+                                return_value=SimpleNamespace(
+                                    uuid=uuid.uuid4(),
+                                    tag=None,
+                                    email="existing@example.com",
+                                    hwid_device_limit=3,
+                                )
+                            )
+                        kwargs = dict(
+                            user_uuid=uuid.uuid4(),
+                            expire_at=datetime(2026, 12, 1, tzinfo=UTC),
+                            email=email,
+                            telegram_id=None,
+                            is_trial=True,
+                        )
+                        if method == "upsert_user":
+                            kwargs["status"] = "ACTIVE"
+                        await getattr(gateway, method)(**kwargs)
+                        bodies = (
+                            gateway._sdk.users.updated_bodies
+                            if update
+                            else gateway._sdk.users.created_bodies
+                        )
+                        self.assertEqual(len(bodies), 1)
+                        self.assertIsNone(bodies[0].email)
+                        self.assertNotIn("email", bodies[0].model_fields_set)
+                        self.assertNotIn(
+                            "email",
+                            bodies[0].model_dump(exclude_none=True, by_alias=True),
+                        )
+
+    async def test_both_dtos_report_validation_failure_as_a_safe_integration_error(
+        self,
+    ):
+        for method in ("provision_user", "upsert_user"):
+            for update in (False, True):
+                with self.subTest(method=method, update=update):
+                    gateway = self._make_gateway(squads=[])
+                    gateway._resolve_active_internal_squads = AsyncMock(return_value=[])
+                    if update:
+                        gateway.get_user_by_uuid = AsyncMock(
+                            return_value=SimpleNamespace(
+                                uuid=uuid.uuid4(),
+                                tag=None,
+                                hwid_device_limit=3,
+                            )
+                        )
+                    kwargs = dict(
+                        user_uuid=uuid.uuid4(),
+                        expire_at=datetime(2026, 12, 1, tzinfo=UTC),
+                        email="private-invalid-address",
+                        telegram_id=None,
+                        is_trial=True,
+                    )
+                    if method == "upsert_user":
+                        kwargs["status"] = "ACTIVE"
+                    with self.assertRaises(RemnawaveRequestError) as failure:
+                        await getattr(gateway, method)(**kwargs)
+                    self.assertEqual(
+                        str(failure.exception), "Invalid Remnawave user data"
+                    )
+                    self.assertTrue(failure.exception.__suppress_context__)
+                    self.assertEqual(gateway._sdk.users.created_bodies, [])
+                    self.assertEqual(gateway._sdk.users.updated_bodies, [])
+
+    async def test_email_lookup_skips_empty_addresses_and_trims_real_ones(self):
+        gateway = self._make_gateway(squads=[])
+        gateway._sdk.users.get_users_by_email = AsyncMock(
+            return_value=SimpleNamespace(root=[])
+        )
+        for email in ("", "   "):
+            self.assertEqual(
+                await RemnawaveGateway.get_users_by_email(gateway, email), []
+            )
+        gateway._sdk.users.get_users_by_email.assert_not_awaited()
+        await RemnawaveGateway.get_users_by_email(gateway, " person@example.com ")
+        gateway._sdk.users.get_users_by_email.assert_awaited_once_with(
+            "person@example.com"
+        )
 
     def test_build_remnawave_description_uses_label_and_trial_marker(self) -> None:
         settings.remnawave_user_label = "Remna Store"

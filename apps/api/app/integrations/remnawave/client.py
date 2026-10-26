@@ -19,6 +19,7 @@ from remnawave.models.users import (
 )
 
 from app.core.config import settings
+from app.core.normalization import normalize_optional_email
 from app.integrations.remnawave.models import RemnawaveHwidDevicesResponse
 
 
@@ -404,8 +405,8 @@ class RemnawaveGateway:
 
             response = await self._sdk.users.update_user(body)
             return _to_user_snapshot(response)
-        except ValidationError as exc:
-            raise RemnawaveRequestError(_request_error_message(exc)) from exc
+        except ValidationError:
+            raise RemnawaveRequestError("Invalid Remnawave user data") from None
         except httpx.HTTPStatusError as exc:
             raise RemnawaveRequestError(_response_error_message(exc.response)) from exc
         except (ApiError, httpx.HTTPError) as exc:
@@ -423,6 +424,7 @@ class RemnawaveGateway:
         traffic_limit_bytes: int | None = None,
         traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
+        email = normalize_optional_email(email)
         username = build_remnawave_username(user_uuid, telegram_id)
         description = build_remnawave_description(
             user_uuid=user_uuid,
@@ -475,6 +477,11 @@ class RemnawaveGateway:
             create_payload["traffic_limit_strategy"] = traffic_limit_strategy
             update_payload["traffic_limit_strategy"] = traffic_limit_strategy
 
+        if email is None:
+            # Omit rather than clear: an existing remote email belongs to its owner.
+            create_payload.pop("email", None)
+            update_payload.pop("email", None)
+
         try:
             if existing_user is None:
                 response = await self._sdk.users.create_user(
@@ -485,6 +492,8 @@ class RemnawaveGateway:
                     UpdateUserRequestDto(**update_payload),
                     clear_tag=clear_tag,
                 )
+        except ValidationError:
+            raise RemnawaveRequestError("Invalid Remnawave user data") from None
         except (ApiError, httpx.HTTPError) as exc:
             raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
@@ -503,6 +512,7 @@ class RemnawaveGateway:
         traffic_limit_bytes: int | None = None,
         traffic_limit_strategy: str | None = None,
     ) -> RemnawaveUser:
+        email = normalize_optional_email(email)
         username = build_remnawave_username(user_uuid, telegram_id)
         description = build_remnawave_description(
             user_uuid=user_uuid,
@@ -556,6 +566,10 @@ class RemnawaveGateway:
             create_payload["traffic_limit_strategy"] = traffic_limit_strategy
             update_payload["traffic_limit_strategy"] = traffic_limit_strategy
 
+        if email is None:
+            create_payload.pop("email", None)
+            update_payload.pop("email", None)
+
         try:
             if existing_user is None:
                 response = await self._sdk.users.create_user(
@@ -566,6 +580,8 @@ class RemnawaveGateway:
                     UpdateUserRequestDto(**update_payload),
                     clear_tag=clear_tag,
                 )
+        except ValidationError:
+            raise RemnawaveRequestError("Invalid Remnawave user data") from None
         except (ApiError, httpx.HTTPError) as exc:
             raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
@@ -580,6 +596,9 @@ class RemnawaveGateway:
             raise RemnawaveRequestError(_request_error_message(exc)) from exc
 
     async def get_users_by_email(self, email: str) -> list[RemnawaveUser]:
+        email = normalize_optional_email(email)
+        if email is None:
+            return []
         try:
             response = await self._sdk.users.get_users_by_email(email)
         except (ApiError, httpx.HTTPError) as exc:

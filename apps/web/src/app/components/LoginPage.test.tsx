@@ -4,24 +4,28 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LoginPage } from './LoginPage';
 
-const mocks = vi.hoisted(() => ({ enabled: true, vkEnabled: false, signIn: vi.fn(), error: vi.fn() }));
+const mocks = vi.hoisted(() => ({ enabled: true, vkEnabled: false, signIn: vi.fn(), error: vi.fn(), success: vi.fn(), recoverySession: vi.fn(), updateUser: vi.fn() }));
 vi.mock('../../../utils/runtime-config', () => ({
   get yandexAuthEnabled() { return mocks.enabled; },
   get vkAuthEnabled() { return mocks.vkEnabled; },
 }));
 vi.mock('../../../utils/supabase/client', () => ({
-  supabase: { auth: { signInWithOAuth: mocks.signIn } },
+  supabase: { auth: { signInWithOAuth: mocks.signIn, updateUser: mocks.updateUser } },
+  getPasswordRecoverySession: mocks.recoverySession,
 }));
 vi.mock('../lib/referrals', () => ({
   getActiveReferralCode: () => null, buildTelegramReferralBotUrl: () => '',
 }));
-vi.mock('sonner', () => ({ toast: { error: mocks.error } }));
+vi.mock('sonner', () => ({ toast: { error: mocks.error, success: mocks.success } }));
 
 beforeEach(() => {
   mocks.enabled = true;
   mocks.vkEnabled = false;
   mocks.signIn.mockReset().mockResolvedValue({ error: null });
   mocks.error.mockReset();
+  mocks.success.mockReset();
+  mocks.recoverySession.mockReset().mockResolvedValue({ access_token: 'recovery-token', user: { id: 'user' } });
+  mocks.updateUser.mockReset().mockResolvedValue({ error: null });
 });
 afterEach(cleanup);
 
@@ -95,5 +99,52 @@ describe('Yandex login', () => {
     ));
     expect(screen.getByRole('button', { name: 'Войти с Яндекс ID' })).toBeEnabled();
     vi.restoreAllMocks();
+  });
+});
+
+describe('password recovery', () => {
+  const fill = (password: string, confirmation: string) => {
+    fireEvent.change(screen.getByPlaceholderText('Минимум 8 символов'), { target: { value: password } });
+    fireEvent.change(screen.getByPlaceholderText('Повторите новый пароль'), { target: { value: confirmation } });
+  };
+
+  it('validates both password fields before trying to update', () => {
+    render(<LoginPage view="recovery" />);
+    fill('short', 'short');
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить новый пароль' }));
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+    fill('long-enough-password', 'another-password');
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить новый пароль' }));
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+  });
+
+  it('does not update an ordinary session when recovery proof is missing', async () => {
+    const expired = vi.fn();
+    const logging = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      mocks.recoverySession.mockResolvedValue(null);
+      render(<LoginPage view="recovery" onRecoveryExpired={expired} />);
+      fill('new-valid-password', 'new-valid-password');
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить новый пароль' }));
+      await waitFor(() => expect(expired).toHaveBeenCalledOnce());
+      expect(mocks.updateUser).not.toHaveBeenCalled();
+    } finally { logging.mockRestore(); }
+  });
+
+  it('keeps the form after a save failure and completes only after success', async () => {
+    const completed = vi.fn();
+    const logging = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      mocks.updateUser.mockResolvedValueOnce({ error: Object.assign(new Error('Try again'), { status: 503 }) });
+      render(<LoginPage view="recovery" onRecoveryComplete={completed} />);
+      fill('new-valid-password', 'new-valid-password');
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить новый пароль' }));
+      await waitFor(() => expect(mocks.error).toHaveBeenCalledWith('Try again'));
+      expect(completed).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Сохранить новый пароль' })).toBeEnabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить новый пароль' }));
+      await waitFor(() => expect(completed).toHaveBeenCalledOnce());
+      expect(mocks.updateUser).toHaveBeenLastCalledWith({ password: 'new-valid-password' });
+    } finally { logging.mockRestore(); }
   });
 });

@@ -8,11 +8,33 @@ client-supplied profile or email. Tokens are not persisted or logged.
 import httpx
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import EmailStr, TypeAdapter, ValidationError
 
 from app.core.config import settings
 
 router = APIRouter()
 NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+EMAIL = TypeAdapter(EmailStr)
+YANDEX_MAIL_DOMAINS = frozenset(
+    {"yandex.ru", "ya.ru", "yandex.com", "yandex.by", "yandex.kz"}
+)
+
+
+def owns_yandex_mailbox(profile: dict, email: str) -> bool:
+    """Trust a mailbox assigned to this login, not an arbitrary contact email.
+
+    Yandex documents that its login aliases are assigned at registration.
+    /info has no email_verified claim; external/contact addresses still require
+    confirmation. Domain membership alone is not evidence of ownership.
+    """
+    login = profile.get("login")
+    local, _, domain = email.rpartition("@")
+    return (
+        isinstance(login, str)
+        and bool(login.strip())
+        and domain.casefold() in YANDEX_MAIL_DOMAINS
+        and local.casefold() == login.strip().casefold()
+    )
 
 
 def fail(status: int, detail: str) -> HTTPException:
@@ -59,13 +81,15 @@ async def yandex_userinfo(authorization: str | None = Header(default=None)):
     email = profile.get("default_email")
     if not isinstance(email, str) or not email.strip():
         raise fail(422, "Yandex email permission is required")
+    try:
+        email = str(EMAIL.validate_python(email.strip()))
+    except ValidationError:
+        raise fail(422, "Yandex profile has no valid email") from None
 
     claims = {
         "sub": subject,
-        "email": email.strip(),
-        # Yandex /info does not attest email verification. Supabase must verify
-        # it before using it for account linking; do not infer this from a domain.
-        "email_verified": False,
+        "email": email,
+        "email_verified": owns_yandex_mailbox(profile, email),
     }
     for source, destination in (
         ("real_name", "name"),

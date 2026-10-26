@@ -9,7 +9,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -39,7 +39,11 @@ from app.db.models import (
     SubscriptionPlanRecord,
 )
 from app.db.session import get_session
-from app.integrations.remnawave.client import RemnawaveRequestError, RemnawaveUser
+from app.integrations.remnawave.client import (
+    RemnawaveGateway,
+    RemnawaveRequestError,
+    RemnawaveUser,
+)
 from app.main import create_app
 from app.services.i18n import translate
 from app.services.referrals import calculate_referral_reward_amount
@@ -417,6 +421,80 @@ class SubscriptionFlowTests(unittest.IsolatedAsyncioTestCase):
             [item.event_type for item in event_logs], ["subscription.trial.activated"]
         )
         self.assertEqual(event_logs[0].source, "api")
+
+    def _use_sdk_user_dtos(self):
+        """Keep real request validation while replacing only the remote service."""
+        gateway = RemnawaveGateway.__new__(RemnawaveGateway)
+        gateway.get_user_by_uuid = self._fake_gateway.get_user_by_uuid
+        gateway.get_user_by_username = AsyncMock(return_value=None)
+        gateway.get_users_by_email = self._fake_gateway.get_users_by_email
+        gateway.get_users_by_telegram_id = self._fake_gateway.get_users_by_telegram_id
+        gateway._resolve_active_internal_squads = AsyncMock(return_value=[])
+
+        async def create_user(body):
+            return await self._fake_gateway.provision_user(
+                user_uuid=body.uuid,
+                expire_at=body.expire_at,
+                email=body.email,
+                telegram_id=body.telegram_id,
+                is_trial=body.tag == "TRIAL",
+                hwid_device_limit=body.hwid_device_limit,
+                traffic_limit_bytes=body.traffic_limit_bytes,
+                traffic_limit_strategy=body.traffic_limit_strategy,
+            )
+
+        gateway._sdk = SimpleNamespace(
+            users=SimpleNamespace(create_user=AsyncMock(side_effect=create_user))
+        )
+        subscriptions_service.get_remnawave_gateway = lambda: gateway
+        return gateway
+
+    async def test_trial_without_email_uses_valid_sdk_dto(self):
+        self._use_sdk_user_dtos()
+        for email in (None, "", "  "):
+            account = await self._create_account(email=email)
+            self._current_account_id = account.id
+            response = await self.client.post("/api/v1/subscriptions/trial")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertTrue(response.json()["has_used_trial"])
+            self.assertIsNone(self._fake_gateway.users[account.id].email)
+
+    async def test_trial_validation_error_keeps_eligibility_for_one_successful_retry(
+        self,
+    ):
+        gateway = self._use_sdk_user_dtos()
+        account = await self._create_account(email="not-an-address")
+        self._current_account_id = account.id
+        failed = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(failed.status_code, 502, failed.text)
+        stored = await self._get_account(account.id)
+        self.assertFalse(stored.has_used_trial)
+        self.assertIsNone(stored.trial_used_at)
+        gateway._sdk.users.create_user.assert_not_awaited()
+        async with self._session_factory() as session:
+            stored = await session.get(Account, account.id)
+            stored.email = None
+            await session.commit()
+        successful = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertEqual(successful.status_code, 200, successful.text)
+        repeated = await self.client.post("/api/v1/subscriptions/trial")
+        self.assertNotEqual(repeated.status_code, 200)
+        gateway._sdk.users.create_user.assert_awaited_once()
+
+    async def test_paid_subscription_without_email_is_applied_and_charged_once(self):
+        gateway = self._use_sdk_user_dtos()
+        account = await self._create_account(email="  ", balance=PLAN_1M_PRICE_RUB * 3)
+        self._current_account_id = account.id
+        for _ in range(2):
+            response = await self.client.post(
+                "/api/v1/subscriptions/wallet/plans/plan_1m",
+                json={"idempotency_key": "paid-no-email"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+        stored = await self._get_account(account.id)
+        self.assertEqual(stored.balance, PLAN_1M_PRICE_RUB * 2)
+        self.assertIsNone(self._fake_gateway.users[account.id].email)
+        gateway._sdk.users.create_user.assert_awaited_once()
 
     async def test_internal_bot_trial_activation_persists_bot_source(self) -> None:
         account = await self._create_account(

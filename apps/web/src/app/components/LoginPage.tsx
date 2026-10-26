@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Loader2, Lock, Mail } from 'lucide-react';
 import { toast } from 'sonner';
-import { supabase } from '../../../utils/supabase/client';
+import { getPasswordRecoverySession, supabase } from '../../../utils/supabase/client';
 import { vkAuthEnabled, yandexAuthEnabled } from '../../../utils/runtime-config';
 import { getActiveReferralCode, buildTelegramReferralBotUrl } from '../lib/referrals';
 import { t } from '../../lib/i18n';
@@ -15,6 +15,7 @@ interface LoginPageProps {
   view?: 'default' | 'recovery' | 'recovery-expired';
   onRecoveryComplete?: () => Promise<void> | void;
   onRecoveryCancel?: () => Promise<void> | void;
+  onRecoveryExpired?: () => void;
   onAuthViewReset?: () => Promise<void> | void;
 }
 
@@ -50,6 +51,7 @@ export function LoginPage({
   view = 'default',
   onRecoveryComplete,
   onRecoveryCancel,
+  onRecoveryExpired,
   onAuthViewReset,
 }: LoginPageProps) {
   const [formMode, setFormMode] = useState<LoginFormMode>('signin');
@@ -269,17 +271,17 @@ export function LoginPage({
     setActiveProvider('recovery');
 
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const session = await getPasswordRecoverySession();
 
       if (!session?.access_token) {
+        onRecoveryExpired?.();
         throw new Error(loginT('toasts.recoverySessionMissing'));
       }
 
       const { error } = await supabase.auth.updateUser({ password });
 
       if (error) {
+        if (error.status === 401 || ['session_not_found', 'session_expired', 'bad_jwt', 'refresh_token_not_found'].includes(error.code ?? '')) onRecoveryExpired?.();
         throw error;
       }
 
@@ -572,6 +574,7 @@ export function LoginPage({
         <button
           type="button"
           onClick={() => void onRecoveryCancel?.()}
+          disabled={isSubmitting}
           className="w-full text-center text-sm font-medium text-slate-500 transition hover:text-slate-900"
         >
           {loginT('cancel')}
