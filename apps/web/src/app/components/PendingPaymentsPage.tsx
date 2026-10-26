@@ -4,6 +4,7 @@ import { ArrowUpRight, Clock3, CreditCard, RefreshCw, Wallet } from 'lucide-reac
 import { formatRubles } from '../../lib/currency';
 import { t } from '../../lib/i18n';
 import { InfoPageLayout } from './InfoPageLayout';
+import { PaymentModeButtons } from './PaymentModeButtons';
 
 export interface PendingPaymentView {
   provider: 'yookassa' | 'telegram_stars';
@@ -151,18 +152,21 @@ export function PendingPaymentsPage({
                     </div>
                   </div>
 
-                  <button
+                  {item.sbpConfirmationUrl ? (
+                    <div className="mt-4">
+                      <PaymentModeButtons onSelect={(mode) => onResume({
+                        ...item,
+                        confirmationUrl: mode === 'sbp' ? item.sbpConfirmationUrl ?? null : item.confirmationUrl,
+                      })} />
+                    </div>
+                  ) : <button
                     onClick={() => onResume(item)}
                     disabled={!item.confirmationUrl}
                     className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[var(--tg-theme-button-color,#3390ec)] px-4 py-2.5 text-sm font-semibold text-[var(--tg-theme-button-text-color,#ffffff)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {t('web.pendingPayments.resume')}
                     <ArrowUpRight className="h-4 w-4" />
-                  </button>
-                  {item.sbpConfirmationUrl && <button
-                    onClick={() => onResume({ ...item, confirmationUrl: item.sbpConfirmationUrl ?? null })}
-                    className="ml-3 mt-4 rounded-xl border px-4 py-2.5 text-sm font-semibold"
-                  >Оплатить через СБП</button>}
+                  </button>}
                 </div>
               </div>
             </article>
