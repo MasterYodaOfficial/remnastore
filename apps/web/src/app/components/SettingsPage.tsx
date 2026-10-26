@@ -31,6 +31,7 @@ interface SettingsPageProps {
   showLogout?: boolean;
   user?: {
     email?: string;
+    authProviders?: string[];
     telegram_id?: number | null;
   };
   onLinkTelegram?: () => void;
@@ -112,6 +113,7 @@ export function SettingsPage({
 
   const hasEmail = Boolean(user?.email);
   const hasTelegram = Boolean(user?.telegram_id);
+  const hasBrowserAccount = hasEmail || Boolean(user?.authProviders?.length);
   const unavailableLabel = (
     <span className="text-sm text-[var(--tg-theme-hint-color,#999999)]">
       {t('web.settings.unavailable')}
@@ -119,6 +121,15 @@ export function SettingsPage({
   );
 
   const accountItems: SettingsItem[] = [];
+
+  for (const provider of ['google', 'yandex', 'vk']) {
+    if (!user?.authProviders?.includes(provider)) continue;
+    accountItems.push({
+      icon: Shield,
+      label: t(`web.settings.labels.${provider}Account`),
+      action: <CheckCircle className="h-5 w-5 text-[var(--app-success-color,#16a34a)]" />,
+    });
+  }
 
   if (hasEmail) {
     accountItems.push({
@@ -151,7 +162,7 @@ export function SettingsPage({
     });
   }
 
-  if (isTelegramWebApp && !hasEmail && onLinkBrowser) {
+  if (isTelegramWebApp && !hasBrowserAccount && onLinkBrowser) {
     accountItems.push({
       icon: LinkIcon,
       label: t('web.settings.labels.linkBrowser'),

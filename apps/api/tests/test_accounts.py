@@ -131,6 +131,61 @@ class AccountServiceFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(await get_account_by_id(session, "not-a-uuid"))
             self.assertIsNone(await get_account_by_id(session, None))
 
+    async def test_supabase_missing_email_is_normalized_in_account_and_identity(self):
+        for index, email in enumerate((None, "", "   ", " person@example.com ")):
+            async with self._session_factory() as session:
+                account = await upsert_supabase_account(
+                    session,
+                    supabase_user=SupabaseUser(id=f"email-{index}", email=email),
+                )
+                expected = "person@example.com" if index == 3 else None
+                self.assertEqual(account.email, expected)
+                links = (
+                    (
+                        await session.execute(
+                            AuthAccount.__table__.select().where(
+                                AuthAccount.account_id == account.id
+                            )
+                        )
+                    )
+                    .mappings()
+                    .all()
+                )
+                self.assertTrue(links)
+                self.assertTrue(all(link["email"] == expected for link in links))
+
+    async def test_blank_supabase_email_does_not_erase_existing_address(self):
+        async with self._session_factory() as session:
+            initial = await upsert_supabase_account(
+                session,
+                supabase_user=SupabaseUser(id="same-user", email="person@example.com"),
+            )
+            account_id = initial.id
+        for email in (None, "", "  "):
+            async with self._session_factory() as session:
+                account = await upsert_supabase_account(
+                    session, supabase_user=SupabaseUser(id="same-user", email=email)
+                )
+                self.assertEqual(account.id, account_id)
+                self.assertEqual(account.email, "person@example.com")
+
+    async def test_confirmed_email_lookup_uses_trimmed_value(self):
+        existing = await self._create_account(
+            email="person@example.com", telegram_id=7654321, balance=450
+        )
+        async with self._session_factory() as session:
+            account = await upsert_supabase_account(
+                session,
+                supabase_user=SupabaseUser(
+                    id="new-supabase-user",
+                    email=" person@example.com ",
+                    email_confirmed_at=datetime.now(UTC),
+                ),
+            )
+            self.assertEqual(account.id, existing.id)
+            self.assertEqual(account.telegram_id, 7654321)
+            self.assertEqual(account.balance, 450)
+
     async def test_custom_vk_repeat_login_preserves_telegram_account(self) -> None:
         existing = await self._create_account(
             telegram_id=7654321, display_name="Existing"

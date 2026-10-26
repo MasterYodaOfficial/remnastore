@@ -87,6 +87,12 @@ class ReleaseTests(unittest.TestCase):
             "# Настройка VK ID\n", encoding="utf-8"
         )
         (self.root / "scripts").mkdir()
+        (self.root / "docs/auth-recovery-email.md").write_text(
+            "# Browser auth\n", encoding="utf-8"
+        )
+        (self.root / "docs/sbp-checkout.md").write_text(
+            "# SBP checkout\n", encoding="utf-8"
+        )
         (self.root / "scripts/configure_yandex_auth.py").write_bytes(
             b"# Configure the Yandex provider manually.\n"
         )
@@ -173,6 +179,8 @@ class ReleaseTests(unittest.TestCase):
                 "images.json",
                 "yandex-id.md",
                 "vk-id.md",
+                "auth-recovery-email.md",
+                "sbp-checkout.md",
                 "configure_yandex_auth.py",
             },
         )
@@ -180,6 +188,8 @@ class ReleaseTests(unittest.TestCase):
             "env.example": "deploy/.env.example",
             "yandex-id.md": "docs/yandex-id.md",
             "vk-id.md": "docs/vk-id.md",
+            "auth-recovery-email.md": "docs/auth-recovery-email.md",
+            "sbp-checkout.md": "docs/sbp-checkout.md",
             "configure_yandex_auth.py": "scripts/configure_yandex_auth.py",
         }.items():
             self.assertEqual(self.github.uploads[name], (self.root / path).read_bytes())

@@ -78,6 +78,59 @@ class YandexProfileTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 401)
 
+    async def test_login_mailbox_can_sign_in_without_another_confirmation(self):
+        for domain in ("yandex.ru", "ya.ru", "yandex.com", "yandex.by", "yandex.kz"):
+            response = await self.request(
+                httpx.Response(
+                    200,
+                    json={
+                        "client_id": "our-client",
+                        "id": "123",
+                        "login": "person",
+                        "default_email": f"person@{domain}",
+                    },
+                )
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["email_verified"])
+
+    async def test_domain_or_provider_login_alone_does_not_verify_arbitrary_contact_email(
+        self,
+    ):
+        for login, email in (
+            ("person", "other@yandex.ru"),
+            ("person", "person@example.com"),
+            (None, "person@yandex.ru"),
+        ):
+            response = await self.request(
+                httpx.Response(
+                    200,
+                    json={
+                        "client_id": "our-client",
+                        "id": "123",
+                        "login": login,
+                        "default_email": email,
+                        "email_verified": True,
+                    },
+                )
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["email_verified"])
+
+    async def test_invalid_contact_email_is_not_returned_as_an_oauth_claim(self):
+        response = await self.request(
+            httpx.Response(
+                200,
+                json={
+                    "client_id": "our-client",
+                    "id": "123",
+                    "login": "person",
+                    "default_email": "not-an-address",
+                },
+            )
+        )
+        self.assertEqual(response.status_code, 422)
+
     async def test_missing_email_or_subject_does_not_create_identity(self):
         for profile, expected in [
             ({"client_id": "our-client", "id": "123"}, 422),

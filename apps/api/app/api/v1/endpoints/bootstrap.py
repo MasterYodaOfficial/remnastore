@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_account
-from app.db.models import Account
+from app.db.models import Account, AuthAccount
 from app.db.session import get_session
 from app.schemas.bootstrap import BootstrapResponse
 from app.services.subscriptions import get_current_subscription
@@ -17,6 +18,16 @@ async def get_bootstrap_me(
     current_account: Account = Depends(get_current_account),
 ) -> BootstrapResponse:
     response = BootstrapResponse.from_account(current_account)
+    response.account.auth_providers = list(
+        (
+            await session.scalars(
+                select(AuthAccount.provider)
+                .where(AuthAccount.account_id == current_account.id)
+                .distinct()
+                .order_by(AuthAccount.provider)
+            )
+        ).all()
+    )
     response.subscription = await get_current_subscription(
         session, account=current_account
     )

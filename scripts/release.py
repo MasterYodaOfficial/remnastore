@@ -284,6 +284,8 @@ def publish_release(
         "env.example": (root / "deploy/.env.example").read_bytes(),
         "yandex-id.md": (root / "docs/yandex-id.md").read_bytes(),
         "vk-id.md": (root / "docs/vk-id.md").read_bytes(),
+        "auth-recovery-email.md": (root / "docs/auth-recovery-email.md").read_bytes(),
+        "sbp-checkout.md": (root / "docs/sbp-checkout.md").read_bytes(),
         "configure_yandex_auth.py": (
             root / "scripts/configure_yandex_auth.py"
         ).read_bytes(),

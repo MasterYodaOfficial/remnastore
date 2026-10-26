@@ -12,6 +12,7 @@ export interface PendingPaymentView {
   currency: string;
   providerPaymentId: string;
   confirmationUrl: string | null;
+  sbpConfirmationUrl?: string | null;
   status: 'created' | 'pending' | 'requires_action';
   expiresAt: string | null;
   createdAt: string;
@@ -158,6 +159,10 @@ export function PendingPaymentsPage({
                     {t('web.pendingPayments.resume')}
                     <ArrowUpRight className="h-4 w-4" />
                   </button>
+                  {item.sbpConfirmationUrl && <button
+                    onClick={() => onResume({ ...item, confirmationUrl: item.sbpConfirmationUrl ?? null })}
+                    className="ml-3 mt-4 rounded-xl border px-4 py-2.5 text-sm font-semibold"
+                  >Оплатить через СБП</button>}
                 </div>
               </div>
             </article>

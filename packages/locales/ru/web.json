@@ -297,7 +297,10 @@
       },
       "supportEmailDescription": "Связь с поддержкой по электронной почте.",
       "labels": {
-        "emailAccount": "Email аккаунт",
+        "emailAccount": "Контактный email",
+        "googleAccount": "Google",
+        "yandexAccount": "Яндекс ID",
+        "vkAccount": "VK ID",
         "telegramAccount": "Telegram аккаунт",
         "linkTelegram": "Привязать Telegram",
         "linkBrowser": "Привязать браузерный вход",
