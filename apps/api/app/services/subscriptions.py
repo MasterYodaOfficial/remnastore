@@ -18,6 +18,7 @@ from app.integrations.remnawave import (
 )
 from app.schemas.subscription import SubscriptionStateResponse, TrialEligibilityResponse
 from app.services.account_events import append_account_event
+from app.services.devices import sync_existing_device_limit
 from app.services.cache import get_cache
 from app.services.i18n import translate
 from app.services.purchases import (
@@ -202,6 +203,14 @@ async def sync_current_subscription(
     else:
         apply_remote_subscription_snapshot(account, remote_user)
 
+    if remote_user is not None:
+        await sync_existing_device_limit(
+            session,
+            account=account,
+            source="api",
+            gateway_factory=lambda: gateway,
+        )
+
     await session.commit()
     await session.refresh(account)
     await _clear_account_cache(account.id)
@@ -360,6 +369,14 @@ async def sync_subscription_by_remnawave_user_uuid(
         clear_remote_subscription_snapshot(account)
     else:
         apply_remote_subscription_snapshot(account, remote_user)
+
+    if remote_user is not None:
+        await sync_existing_device_limit(
+            session,
+            account=account,
+            source="api",
+            gateway_factory=lambda: gateway,
+        )
 
     await session.commit()
     await session.refresh(account)

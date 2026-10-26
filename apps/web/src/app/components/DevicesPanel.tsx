@@ -27,9 +27,12 @@ export function DevicesPanel({ apiBase, accessToken, balance, onChanged, onTopUp
   const [notice, setNotice] = React.useState<string | null>(null);
   const [confirmation, setConfirmation] = React.useState<{ hwid: string } | 'reset' | null>(null);
   const purchaseKey = React.useRef('');
+  const devices = state?.devices ?? [];
+  const limitUnconfirmed = state?.limit_sync_status === 'unavailable' || state?.limit_sync_status === 'conflict';
 
   const load = React.useCallback(async () => {
     setLoading(true);
+    setQuote(null);
     try {
       const result = await deviceRequest<DevicesState>(apiBase, accessToken);
       setState(result);
@@ -86,7 +89,7 @@ export function DevicesPanel({ apiBase, accessToken, balance, onChanged, onTopUp
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full items-center justify-between gap-3 p-4 text-left">
         <span className="flex items-center gap-3"><Monitor className="h-5 w-5 text-[var(--tg-theme-button-color,#3390ec)]" />
           <span><span className="block font-semibold">{t('web.devices.title')}</span>
-            <span className="block text-sm text-[var(--tg-theme-hint-color,#999)]">{state ? state.limit === 0 ? t('web.devices.unlimited') : t('web.devices.count', { used: state.devices.length, limit: state.limit }) : t('web.devices.summary')}</span>
+            <span className="block text-sm text-[var(--tg-theme-hint-color,#999)]">{state ? state.limit === 0 ? t('web.devices.unlimited') : state.devices === null ? t('web.devices.limit', { limit: state.limit }) : t('web.devices.count', { used: devices.length, limit: state.limit }) : t('web.devices.summary')}</span>
           </span></span><ChevronDown className={`h-5 w-5 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && <div className="space-y-4 border-t border-[var(--app-border-color,rgba(15,23,42,0.12))] p-4">
@@ -96,8 +99,11 @@ export function DevicesPanel({ apiBase, accessToken, balance, onChanged, onTopUp
         {state && <>
           {state.expires_at && <p className="text-sm text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.expires', { date: deviceDate(state.expires_at) })}</p>}
           {state.sync_pending && <p role="status" className="rounded-xl bg-sky-500/10 p-3 text-sm">{t('web.devices.pending')}</p>}
+          {state.limit_sync_status === 'unavailable' && <p role="status" className="text-sm text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.syncUnavailable')}</p>}
+          {state.limit_sync_status === 'conflict' && <p role="alert" className="text-sm text-[var(--tg-theme-destructive-text-color,#ef4444)]">{t('web.devices.limitConflict', { limit: state.panel_limit ?? '—', extra: state.extra_count })}</p>}
+          {state.devices === null && <p role="status" className="text-sm text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.listUnavailable')}</p>}
           <ul className="divide-y divide-[var(--app-border-color,rgba(15,23,42,0.12))]">
-            {state.devices.map((device) => <li key={device.hwid} className="flex items-center gap-3 py-3">
+            {devices.map((device) => <li key={device.hwid} className="flex items-center gap-3 py-3">
               <Smartphone className="h-5 w-5 shrink-0" /><div className="min-w-0 flex-1">
                 <p className="break-words font-medium">{device.device_model || device.platform || t('web.devices.unknown')}</p>
                 <p className="text-xs text-[var(--tg-theme-hint-color,#999)]">{[device.platform, device.os_version].filter(Boolean).join(' · ')}</p>
@@ -105,11 +111,11 @@ export function DevicesPanel({ apiBase, accessToken, balance, onChanged, onTopUp
               </div><button type="button" disabled={busy} className={buttonClass} onClick={() => setConfirmation({ hwid: device.hwid })}>{t('web.devices.remove')}</button>
             </li>)}
           </ul>
-          {!state.devices.length && <p className="text-sm text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.empty')}</p>}
+          {state.devices !== null && !devices.length && <p className="text-sm text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.empty')}</p>}
           <div className="flex flex-wrap gap-2">
             <button type="button" className={buttonClass} onClick={onConnect}>{t('web.devices.connect')}</button>
             <button type="button" aria-label={t('web.devices.refresh')} disabled={busy || loading} className={buttonClass} onClick={() => void load()}><RefreshCw className="h-4 w-4" /></button>
-            {state.devices.length > 0 && <button type="button" disabled={busy} onClick={() => setConfirmation('reset')} className={`${buttonClass} text-red-600 dark:text-red-400`}><Trash2 className="mr-1 inline h-4 w-4" />{t('web.devices.reset')}</button>}
+            {devices.length > 0 && <button type="button" disabled={busy} onClick={() => setConfirmation('reset')} className={`${buttonClass} text-red-600 dark:text-red-400`}><Trash2 className="mr-1 inline h-4 w-4" />{t('web.devices.reset')}</button>}
           </div>
           {state.can_purchase && <div className="space-y-3 rounded-xl border border-[var(--app-border-color,rgba(15,23,42,0.12))] p-4">
             <h3 className="flex items-center gap-2 font-semibold"><Plus className="h-4 w-4" />{t('web.devices.increase')}</h3>
@@ -127,12 +133,12 @@ export function DevicesPanel({ apiBase, accessToken, balance, onChanged, onTopUp
           {!state.is_active && <p className="text-sm text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.inactive')}</p>}
           {state.extra_count > 0 && <div className="space-y-2 border-t border-[var(--app-border-color,rgba(15,23,42,0.12))] pt-4">
             <label className="block text-sm font-medium">{t('web.devices.renewal')}
-              <select value={renewalCount} disabled={busy || state.sync_pending} onChange={(event) => setRenewalCount(Number(event.target.value))} className="ml-3 rounded-lg bg-[var(--tg-theme-bg-color,#fff)] p-2">
+              <select value={renewalCount} disabled={busy || state.sync_pending || limitUnconfirmed} onChange={(event) => setRenewalCount(Number(event.target.value))} className="ml-3 rounded-lg bg-[var(--tg-theme-bg-color,#fff)] p-2">
                 {Array.from({ length: state.extra_count + 1 }, (_, index) => <option key={index} value={index}>{index}</option>)}
               </select>
             </label>
             <p className="text-xs text-[var(--tg-theme-hint-color,#999)]">{t('web.devices.renewalHint')}</p>
-            <button type="button" disabled={busy || state.sync_pending || renewalCount === state.renewal_extra_count} className={buttonClass} onClick={() => void perform(async () => {
+            <button type="button" disabled={busy || state.sync_pending || limitUnconfirmed || renewalCount === state.renewal_extra_count} className={buttonClass} onClick={() => void perform(async () => {
               await deviceRequest<void>(apiBase, accessToken, '/renewal', { method: 'PUT', body: { extra_count: renewalCount } });
               await load(); setNotice(t('web.devices.renewalSaved'));
             })}>{t('web.devices.saveRenewal')}</button>

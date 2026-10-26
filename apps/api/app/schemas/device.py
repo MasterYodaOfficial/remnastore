@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -40,8 +41,10 @@ class DevicesStateResponse(BaseModel):
     extra_count: int
     renewal_extra_count: int
     limit: int
-    devices: list[DeviceItem]
+    devices: list[DeviceItem] | None
     expires_at: datetime | None
     can_purchase: bool
     sync_pending: bool
     is_active: bool
+    limit_sync_status: Literal["synced", "pending", "unavailable", "conflict"]
+    panel_limit: int | None
