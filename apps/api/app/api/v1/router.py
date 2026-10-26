@@ -15,6 +15,7 @@ from app.api.v1.endpoints.bootstrap import router as bootstrap_router
 from app.api.v1.endpoints.ledger import router as ledger_router
 from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.payments import router as payments_router
+from app.api.v1.endpoints.payments import checkout_router
 from app.api.v1.endpoints.promos import router as promos_router
 from app.api.v1.endpoints.referrals import router as referrals_router
 from app.api.v1.endpoints.subscriptions import router as subscriptions_router
@@ -37,6 +38,7 @@ api_router.include_router(vk_router, prefix="/auth", tags=["auth"])
 api_router.include_router(admin_auth_router, prefix="/admin/auth", tags=["admin-auth"])
 api_router.include_router(internal_router, prefix="/internal", tags=["internal"])
 api_router.include_router(linking_router, prefix="/accounts", tags=["linking"])
+api_router.include_router(checkout_router, prefix="/payments", tags=["payments"])
 
 protected_router = APIRouter(dependencies=[Depends(get_current_account)])
 protected_router.include_router(bootstrap_router, tags=["bootstrap"])

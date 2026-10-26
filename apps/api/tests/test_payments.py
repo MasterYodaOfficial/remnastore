@@ -632,6 +632,13 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             ticket = parse_qs(urlsplit(general).fragment)["checkout_token"][0]
             with self.assertRaises(TokenError):
                 decode_access_token(ticket, secret=settings.jwt_secret)
+            listings = await self.client.get(
+                "/api/v1/payments", params={"active_only": True}
+            )
+            self.assertEqual(listings.json()["items"][0]["sbp_confirmation_url"], sbp)
+            # The external checkout browser has no account session. Exercise the
+            # real router dependencies, rather than bypassing its auth guard.
+            del self.app.dependency_overrides[get_current_account]
             checkout = await self.client.post(
                 "/api/v1/payments/yookassa/checkout", json={"ticket": ticket}
             )
@@ -653,10 +660,6 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     still_available.json()["confirmation_token"], "ct-test-only"
                 )
-            listings = await self.client.get(
-                "/api/v1/payments", params={"active_only": True}
-            )
-            self.assertEqual(listings.json()["items"][0]["sbp_confirmation_url"], sbp)
             self.assertIsNone(sbp_checkout_url("https://yookassa.ru/confirm?id=abc"))
             bad = await self.client.post(
                 "/api/v1/payments/yookassa/checkout", json={"ticket": ticket + "bad"}
@@ -717,7 +720,40 @@ class PaymentFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(expired.status_code, 401)
             stored = await self._get_account(account.id)
             self.assertEqual(stored.balance, 0)
+            async with self._session_factory() as session:
+                self.assertEqual(len((await session.scalars(select(Payment))).all()), 1)
+                self.assertEqual((await session.scalars(select(LedgerEntry))).all(), [])
+                self.assertEqual(
+                    (await session.scalars(select(SubscriptionGrant))).all(), []
+                )
             create.assert_called_once()
+
+    async def test_public_checkout_does_not_unprotect_account_payment_routes(self):
+        del self.app.dependency_overrides[get_current_account]
+        for method, path, payload in (
+            ("GET", "/payments", None),
+            ("GET", "/payments/plans", None),
+            ("GET", "/payments/status?provider=yookassa&provider_payment_id=one", None),
+            ("POST", "/payments/yookassa/topup", {"amount_rub": 500}),
+            ("POST", "/payments/yookassa/plans/plan_1m", {}),
+            ("POST", "/payments/telegram-stars/plans/plan_1m", {}),
+        ):
+            with self.subTest(path=path):
+                response = await self.client.request(
+                    method, "/api/v1" + path, json=payload
+                )
+                self.assertEqual(response.status_code, 401, response.text)
+                self.assertEqual(response.json()["detail"], "missing credentials")
+        for payload in ({}, {"ticket": ""}, {"ticket": "invalid-ticket"}):
+            with self.subTest(payload=payload):
+                response = await self.client.post(
+                    "/api/v1/payments/yookassa/checkout", json=payload
+                )
+                self.assertEqual(
+                    response.status_code, 401 if payload.get("ticket") else 422
+                )
+                self.assertNotEqual(response.json()["detail"], "missing credentials")
+        self.assertEqual(self._fake_gateway.created_commands, [])
 
     async def test_create_yookassa_topup_endpoint_persists_pending_payment(
         self,

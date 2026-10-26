@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { apiBaseUrl } from '../../../utils/runtime-config';
+import { PaymentModeButtons, type PaymentMode } from './PaymentModeButtons';
 
 type Checkout = {
   provider_payment_id: string; amount: number; currency: string; status: string;
@@ -37,7 +38,7 @@ function readLink() {
     else ticket = window.sessionStorage.getItem(key) ?? '';
   } catch { /* The original link still works without persistent storage. */ }
   if (url.hash) window.history.replaceState({}, '', url.pathname + url.search);
-  return { id, ticket, mode: url.searchParams.get('mode') === 'sbp' ? 'sbp' : 'all' };
+  return { id, ticket, mode: (url.searchParams.get('mode') === 'sbp' ? 'sbp' : 'all') as PaymentMode };
 }
 
 export default function PaymentCheckoutPage() {
@@ -102,23 +103,25 @@ export default function PaymentCheckoutPage() {
     return () => { disposed = true; widget?.destroy(); };
   }, [token, returnUrl, mode, retry, link]);
 
-  const selectMode = (next: string) => {
+  const selectMode = (next: PaymentMode) => {
     setMode(next);
     const url = new URL(window.location.href);
     if (next === 'sbp') url.searchParams.set('mode', 'sbp'); else url.searchParams.delete('mode');
     window.history.replaceState({}, '', url);
   };
   const terminal = data && !['created', 'pending', 'requires_action'].includes(data.status);
-  return <main className="mx-auto min-h-screen max-w-xl space-y-5 bg-white p-4 text-slate-900 sm:p-6">
+  return <main className="mx-auto min-h-screen max-w-xl space-y-5 bg-[var(--tg-theme-bg-color,#ffffff)] p-4 text-[var(--tg-theme-text-color,#0f172a)] sm:p-6">
     <h1 className="text-2xl font-semibold">Оплата</h1>
-    {data && <p>{data.amount} {data.currency} · Платёж {data.provider_payment_id}</p>}
+    {data && <div className="space-y-1">
+      <p className="text-3xl font-semibold">{new Intl.NumberFormat('ru-RU', { style: 'currency', currency: data.currency, maximumFractionDigits: 0 }).format(data.amount)}</p>
+      <p className="break-all text-xs text-[var(--tg-theme-hint-color,#64748b)]">Платёж {data.provider_payment_id}</p>
+    </div>}
     {terminal ? <p role="status">{data.status === 'succeeded'
       ? data.finalized ? 'Оплата завершена.' : 'Оплата получена. Завершаем обработку.'
       : 'Платёж отменён или срок оплаты истёк. Создайте новый платёж в кабинете.'}</p>
       : <>
-        {token && <nav className="flex gap-3" aria-label="Способы оплаты">
-          <button className="rounded-xl border px-4 py-3" aria-pressed={mode === 'all'} onClick={() => selectMode('all')}>Все способы оплаты</button>
-          <button className="rounded-xl border px-4 py-3" aria-pressed={mode === 'sbp'} onClick={() => selectMode('sbp')}>Оплатить через СБП</button>
+        {token && <nav aria-label="Способы оплаты">
+          <PaymentModeButtons activeMode={mode} onSelect={selectMode} />
         </nav>}
         {!data && !error && <p role="status">Загружаем платёж…</p>}
         <div id="yookassa-checkout" />

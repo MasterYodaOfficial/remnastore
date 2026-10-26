@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test';
 
-for (const width of [390, 1280]) {
-  test(`checkout switches SBP on the same payment and survives reload at ${width}px`, async ({ page }) => {
+for (const { width, colorScheme } of [
+  { width: 390, colorScheme: 'light' },
+  { width: 390, colorScheme: 'dark' },
+  { width: 1280, colorScheme: 'light' },
+] as const) {
+  test(`checkout switches SBP on the same payment and survives reload at ${width}px ${colorScheme}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme });
     await page.setViewportSize({ width, height: 900 });
     let succeeded = false;
     const requests: string[] = [];
@@ -27,10 +32,18 @@ for (const width of [390, 1280]) {
     await page.goto('/checkout?payment_id=same-payment&mode=sbp#checkout_token=scoped-test-ticket');
     await expect(page.getByText('СБП QR / банк', { exact: true })).toBeVisible();
     expect(new URL(page.url()).hash).toBe('');
-    await page.getByRole('button', { name: 'Все способы оплаты', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'СБП', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Картой и другими способами', exact: true }).click();
     await expect(page.getByText('Общая форма', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Картой и другими способами', exact: true })).toHaveAttribute('aria-pressed', 'true');
     expect(await page.evaluate(() => Reflect.get(window, 'widgetCalls').map((call: { confirmation_token: string }) => call.confirmation_token)))
       .toEqual(['same-confirmation-token', 'same-confirmation-token']);
+    await page.getByRole('button', { name: 'СБП', exact: true }).click();
+    await expect(page.getByText('СБП QR / банк', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'СБП', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.screenshot({ path: testInfo.outputPath('checkout-methods.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Картой и другими способами', exact: true }).click();
+    await expect(page.getByText('Общая форма', { exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByText('Общая форма', { exact: true })).toBeVisible();
     const bankReturn = await page.evaluate(() => Reflect.get(window, 'widgetCalls')[0].return_url as string);
@@ -74,7 +87,7 @@ test('a store without SBP customization can use the general form of the same pay
   }));
   await page.goto('/checkout?payment_id=same-payment&mode=sbp#checkout_token=test-ticket');
   await expect(page.getByRole('alert')).toContainText('Способ оплаты недоступен');
-  await page.getByRole('button', { name: 'Все способы оплаты', exact: true }).click();
+  await page.getByRole('button', { name: 'Картой и другими способами', exact: true }).click();
   await expect(page.getByText('Общая форма', { exact: true })).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
 });

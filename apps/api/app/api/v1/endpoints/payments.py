@@ -40,13 +40,16 @@ from app.services.i18n import translate
 from app.services.payment_checkout import read_checkout, sbp_checkout_url
 
 router = APIRouter()
+# Checkout uses a payment-scoped ticket instead of an account session. Mount
+# only this router outside the account-authenticated API group.
+checkout_router = APIRouter()
 
 
 class CheckoutRequest(BaseModel):
     ticket: str = Field(min_length=1, max_length=4096)
 
 
-@router.post("/yookassa/checkout")
+@checkout_router.post("/yookassa/checkout")
 async def get_checkout(
     payload: CheckoutRequest,
     response: Response,
